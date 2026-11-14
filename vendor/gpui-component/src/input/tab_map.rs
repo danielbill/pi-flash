@@ -43,9 +43,14 @@ pub(crate) const MAX_EXPANSION_COLUMN: u32 = 256;
 /// 字符迭代无位图，保留同值语义防 tab_size 溢出）。
 const MAX_TAB_SIZE: u32 = 128;
 
-/// zed TabEdit：tab 层编辑。tab 层无独立树（懒换算），编辑在层间按
-/// fold 空间字节透传——下游 wrap 层只按**行**消费编辑区间。
-pub type TabEdit = FoldEdit;
+/// zed TabEdit（tab_map.rs:551）：tab 空间点编辑——fold 编辑经本层映射
+/// （old 端点在旧 fold 快照、new 端点在新 fold 快照上换算，zed
+/// tab_map.rs:179-188 同构），下游 wrap 层按**行区间**消费。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TabEdit {
+    pub old: Range<TabPoint>,
+    pub new: Range<TabPoint>,
+}
 
 /// zed TabPoint（tab_map.rs:524）：行号 + 行内**展开字节列**。
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -74,30 +79,77 @@ impl TabMap {
         Self(TabSnapshot::new(fold_snapshot, tab_size))
     }
 
-    /// zed TabMap::sync：fold 快照前进 + tab_size 变更判定。tab 层无树，
-    /// fold 编辑原样透传（zed 在此做「编辑扩到行内后续 tab」的区间加宽，
-    /// 那是给下游 SumTree 增量重建划界用的；PF wrap 层按行消费编辑，
-    /// 行粒度透传已足够）。
+    /// zed TabMap::sync（tab_map.rs:41）：fold 快照前进 + 编辑映射。
+    /// tab_size 变化 → 整文编辑（zed 同款，下游全量 rewrap）；否则把
+    /// fold 字节编辑的端点换算成 tab 点（zed 原文还有「编辑扩到行内后续
+    /// tab」的区间加宽——那是给下游 SumTree 增量划界用的优化，PF wrap 层
+    /// 按行消费编辑，行粒度已足够）。
     pub fn sync(
         &mut self,
         fold_snapshot: FoldSnapshot,
-        fold_edits: Vec<TabEdit>,
+        fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let tab_size = tab_size.get().min(MAX_TAB_SIZE);
         let changed = self.0.fold_snapshot.version != fold_snapshot.version
             || self.0.tab_size.get() != tab_size;
-        self.0 = TabSnapshot {
-            fold_snapshot,
-            tab_size: NonZeroU32::new(tab_size).expect("tab size > 0"),
-            max_expansion_column: self.0.max_expansion_column,
-            version: if changed {
-                self.0.version + 1
-            } else {
-                self.0.version
+
+        if changed && self.0.tab_size.get() != tab_size {
+            // tab_size 变化：整文编辑（zed tab_map.rs:49-61）
+            let old_max = self.0.max_point();
+            let new_snapshot = TabSnapshot {
+                fold_snapshot,
+                tab_size: NonZeroU32::new(tab_size).expect("tab size > 0"),
+                max_expansion_column: self.0.max_expansion_column,
+                version: self.0.version + 1,
+            };
+            let new_max = new_snapshot.max_point();
+            self.0 = new_snapshot.clone();
+            return (
+                new_snapshot,
+                vec![TabEdit {
+                    old: TabPoint::new(0, 0)..old_max,
+                    new: TabPoint::new(0, 0)..new_max,
+                }],
+            );
+        }
+
+        let old_max_expansion_column = self.0.max_expansion_column;
+        let old_version = self.0.version;
+        let old_snapshot = std::mem::replace(
+            &mut self.0,
+            TabSnapshot {
+                fold_snapshot: fold_snapshot.clone(),
+                tab_size: NonZeroU32::new(tab_size).expect("tab size > 0"),
+                max_expansion_column: old_max_expansion_column,
+                version: if changed {
+                    old_version + 1
+                } else {
+                    old_version
+                },
             },
-        };
-        (self.0.clone(), fold_edits)
+        );
+        if fold_edits.is_empty() {
+            return (self.0.clone(), Vec::new());
+        }
+
+        // fold 字节编辑 → tab 点编辑（zed tab_map.rs:176-190）
+        let tab_edits = fold_edits
+            .into_iter()
+            .map(|fold_edit| {
+                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+                let new_start = fold_edit.new.start.to_point(&self.0.fold_snapshot);
+                let new_end = fold_edit.new.end.to_point(&self.0.fold_snapshot);
+                TabEdit {
+                    old: old_snapshot.fold_point_to_tab_point(old_start)
+                        ..old_snapshot.fold_point_to_tab_point(old_end),
+                    new: self.0.fold_point_to_tab_point(new_start)
+                        ..self.0.fold_point_to_tab_point(new_end),
+                }
+            })
+            .collect();
+        (self.0.clone(), tab_edits)
     }
 }
 

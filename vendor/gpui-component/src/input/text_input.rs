@@ -243,7 +243,7 @@ impl RenderOnce for TextInput {
         // 把文件编辑器行距压得过密；单行/多行输入保持紧凑常量不动
 
         self.state.update(cx, |state, cx| {
-            state.text_wrapper.set_font(font, font_size, cx);
+            state.wrap_map.set_font_with_size(font, font_size, cx);
             state.disabled = self.disabled;
         });
 

@@ -10,12 +10,14 @@ use ropey::Rope;
 use smallvec::SmallVec;
 
 use crate::{
-    input::{blink_cursor::CURSOR_WIDTH, text_wrapper::LineLayout, RopeExt as _},
+    input::{
+        blink_cursor::CURSOR_WIDTH, line_layout::LineLayout, tab_map::TabExpansion, RopeExt as _,
+    },
     ActiveTheme as _, Colorize, Root,
 };
 
-use super::fold_map::{FoldBufferExt, FoldOffset, FoldPoint, InlayPoint, Point as FoldSpacePoint};
-use super::{mode::InputMode, Decorations, InputState, LastLayout};
+use super::fold_map::{FoldBufferExt, FoldPoint, Point as FoldSpacePoint};
+use super::{mode::InputMode, Decorations, DisplayRowData, InputState, LastLayout};
 use sum_tree::Bias;
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
@@ -23,7 +25,7 @@ pub(super) const RIGHT_MARGIN: Pixels = px(10.);
 pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(10.);
 /// 视口上下额外 shaping/高亮的软换行行数：方向键/选区端点会落在视口外
 /// 1-2 行，这些行要保持真实 shaped（preferred_column 取 x 用）。
-const EXTRA_SHAPE_ROWS: usize = 2;
+const EXTRA_SHAPE_ROWS: u32 = 2;
 
 /// PF 2026-10-16（pi-flash 滚屏优化）：行高吸附到**整设备像素**。行高默认
 /// 是 1.5 × 字号，非整倍显示缩放下常见小数（如 1.5× 缩放、14px 字号 →
@@ -36,47 +38,6 @@ fn snap_line_height(line_height: Pixels, scale_factor: f32) -> Pixels {
         px((f32::from(line_height) * scale_factor).round() / scale_factor)
     } else {
         line_height
-    }
-}
-
-/// 视口字节窗（PF 修复 2026-10-14，见 docs/agents/gpui.md「文本与绘制」）：
-/// `visible_range` 是**逻辑行**粒度，minified 单行文件（echarts.min.js 一行
-/// 94 万字符）会把整行送进高亮查询与 shaping——高亮 `match_styles` 产出
-/// 十几万条 capture 再进 `unique_styles` 的 O(区间×样式) 二重扫，每帧分钟
-/// 级假死。这里按行高累加定位每条软换行段的 y，只保留与视口 y 区间相交
-/// 的段，返回其字节范围（`visible_top` = visible_range 首行的内容 y）。
-fn viewport_byte_window(
-    text: &Rope,
-    wrapper: &super::text_wrapper::TextWrapper,
-    rows: &[(usize, usize, String)],
-    visible_top: Pixels,
-    line_height: Pixels,
-    viewport_top: Pixels,
-    viewport_bottom: Pixels,
-) -> Range<usize> {
-    let mut window = usize::MAX..0;
-    let mut line_y = visible_top;
-    // pi-flash patch（移植）：rows = (缓冲行号, fold 行首, 行文本)——fold
-    // 空间窗按 fold 行首偏移；无折叠时 fold 行首 == buffer 行首。
-    for (_row, fold_start, _text) in rows {
-        let line_start_offset = *fold_start;
-        let row = *_row;
-        let Some(item) = wrapper.lines.get(row) else {
-            break;
-        };
-        for (ix, seg) in item.wrapped_lines.iter().enumerate() {
-            let seg_top = line_y + ix as f32 * line_height;
-            if seg_top + line_height > viewport_top && seg_top < viewport_bottom {
-                window.start = window.start.min(line_start_offset + seg.start);
-                window.end = window.end.max(line_start_offset + seg.end);
-            }
-        }
-        line_y += item.height(line_height);
-    }
-    if window.start >= window.end {
-        0..0
-    } else {
-        window
     }
 }
 
@@ -134,8 +95,8 @@ fn paint_indent_guides(
     }
 
     // zed visible_buffer_range：可见显示行 → buffer 行范围
-    let first_buf = last_layout.buffer_rows.first().copied().unwrap_or(0) as u32;
-    let last_buf = last_layout.buffer_rows.last().copied().unwrap_or(0) as u32;
+    let first_buf = last_layout.rows.first().map(|r| r.buffer_row).unwrap_or(0);
+    let last_buf = last_layout.rows.last().map(|r| r.buffer_row).unwrap_or(0);
     let guides = super::fold_map::indent_guides_in_range(
         &state.text,
         first_buf..(last_buf + 1).min(max_row + 1),
@@ -165,30 +126,21 @@ fn paint_indent_guides(
         )
         .width;
 
-    // buffer 行 → 显示行（zed calculate_indent_guide_bounds 的 to_display_
-    // point：fold 态 = fold 空间行；软换行 = wrap 行；普通 = buffer 行恒等）
-    let to_display = |buf_row: u32| -> usize {
-        if state.fold_snapshot.has_folds() && state.fold_allowed() {
-            state
-                .fold_snapshot
-                .to_fold_point(
-                    super::fold_map::InlayPoint(super::fold_map::Point::new(buf_row, 0)),
-                    Bias::Right,
-                )
-                .row() as usize
-        } else {
-            let offset = state.text.line_start_offset(buf_row as usize);
-            state.text_wrapper.offset_to_display_point(offset).row
-        }
+    // buffer 行 → 显示行（dqjd S2：经显示换算收口——fold 态 = 显示行空间，
+    // 软换行 = wrap 行；zed to_display_point 同语义）
+    let to_display = |buf_row: u32| -> u32 {
+        state
+            .wrap_map
+            .snapshot()
+            .make_wrap_point(FoldSpacePoint::new(buf_row, 0), Bias::Right)
+            .row()
     };
 
-    let vis_start = last_layout.visible_range.start;
-    let vis_end = last_layout.visible_range.end;
+    let vis_start = last_layout.visible_range.start as u32;
+    let vis_end = last_layout.visible_range.end as u32;
     for g in guides {
         // zed：guide x = 文本起点 + depth × 单级缩进宽（depth 0 贴文本左缘）
-        let x = origin.x
-            + last_layout.line_number_width
-            + single_indent * g.depth as f32;
+        let x = origin.x + last_layout.line_number_width + single_indent * g.depth as f32;
         let start_display = to_display(g.start_row);
         let end_display = to_display(g.end_row);
         // zed calculate_indent_guide_bounds：cons = end_row+1 的显示行（zed
@@ -225,14 +177,12 @@ fn paint_indent_guides(
 
 /// zed element.rs:281 `point_selection.to_display_point(map)`：高亮区间先
 /// 换算成**显示空间点（行,列）**再逐行画——zed 按行号范围取行，绝不用字节
-/// 坐标逐行试探（起点钳 0/终点 clamp 行尾会让选区之前的行两端 "Some" 而
-/// 提前误断，折叠占位符多字节再叠加偏移）。
+/// 坐标逐行试探。dqjd S2：行列 = 显示点（wrap 行 / deco vis 行，经显示换
+/// 算收口产出），字节窗夹取改为**行区间与可视行求交**。
 pub(crate) struct QuadSpan {
-    /// quads 空间字节窗（fold 态 = fold 空间字节），窗夹取用
-    pub bytes: Range<usize>,
-    pub start_row: usize,
+    pub start_row: u32,
     pub start_col: usize,
-    pub end_row: usize,
+    pub end_row: u32,
     pub end_col: usize,
 }
 
@@ -303,6 +253,10 @@ impl TextElement {
     /// - current row index (No only the visible lines, but all lines)
     ///
     /// This method also will update for track scroll to cursor.
+    ///
+    /// pi-flash patch（dqjd S2）：显示行恒等高——光标/选区端点经显示换算
+    /// 收口，y 闭式解，x 由本行 ShapedLine 查询；旧三分支（fold/等高/软换）
+    /// 并为一条路径。
     fn layout_cursor(
         &self,
         last_layout: &LastLayout,
@@ -313,9 +267,6 @@ impl TextElement {
         let state = self.state.read(cx);
 
         let line_height = last_layout.line_height;
-        let visible_range = &last_layout.visible_range;
-        let lines = &last_layout.lines;
-        let text_wrapper = &state.text_wrapper;
         let line_number_width = last_layout.line_number_width;
 
         let mut selected_range = state.selected_range;
@@ -323,187 +274,46 @@ impl TextElement {
             selected_range = (ime_marked_range.end..ime_marked_range.end).into();
         }
         let is_selected_all = selected_range.len() == state.text.len();
-        // pi-flash patch（移植）：fold 态开关（layout_cursor 局部）
-        let fold_active = state.fold_snapshot.has_folds() && state.fold_allowed();
 
         let cursor = state.cursor();
-        let mut current_row = None;
         let mut scroll_offset = state.scroll_handle.offset();
         let mut cursor_bounds = None;
 
         // If the input has a fixed height (Otherwise is auto-grow), we need to add a bottom margin to the input.
         let top_bottom_margin = if state.mode.is_auto_grow() {
             line_height
-        } else if visible_range.len() < BOTTOM_MARGIN_ROWS * 8 {
+        } else if last_layout.visible_range.len() < BOTTOM_MARGIN_ROWS * 8 {
             line_height
         } else {
             BOTTOM_MARGIN_ROWS * line_height
         };
 
-        // The cursor corresponds to the current cursor position in the text no only the line.
-        let mut cursor_pos = None;
-        let mut cursor_start = None;
-        let mut cursor_end = None;
+        // The cursor corresponds to the current cursor position in the display space.
+        let (cursor_row, cursor_col) =
+            state.offset_to_display_point(last_layout, cursor, Bias::Right);
+        let (start_row, start_col) =
+            state.offset_to_display_point(last_layout, selected_range.start, Bias::Left);
+        let (end_row, end_col) =
+            state.offset_to_display_point(last_layout, selected_range.end, Bias::Right);
+        let current_row = Some(cursor_row as usize);
 
-        let mut prev_lines_offset = 0;
-        let mut offset_y = px(0.);
-
-        // pi-flash patch（移植）：fold 空间布局——光标/选区经 to_fold_point
-        // 映射到显示行（zed display map 同语义），y = 显示行 × 行高。
-        if fold_active {
-            let tab_size = last_layout.tab_size;
-            let to_fold = |offset: usize| -> (usize, Point<Pixels>) {
-                let p = state.text.offset_to_point(offset);
-                let fp = state.fold_snapshot.to_fold_point(
-                    InlayPoint(FoldSpacePoint::new(p.row as u32, p.column as u32)),
-                    Bias::Right,
-                );
-                let row = fp.row() as usize;
-                let mut x = px(0.);
-                if row >= visible_range.start {
-                    if let Some(line) = lines.get(row - visible_range.start) {
-                        // pi-flash patch（移植）：行 shape 用的是 tab 展开文本
-                        // （tab_map），光标列换到展开坐标再查 x
-                        let row_text = state.fold_snapshot.row_text(row as u32);
-                        let exp =
-                            super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                        if let Some(pos) = line.position_for_index(
-                            exp.source_to_expanded(fp.column() as usize),
-                            line_height,
-                        ) {
-                            x = pos.x;
-                        }
+        let pos_for = |row: u32, col: usize| -> Point<Pixels> {
+            let y = row as f32 * line_height;
+            let mut x = px(0.);
+            if row >= last_layout.visible_range.start as u32 {
+                if let Some(line) = last_layout.line(row as usize) {
+                    if let Some(p) = line.position_for_index(col, line_height) {
+                        x = p.x;
                     }
-                }
-                (row, point(x, row as f32 * line_height))
-            };
-
-            let (cursor_row, cursor_point) = to_fold(cursor);
-            current_row = Some(cursor_row);
-            cursor_pos = Some(cursor_point);
-            cursor_start = Some(to_fold(selected_range.start).1);
-            cursor_end = Some(to_fold(selected_range.end).1);
-        } else if text_wrapper.is_uniform() {
-            let tab_size = last_layout.tab_size;
-            let pos_for = |offset: usize| -> (usize, Point<Pixels>) {
-                let row = state.text.offset_to_point(offset).row;
-                let disp = row;
-                let mut x = px(0.);
-                if disp >= visible_range.start {
-                    if let Some(line) = lines.get(disp - visible_range.start) {
-                        let line_start = state.text.line_start_offset(row);
-                        let mut local = offset.saturating_sub(line_start);
-                        // PF-024: 折叠态 doc→vis 换算（FoldSet 单点收口，
-                        // 光标 x 与绘制行文本同一坐标系，不错位）。
-                        if let Some(dec) = &last_layout.decorations {
-                            local = dec
-                                .doc_to_vis(line_start + local)
-                                .saturating_sub(dec.doc_to_vis(line_start));
-                        }
-                        // pi-flash patch（移植）：行 shape 用 tab 展开文本，
-                        // 光标列换展开坐标（md 装饰态不展开，同 024 互斥）
-                        if last_layout.decorations.is_none() {
-                            let row_text = state.text.slice_line(row).to_string();
-                            let exp =
-                                super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                            local = exp.source_to_expanded(local);
-                        }
-                        if let Some(p) = line.position_for_index(local, line_height) {
-                            x = p.x;
-                        }
-                    }
-                }
-                (row, point(x, disp as f32 * line_height))
-            };
-
-            let (cursor_row, cursor_point) = pos_for(cursor);
-            current_row = Some(cursor_row);
-            cursor_pos = Some(cursor_point);
-            cursor_start = Some(pos_for(selected_range.start).1);
-            cursor_end = Some(pos_for(selected_range.end).1);
-        } else {
-            for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
-                let row = ix;
-                let line_origin = point(px(0.), offset_y);
-
-                // break loop if all cursor positions are found
-                if cursor_pos.is_some() && cursor_start.is_some() && cursor_end.is_some() {
-                    break;
-                }
-
-                let disp = ix;
-                // checked_sub 而非 then_some(disp - start)：then_some 急切
-                // 求值，disp < start 时减法先算，usize 下溢 panic（md 软换行
-                // + 恢复滚动位首帧即触发）
-                let disp_ix = disp.checked_sub(visible_range.start);
-                let in_visible_range = disp_ix.is_some();
-                if let Some(line) = in_visible_range
-                    .then(|| lines.get(disp_ix.unwrap()))
-                    .flatten()
-                {
-                    // If in visible range lines
-                    // pi-flash patch（移植）：行 shape 用 tab 展开文本，索引
-                    // 换展开坐标（md 装饰态不展开）
-                    let tab_size = last_layout.tab_size;
-                    let tab_exp = (last_layout.decorations.is_none())
-                        .then(|| {
-                            let row_text = state.text.slice_line(row).to_string();
-                            super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
-                        });
-                    let to_exp = |v: usize| -> usize {
-                        tab_exp
-                            .as_ref()
-                            .map(|e| e.source_to_expanded(v))
-                            .unwrap_or(v)
-                    };
-                    if cursor_pos.is_none() {
-                        let offset = cursor.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
-                            current_row = Some(row);
-                            cursor_pos = Some(line_origin + pos);
-                        }
-                    }
-                    if cursor_start.is_none() {
-                        let offset = selected_range.start.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
-                            cursor_start = Some(line_origin + pos);
-                        }
-                    }
-                    if cursor_end.is_none() {
-                        let offset = selected_range.end.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
-                            cursor_end = Some(line_origin + pos);
-                        }
-                    }
-
-                    offset_y += line.size(line_height).height;
-                    // +1 for the last `\n`
-                    prev_lines_offset += line.len() + 1;
-                } else {
-                    // If not in the visible range.
-
-                    // Just increase the offset_y and prev_lines_offset.
-                    // This will let the scroll_offset to track the cursor position correctly.
-                    if prev_lines_offset >= cursor && cursor_pos.is_none() {
-                        current_row = Some(row);
-                        cursor_pos = Some(line_origin);
-                    }
-                    if prev_lines_offset >= selected_range.start && cursor_start.is_none() {
-                        cursor_start = Some(line_origin);
-                    }
-                    if prev_lines_offset >= selected_range.end && cursor_end.is_none() {
-                        cursor_end = Some(line_origin);
-                    }
-
-                    offset_y += wrap_line.height(line_height);
-                    // +1 for the last `\n`
-                    prev_lines_offset += wrap_line.len() + 1;
                 }
             }
-        }
+            point(x, y)
+        };
 
-        if let (Some(cursor_pos), Some(cursor_start), Some(cursor_end)) =
-            (cursor_pos, cursor_start, cursor_end)
+        let cursor_pos = pos_for(cursor_row, cursor_col);
+        let cursor_start = pos_for(start_row, start_col);
+        let cursor_end = pos_for(end_row, end_col);
+
         {
             let selection_changed = state.last_selected_range != Some(selected_range);
             if selection_changed && !is_selected_all {
@@ -575,143 +385,72 @@ impl TextElement {
 
     /// Layout the match range to per-row rect quads (Zed-style).
     ///
-    /// pi-flash patch（移植）：入参 = QuadSpan（显示空间行,列 + 字节窗）。
-    /// zed 按行号范围逐行画高亮（element.rs 高亮系列同构），绝不用字节坐标
-    /// 逐行试探——选区之前的行起点钳 0/终点 clamp 行尾会把两端变 "Some"，
-    /// 首行误判 + 提前 break（折叠占位符多字节再叠加偏移）。
+    /// pi-flash patch（dqjd S2）：入参 = 显示空间 QuadSpan；行区间与可视行
+    /// 求交后逐行画矩形（显示行等高、单段行——不再有行内软换行拆分）。
     pub(crate) fn layout_match_quads(
         span: &QuadSpan,
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
     ) -> Option<Vec<Bounds<Pixels>>> {
-        let range = &span.bytes;
-        if range.is_empty() {
-            return None;
-        }
-
-        if range.start < last_layout.visible_range_offset.start
-            || range.end > last_layout.visible_range_offset.end
-        {
-            return None;
-        }
-
         let line_height = last_layout.line_height;
-        let visible_top = last_layout.visible_top;
-        let lines = &last_layout.lines;
         let line_number_width = last_layout.line_number_width;
+        let vis_start = last_layout.visible_range.start as u32;
+        let vis_end = last_layout.visible_range.end as u32;
 
-        // pi-flash patch（折叠）：行首 doc 偏移按 fold_row_starts 直取（可
-        // 见行经 buffer_rows 表，隐藏行间不连续）；doc→vis 换算同 PF-024
-        let mut offset_y = visible_top;
+        if span.end_row < vis_start || span.start_row >= vis_end {
+            return None;
+        }
+        let first = span.start_row.max(vis_start);
+        let last = span.end_row.min(vis_end.saturating_sub(1)).max(first);
+
         let mut line_corners = vec![];
-
-        for (line_ix, line) in lines.iter().enumerate() {
-            let line_size = line.size(line_height);
-            let line_wrap_width = line_size.width;
-
-            let Some(&line_start_doc) = last_layout.fold_row_starts.get(line_ix) else {
-                break;
-            };
-            // zed 行区间语义：选区行区间外的行跳过；起点行取起点列、终点行
-            // 取终点列、中间行整行
-            if line_ix < span.start_row || line_ix > span.end_row {
-                offset_y += line_size.height;
+        for wrap_row in first..=last {
+            let ix = (wrap_row - vis_start) as usize;
+            let Some(line) = last_layout.lines.get(ix) else {
                 continue;
-            }
-
-            let line_origin = point(px(0.), offset_y);
-
-            let (local_start, local_end) = match &last_layout.decorations {
-                Some(dec) => {
-                    let base = dec.doc_to_vis(line_start_doc);
-                    let s = if line_ix == span.start_row {
-                        dec.doc_to_vis(line_start_doc + span.start_col)
-                            .saturating_sub(base)
-                    } else {
-                        0
-                    };
-                    let e = if line_ix == span.end_row {
-                        dec.doc_to_vis(line_start_doc + span.end_col)
-                            .saturating_sub(base)
-                    } else {
-                        line.len()
-                    };
-                    (s, e)
-                }
-                None => {
-                    // pi-flash patch（移植）：行 shape 用 tab 展开文本，选区
-                    // 端点换展开坐标——行文本取 fold_row_texts（cvr 统一填
-                    // 充，fold 态 = fold 行文本、非折叠 = buffer 行文本）
-                    let row_text = last_layout
-                        .fold_row_texts
-                        .get(line_ix)
-                        .cloned()
-                        .unwrap_or_default();
-                    let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                    let s = if line_ix == span.start_row {
-                        exp.source_to_expanded(span.start_col)
-                    } else {
-                        0
-                    };
-                    let e = if line_ix == span.end_row {
-                        exp.source_to_expanded(span.end_col)
-                    } else {
-                        line.len()
-                    };
-                    (s, e)
-                }
             };
-            let line_cursor_start = line.position_for_index(local_start, line_height);
-            let line_cursor_end = line.position_for_index(local_end, line_height);
+            let Some(row_data) = last_layout.rows.get(ix) else {
+                continue;
+            };
+            let line_origin = point(
+                px(0.),
+                last_layout.visible_top + (wrap_row - vis_start) as f32 * line_height,
+            );
 
-            if line_cursor_start.is_some() || line_cursor_end.is_some() {
-                let start = line_cursor_start
-                    .unwrap_or_else(|| line.position_for_index(0, line_height).unwrap());
+            let col_start = if wrap_row == span.start_row {
+                span.start_col
+            } else {
+                0
+            };
+            let col_end = if wrap_row == span.end_row {
+                span.end_col
+            } else {
+                row_data.text.len()
+            };
+            let col_start = col_start.min(row_data.text.len());
+            let col_end = col_end.min(row_data.text.len());
 
-                let end = line_cursor_end
-                    .unwrap_or_else(|| line.position_for_index(line.len(), line_height).unwrap());
-
-                // Split the selection into multiple items
-                let wrapped_lines =
-                    (end.y / line_height).ceil() as usize - (start.y / line_height).ceil() as usize;
-
-                let mut end_x = end.x;
-                if wrapped_lines > 0 {
-                    end_x = line_wrap_width;
-                }
-
-                // Ensure at least 6px width for the selection for empty lines.
-                end_x = end_x.max(start.x + px(6.));
-
-                line_corners.push(Corners {
-                    top_left: line_origin + point(start.x, start.y),
-                    top_right: line_origin + point(end_x, start.y),
-                    bottom_left: line_origin + point(start.x, start.y + line_height),
-                    bottom_right: line_origin + point(end_x, start.y + line_height),
+            let start_x = line
+                .position_for_index(col_start, line_height)
+                .map(|p| p.x)
+                .unwrap_or(px(0.));
+            let end_x = line
+                .position_for_index(col_end, line_height)
+                .map(|p| p.x)
+                .unwrap_or_else(|| {
+                    line.position_for_index(row_data.text.len(), line_height)
+                        .map(|p| p.x)
+                        .unwrap_or(px(0.))
                 });
+            // Ensure at least 6px width for the selection for empty lines.
+            let end_x = end_x.max(start_x + px(6.));
 
-                // wrapped lines
-                for i in 1..=wrapped_lines {
-                    let start = point(px(0.), start.y + i as f32 * line_height);
-                    let mut end = point(end.x, end.y + i as f32 * line_height);
-                    if i < wrapped_lines {
-                        end.x = line_size.width;
-                    }
-
-                    line_corners.push(Corners {
-                        top_left: line_origin + point(start.x, start.y),
-                        top_right: line_origin + point(end.x, start.y),
-                        bottom_left: line_origin + point(start.x, start.y + line_height),
-                        bottom_right: line_origin + point(end.x, start.y + line_height),
-                    });
-                }
-            }
-
-            if line_ix >= span.end_row {
-                break;
-            }
-
-            offset_y += line_size.height;
+            line_corners.push(Corners {
+                top_left: line_origin + point(start_x, px(0.)),
+                top_right: line_origin + point(end_x, px(0.)),
+                bottom_left: line_origin + point(start_x, line_height),
+                bottom_right: line_origin + point(end_x, line_height),
+            });
         }
 
         if line_corners.is_empty() {
@@ -726,11 +465,8 @@ impl TextElement {
             }
         }
 
-        // v62: Zed 同款逐行矩形（每显示行一个 quad，paint_quad 直绘）。
-        // 原实现把各行拼成阶梯多边形走 PathBuilder::build()——那是同步
-        // lyon CPU tessellation，拖选时每帧白打几 ms～几十 ms（debug 更甚），
-        // 多行选区表现为「停顿一下才画出来」。逐行 quad 与 Zed 编辑器选区
-        // 同形（软换行逐显示行独立高亮），视觉差异只在异宽行的接缝处。
+        // v62: Zed 同款逐行矩形（每显示行一个 quad，paint_quad 直绘）——
+        // 同步 lyon tessellation 已在 v62 移除，保持逐行 quad。
         let path_origin = bounds.origin + point(line_number_width, px(0.));
         let quads = line_corners
             .iter()
@@ -765,7 +501,7 @@ impl TextElement {
         let mut matches = Vec::new();
         let state = self.state.read(cx);
         for (index, range) in ranges.as_ref().iter().enumerate() {
-            let span = Self::quad_span(state, range.clone());
+            let span = Self::quad_span(state, last_layout, range.clone());
             if let Some(quads) = Self::layout_match_quads(&span, last_layout, bounds) {
                 matches.push((quads, current_match_ix == index));
             }
@@ -786,7 +522,7 @@ impl TextElement {
             return None;
         };
 
-        let span = Self::quad_span(&self.state.read(cx), symbol_range);
+        let span = Self::quad_span(&self.state.read(cx), last_layout, symbol_range);
         Self::layout_match_quads(&span, last_layout, bounds)
     }
 
@@ -800,7 +536,7 @@ impl TextElement {
         let mut colors = vec![];
         let state = self.state.read(cx);
         for (range, color) in document_colors.iter() {
-            let span = Self::quad_span(state, range.clone());
+            let span = Self::quad_span(state, last_layout, range.clone());
             if let Some(quads) = Self::layout_match_quads(&span, last_layout, bounds) {
                 colors.push((quads, *color));
             }
@@ -809,51 +545,24 @@ impl TextElement {
         colors
     }
 
-    /// buffer 字节 → QuadSpan。fold 态经 to_fold_point（Bias::Left/Right =
-    /// zed anchor before/after 偏向）；装饰态行号 == doc 行号（folds 不跨
-    /// 行，decorations.rs 行数严格一致）；其余 = buffer 点。
-    fn quad_span(state: &InputState, range: Range<usize>) -> QuadSpan {
-        let start = range.start;
-        let end = range.end;
-        if state.fold_snapshot.has_folds() && state.fold_allowed() {
-            let fp = |off: usize, bias: Bias| -> FoldPoint {
-                let p = state.text.offset_to_point(off);
-                state.fold_snapshot.to_fold_point(
-                    InlayPoint(FoldSpacePoint::new(p.row as u32, p.column as u32)),
-                    bias,
-                )
-            };
-            let s = fp(start, Bias::Left);
-            let e = fp(end, Bias::Right);
-            QuadSpan {
-                bytes: FoldPoint::new(s.row(), s.column())
-                    .to_offset(&state.fold_snapshot)
-                    .0
-                    ..FoldPoint::new(e.row(), e.column())
-                        .to_offset(&state.fold_snapshot)
-                        .0,
-                start_row: s.row() as usize,
-                start_col: s.column() as usize,
-                end_row: e.row() as usize,
-                end_col: e.column() as usize,
-            }
-        } else {
-            let s = state.text.offset_to_point(start);
-            let e = state.text.offset_to_point(end);
-            QuadSpan {
-                bytes: start..end,
-                start_row: s.row,
-                start_col: s.column,
-                end_row: e.row,
-                end_col: e.column,
-            }
+    /// buffer 字节区间 → 显示空间 QuadSpan（dqjd S2：经显示换算收口，
+    /// Bias::Left/Right = zed anchor before/after 偏向）。
+    fn quad_span(state: &InputState, layout: &LastLayout, range: Range<usize>) -> QuadSpan {
+        let (start_row, start_col) =
+            state.offset_to_display_point(layout, range.start, Bias::Left);
+        let (end_row, end_col) = state.offset_to_display_point(layout, range.end, Bias::Right);
+        QuadSpan {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
         }
     }
 
     fn layout_selections(
         &self,
         last_layout: &LastLayout,
-        bounds: &mut Bounds<Pixels>,
+        bounds: &Bounds<Pixels>,
         cx: &mut App,
     ) -> Vec<Bounds<Pixels>> {
         let state = self.state.read(cx);
@@ -873,143 +582,11 @@ impl TextElement {
             (selected_range.end, selected_range.start)
         };
 
-        let mut span = Self::quad_span(state, start_ix..end_ix);
-        // 视口窗夹取（字节窗；跨视口选区的行自然由行区间逻辑覆盖）
-        span.bytes = span
-            .bytes
-            .start
-            .max(last_layout.visible_range_offset.start)
-            ..span
-                .bytes
-                .end
-                .min(last_layout.visible_range_offset.end);
-
-        Self::layout_match_quads(&span, &last_layout, bounds).unwrap_or_default()
+        let span = Self::quad_span(state, last_layout, start_ix..end_ix);
+        Self::layout_match_quads(&span, last_layout, bounds).unwrap_or_default()
     }
 
-    /// Calculate the visible range of lines in the viewport.
-    ///
-    /// Returns
-    ///
-    /// - visible_range: The visible range is based on unwrapped lines (Zero based).
-    ///   pi-flash patch（折叠）：**显示行**空间（隐藏行不计）。
-    /// - visible_top: The top position of the first visible line in the scroll viewport.
-    /// - buffer_rows: 显示行对应的缓冲行表（无折叠时 = start..end 顺序行）。
-    /// pi-flash patch（移植）：每显示行的 (缓冲行号, fold 行首字节, 行文本)。
-    fn calculate_visible_range(
-        &self,
-        state: &InputState,
-        line_height: Pixels,
-        input_height: Pixels,
-    ) -> (Range<usize>, Pixels, Vec<(usize, usize, String)>) {
-        // Add extra rows to avoid showing empty space when scroll to bottom.
-        let extra_rows = 1;
-        let mut visible_top = px(0.);
-        if state.mode.is_single_line() {
-            return (0..1, visible_top, vec![(0, 0, String::new())]);
-        }
-
-        // pi-flash patch（移植）：fold 空间布局——显示行 = fold 行，行文本
-        // 含 "⋯" 占位符（zed fold chunk 同构）；折叠态关软折行（024 同规则）
-        if state.fold_snapshot.has_folds() && state.fold_allowed() {
-            let total_display = state.fold_snapshot.max_point().row() as usize + 1;
-            let scroll_top = if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
-                deferred_scroll_offset.y
-            } else {
-                state.scroll_handle.offset().y
-            };
-            let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
-            let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
-            let start = rows_above.min(total_display);
-            let end = (start + visible_rows + extra_rows + 1).min(total_display);
-            let rows = (start..end)
-                .map(|row| {
-                    let fp = FoldPoint::new(row as u32, 0);
-                    (
-                        state.fold_snapshot.row_to_buffer_row(row as u32) as usize,
-                        fp.to_offset(&state.fold_snapshot).0,
-                        state.fold_snapshot.row_text(row as u32),
-                    )
-                })
-                .collect();
-            return (start..end, start as f32 * line_height, rows);
-        }
-
-        let total_lines = state.text_wrapper.len();
-        let scroll_top = if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
-            deferred_scroll_offset.y
-        } else {
-            state.scroll_handle.offset().y
-        };
-
-        // 等高行（每个逻辑行恰一条显示行，行高恒定；不软换行、或软换行下无行
-        // 被折——文件编辑器通常是后者）：可见区间闭式解，不再从第 0 行累加
-        // 行高——那是 O(滚动深度)，80K 行文件滚到底部时每帧白扫几万行
-        // （Zed 的 PositionMap 就是靠行几何闭式算可见区间）。有折行即
-        // is_uniform()=false，走下面的线性路径。
-        if state.text_wrapper.is_uniform() {
-            let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
-            let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
-            let start = rows_above.min(total_lines);
-            let end = (start + visible_rows + extra_rows + 1).min(total_lines);
-            // pi-flash patch（移植）：行文本进 LastLayout（tab_map 展开/
-            // match_quads 的行内换算共用）
-            let rows = (start..end)
-                .map(|row| {
-                    (
-                        row,
-                        state.text.line_start_offset(row),
-                        state.text.slice_line(row).to_string(),
-                    )
-                })
-                .collect();
-            return (start..end, start as f32 * line_height, rows);
-        }
-
-        // PF 修复（2026-10-14）：visible_range 是**逻辑行**空间，界限必须取
-        // lines.len()（逻辑行数）；原初始值 total_lines = text_wrapper.len()
-        // 是软换行行数——滚到文件底部（break 不触发）时 end 会跑到几千，
-        // 与循环里赋值的逻辑行号 ix 混用。旧 layout_lines 靠 slice_lines
-        // 越界钳制掩住，逐行迭代后直接 panic（pi-flash-jtt 实测）。
-        // pi-flash patch（折叠）：隐藏行不占高、不进 buffer_rows。
-        let logical_lines = state.text_wrapper.lines.len();
-        let mut visible_range = 0..logical_lines;
-        let mut line_bottom = px(0.);
-        for (ix, line) in state.text_wrapper.lines.iter().enumerate() {
-            let wrapped_height = line.height(line_height);
-            line_bottom += wrapped_height;
-
-            if line_bottom < -scroll_top {
-                visible_top = line_bottom - wrapped_height;
-                visible_range.start = ix;
-            }
-
-            if line_bottom + scroll_top >= input_height {
-                visible_range.end = (ix + extra_rows).min(logical_lines);
-                break;
-            }
-        }
-
-        let rows = (visible_range.start..visible_range.end)
-            .map(|row| {
-                (
-                    row,
-                    state.text.line_start_offset(row),
-                    state.text.slice_line(row).to_string(),
-                )
-            })
-            .collect();
-        (visible_range, visible_top, rows)
-    }
-
-    /// Return (line_number_width, line_number_len, left_padding, right_padding)
-    ///
-    /// pi-flash patch（移植）：zed GutterDimensions::gutter_dimensions
-    /// （editor.rs:12184，singleton + 行号 + folds 分支）——left_padding =
-    /// ch_width、right_padding = ch_width * 4（fold 符号区），width =
-    /// 数字宽 + left + right；折叠符号带宽 = right_padding（zed
-    /// fold_area_width = margin + right_padding，margin = -descent 是基线
-    /// 前移，PF 无此项故命中带取 right_padding）。
+    /// Calculate the width of the line numbers
     fn layout_line_numbers(
         state: &InputState,
         text: &Rope,
@@ -1076,268 +653,12 @@ impl TextElement {
             right_padding,
         )
     }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_lines(
-        state: &InputState,
-        display_text: &Rope,
-        last_layout: &LastLayout,
-        font_size: Pixels,
-        runs: &[TextRun],
-        bg_segments: &[(Range<usize>, Hsla)],
-        shape_window: &Range<usize>,
-        window: &mut Window,
-    ) -> Vec<LineLayout> {
-        let is_multi_line = state.mode.is_multi_line();
-        let text_wrapper = &state.text_wrapper;
-        // pi-flash patch（移植）：行首偏移 = fold_row_starts（非折叠 ==
-        // buffer 行首；cvr 两分支都按行直取填充）
-        let doc_starts = &last_layout.fold_row_starts;
-        let fold_mode = last_layout.fold_mode;
-
-        if !is_multi_line {
-            let shaped_line = window.text_system().shape_line(
-                display_text.to_string().into(),
-                font_size,
-                &runs,
-                None,
-            );
-
-            return vec![LineLayout::new().lines(smallvec::smallvec![shaped_line])];
-        }
-
-        // Empty to use placeholder, the placeholder is not in the text_wrapper map.
-        if state.text.len() == 0 {
-            return display_text
-                .to_string()
-                .split("\n")
-                .map(|line| {
-                    let shaped_line = window.text_system().shape_line(
-                        line.to_string().into(),
-                        font_size,
-                        &runs,
-                        None,
-                    );
-                    LineLayout::new().lines(smallvec::smallvec![shaped_line])
-                })
-                .collect();
-        }
-
-        // PF 2026-10-14：不再把整段可见行物化成一个 String（minified 单行
-        // 文件一次就是 941KB/帧的分配），逐行走零拷贝 RopeSlice，段文本
-        // 只在真正 shaping 时取。
-        let mut lines = vec![];
-        for (ix, &row) in last_layout.buffer_rows.iter().enumerate() {
-            // PF 2026-10-14：防御性行界（visible_range 原则上已由
-            // calculate_visible_range 钳到逻辑行数，越界只可能是尾部）。
-            let Some(line_item) = text_wrapper.lines.get(row) else {
-                continue;
-            };
-            let line_slice = display_text.slice_line(row);
-
-            // PF-024: 折叠态按折叠后行长单段 shaping——text_wrapper 是 doc
-            // 文本的行模型（含软换行），折叠后长度不再相等；挂装饰的同时
-            // 必须关软换行（app 侧 sync_live_decorations 同步收口，折叠与
-            // 折行结构互斥），单段即全行。
-            let folded = last_layout.decorations.is_some() || fold_mode;
-            if folded {
-                debug_assert!(
-                    last_layout.wrap_width.is_none(),
-                    "折叠态必须关软换行（024 §6.1 P1 定案）"
-                );
-            } else {
-                debug_assert_eq!(line_item.len(), line_slice.len());
-            }
-
-            let mut line_layout = LineLayout::new();
-            let mut wrapped_lines: SmallVec<[ShapedLine; 1]> = SmallVec::with_capacity(1);
-
-            let wrapped_ranges: SmallVec<[Range<usize>; 1]> = if folded {
-                smallvec::smallvec![0..line_slice.len()]
-            } else {
-                line_item.wrapped_lines.clone()
-            };
-
-            // PF 2026-10-14：视口字节窗（含 EXTRA_SHAPE_ROWS 行余量）外的
-            // 软换行段不再 shaping——垫一条等 len 的空 ShapedLine 占位。段数
-            // 与字节 len 全保留（光标/选区/点击的行内定位按 len 累加，y 槽位
-            // 按段序号），x 取 0 只发生在屏外行。94 万字符行原来是 ~6000 段
-            // 全量 shaping/帧。
-            let abs_line_start = doc_starts.get(ix).copied().unwrap_or(0);
-            for range in &wrapped_ranges {
-                let seg_start = abs_line_start + range.start;
-                let seg_end = abs_line_start + range.end;
-                if seg_end <= shape_window.start || seg_start >= shape_window.end {
-                    wrapped_lines.push(ShapedLine::default().with_len(range.len()));
-                    continue;
-                }
-
-                let line_runs = runs_for_range(runs, abs_line_start, &range);
-                let line_runs = if bg_segments.is_empty() {
-                    line_runs
-                } else {
-                    split_runs_by_bg_segments(abs_line_start, &line_runs, bg_segments)
-                };
-
-                let sub_line: SharedString = line_slice.slice(range.clone()).to_string().into();
-                // pi-flash patch（移植）：tab 展开层（zed TabMap 语义）——
-                // DirectWrite 对 \t 渲染 0 宽，shape 前展开为制表位空格、
-                // runs 经映射表重排；段首初始列 = 行首到段首的字符数（软换
-                // 行段的制表位按整行列对齐）。md 装饰态不展开（024 互斥）。
-                let tab_size = state
-                    .mode
-                    .tab_size()
-                    .map_or(2, |t| t.tab_size as u32);
-                let (sub_line, line_runs) = if last_layout.decorations.is_some() {
-                    (sub_line, line_runs)
-                } else {
-                    let init_col = line_slice.slice(0..range.start).chars().count() as u32;
-                    let exp = super::tab_map::TabExpansion::build_with_col(
-                        &sub_line,
-                        tab_size,
-                        init_col,
-                    );
-                    let expanded: SharedString = exp.text.clone().into();
-                    let (fb_font, fb_color) = runs
-                        .first()
-                        .map(|r| (r.font.clone(), r.color))
-                        .unwrap_or_else(|| {
-                            (window.text_style().font(), gpui::black())
-                        });
-                    let rerun = super::tab_map::rerun_expanded(&line_runs, &exp, fb_font, fb_color);
-                    (expanded, rerun)
-                };
-                // PF-024 P1：行级字号上浮（标题行）——倍数来自装饰，
-                // cap 在行高内（行高 uniform，行级行高缝留 P2）。
-                let line_size = last_layout
-                    .decorations
-                    .as_ref()
-                    .and_then(|dec| {
-                        dec.line_scale
-                            .iter()
-                            .find(|(l, _)| *l == row)
-                            .map(|(_, s)| *s)
-                    })
-                    .map(|s| font_size * s.min(1.7))
-                    .unwrap_or(font_size);
-                let shaped_line = window
-                    .text_system()
-                    .shape_line(sub_line.clone(), line_size, &line_runs, None);
-
-                wrapped_lines.push(shaped_line);
-            }
-
-            line_layout.set_wrapped_lines(wrapped_lines);
-            lines.push(line_layout);
-        }
-
-        lines
-    }
-
-    /// First usize is the offset of skipped.
-    ///
-    /// `shape_window`（PF 2026-10-14）：视口字节窗。逐**逻辑行**的查询范围
-    /// 一律先与它求交——minified 单行（94 万字符）曾把整行送进
-    /// `SyntaxHighlighter::styles`（match_styles 全行 capture + unique_styles
-    /// O(区间×样式) 二重扫），每帧分钟级假死。普通行整行都在窗内，行为不变。
-    fn highlight_lines(
-        &mut self,
-        buffer_rows: &[usize],
-        _visible_top: Pixels,
-        visible_byte_range: Range<usize>,
-        shape_window: &Range<usize>,
-        cx: &mut App,
-    ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-        let state = self.state.read(cx);
-        let text = &state.text;
-
-        let (highlighter, diagnostics) = match &state.mode {
-            InputMode::CodeEditor {
-                highlighter,
-                diagnostics,
-                ..
-            } => (highlighter.borrow(), diagnostics),
-            _ => return None,
-        };
-        let highlighter = highlighter.as_ref()?;
-
-        let mut styles = vec![];
-
-        // PF 修复（2026-10-15）：runs 的消费端（layout_lines → runs_for_range
-        // → shape_text）假设样式区间**从 doc 0 起连续平铺**（runs_for_range
-        // 的 cursor 从 0 累计，TextRun 无区间信息）。视口窗裁剪后窗前/窗后
-        // 必须补默认样式段——否则所有 run 边界相对文本整体错位：ASCII 文件
-        // 只是高亮悄悄错位，含 CJK 的文件在 shape_text 里被从多字节字符
-        // 中间切开直接 panic（"byte index is not a char boundary"）。
-        // PF 修复（2026-11-13）：filler 原从 visible_byte_range.start（视口
-        // 首行）起——「数组起点」与消费端的「doc 0」是两个层级，滚动后
-        // （buffer_span.start>0）整体错位该字节数：长 sh 滚屏即崩（'相'
-        // 88..91 被 89 切中，pif-ui pagedown 复现）。数组首项必须从 doc 0。
-        let array_start = shape_window.start.min(visible_byte_range.start);
-        if array_start > 0 {
-            styles.push((0..array_start, HighlightStyle::default()));
-        }
-        if shape_window.start > visible_byte_range.start {
-            styles.push((
-                visible_byte_range.start..shape_window.start,
-                HighlightStyle::default(),
-            ));
-        }
-
-        // pi-flash patch（折叠）：按缓冲行表迭代（隐藏行不进高亮查询），
-        // 行区间按行直取（行首 + 行长 + 换行）。折叠洞补默认样式段——
-        // runs 消费端（runs_for_range）按绝对字节切，洞不补会错位切空
-        // （折叠行重现为空白的根因）。
-        let mut prev_end = shape_window.start;
-        for &row in buffer_rows {
-            let line_start = text.line_start_offset(row);
-            // +1 for `\n`
-            let line_len = text.line_len(row) + 1;
-            let range = line_start..line_start + line_len;
-
-            let start = range.start.max(shape_window.start);
-            let end = range.end.min(shape_window.end);
-            if start >= end {
-                continue;
-            }
-            if start > prev_end {
-                styles.push((prev_end..start, HighlightStyle::default()));
-            }
-            let line_styles = highlighter.styles(&(start..end), &cx.theme().highlight_theme);
-            styles = gpui::combine_highlights(styles, line_styles).collect();
-            prev_end = prev_end.max(end);
-        }
-        if shape_window.end > prev_end {
-            styles.push((prev_end..shape_window.end, HighlightStyle::default()));
-        }
-
-        if shape_window.end < visible_byte_range.end {
-            styles.push((
-                shape_window.end..visible_byte_range.end,
-                HighlightStyle::default(),
-            ));
-        }
-
-        let diagnostic_styles = diagnostics.styles_for_range(&visible_byte_range, cx);
-
-        // hover definition style
-        if let Some(hover_style) = self.layout_hover_definition(cx) {
-            styles.push(hover_style);
-        }
-
-        // Combine marker styles
-        styles = gpui::combine_highlights(diagnostic_styles, styles).collect();
-
-        Some(styles)
-    }
 }
 
 pub(super) struct PrepaintState {
     /// The lines of entire lines.
     last_layout: LastLayout,
     /// The lines only contains the visible lines in the viewport, based on `visible_range`.
-    ///
-    /// The child is the soft lines.
     line_numbers: Option<Vec<SmallVec<[ShapedLine; 1]>>>,
     /// Size of the scrollable area by entire lines.
     scroll_size: Size<Pixels>,
@@ -1412,141 +733,294 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let state = self.state.read(cx);
         let line_height = snap_line_height(window.line_height(), window.scale_factor());
-
-        // pi-flash patch（移植）：rows = 每显示行 (缓冲行号, fold 行首, 行文本)
-        let (visible_range, visible_top, rows) =
-            self.calculate_visible_range(&state, line_height, bounds.size.height);
-        let fold_active = state.fold_snapshot.has_folds() && state.fold_allowed();
-        let buffer_rows: Vec<usize> = rows.iter().map(|(r, _, _)| *r).collect();
-        let fold_row_starts: Vec<usize> = rows.iter().map(|(_, f, _)| *f).collect();
-        let fold_row_texts: Vec<String> = rows.iter().map(|(_, _, t)| t.clone()).collect();
-        // 字节窗：fold 态 = fold 空间窗；非折叠 = buffer 行窗（缓冲行首尾）
-        let buffer_span = if fold_active {
-            let first = rows.first().map(|(_, f, _)| *f).unwrap_or(0);
-            // 最后一显示行末（= 下一行起点；文档末行钳到 max 行——fold 点
-            // 越界会触发 zed to_offset 的 display point 断言）
-            let max_row = state.fold_snapshot.max_point().row();
-            let last_end = rows
-                .last()
-                .map(|(_, f, _)| {
-                    FoldOffset(*f)
-                        .to_point(&state.fold_snapshot)
-                        .row()
-                        .saturating_add(1)
-                        .min(max_row)
-                })
-                .unwrap_or(0);
-            let last_start = FoldPoint::new(last_end as u32, 0)
-                .to_offset(&state.fold_snapshot)
-                .0;
-            first..last_start
-        } else {
-            let first = rows.first().map(|(r, _, _)| *r).unwrap_or(0);
-            let last = rows.last().map(|(r, _, _)| *r + 1).unwrap_or(0);
-            state.text.line_start_offset(first)
-                ..state.text.line_end_offset(last.saturating_sub(1))
-        };
-        let visible_start_offset = buffer_span.start;
-        let visible_end_offset = buffer_span.end;
-
-        // PF 大文件修复（2026-10-14，见 docs/agents/gpui.md）：高亮查询与
-        // 文本 shaping 一律裁到「视口字节窗」（含上下 EXTRA_SHAPE_ROWS 行
-        // 余量）。窗口为空（0 高布局等退化帧）退回整段可见行，行为同旧版。
-        let scroll_top = state
-            .deferred_scroll_offset
-            .map(|d| d.y)
-            .unwrap_or_else(|| state.scroll_handle.offset().y);
-        let viewport_top = -scroll_top;
-        let shape_window = viewport_byte_window(
-            &state.text,
-            &state.text_wrapper,
-            &rows,
-            visible_top,
-            line_height,
-            viewport_top - EXTRA_SHAPE_ROWS as f32 * line_height,
-            viewport_top + bounds.size.height + EXTRA_SHAPE_ROWS as f32 * line_height,
-        );
-        let shape_window = if shape_window.is_empty() {
-            visible_start_offset..visible_end_offset
-        } else {
-            shape_window
-        };
-
-        // PF-024: 装饰 provider（md Live Preview）每帧纯函数现算——折叠文本 +
-        // 折叠坐标系样式；None = 走原路径（tree-sitter 高亮 + doc 文本）。
-        // pi-flash patch（折叠）：provider 契约是**缓冲行号区间**
-        // （decorations.rs:134 `visible_lines` 0-based 行号）；buffer_span
-        // 已是字节窗（fold 态还是 fold 空间字节），行窗另按 rows 表合成。
-        let provider_row_span = rows
-            .first()
-            .map(|(r, _, _)| *r)
-            .unwrap_or(visible_range.start)
-            ..rows
-                .last()
-                .map(|(r, _, _)| *r + 1)
-                .unwrap_or(visible_range.end);
-        let decorations: Option<Rc<Decorations>> = state
-            .decorations
-            .as_ref()
-            .and_then(|p| {
-                p.decorate(
-                    &state.text,
-                    provider_row_span,
-                    state.selected_range.start..state.selected_range.end,
-                )
-            })
-            .map(Rc::new);
-
-        let highlight_styles = if let Some(dec) = decorations.as_ref() {
-            // 折叠坐标系样式（可见区按序全覆盖），替代 ts 高亮（两者不叠加）
-            Some(dec.styles.clone())
-        } else if fold_active {
-            // pi-flash patch（移植）：fold 态 runs 按显示行构建（见下）
-            None
-        } else {
-            self.highlight_lines(
-                &buffer_rows,
-                visible_top,
-                visible_start_offset..visible_end_offset,
-                &shape_window,
-                cx,
-            )
-        };
-
-        let state = self.state.read(cx);
-        let multi_line = state.mode.is_multi_line();
-        let text = state.text.clone();
-        let is_empty = text.len() == 0;
-        let placeholder = self.placeholder.clone();
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
         let mut bounds = bounds;
 
-        let (display_text, text_color) = if is_empty {
-            (
-                &Rope::from(placeholder.as_str()),
-                self.placeholder_color
-                    .unwrap_or(cx.theme().muted_foreground),
-            )
-        } else if state.masked {
-            (
-                &Rope::from("*".repeat(text.chars().count())),
-                self.text_color.unwrap_or(cx.theme().foreground),
-            )
-        } else if let Some(dec) = decorations.as_ref() {
-            // PF-024: 折叠后显示文本（行数与 doc 严格一致，折叠只在行内）
-            (&dec.display, self.text_color.unwrap_or(cx.theme().foreground))
+        // ---------- 相位一（&state）：行渲染数据 / shaping / LastLayout ----------
+        let phase1 = {
+        let state = self.state.read(cx);
+        let is_empty = state.text.len() == 0;
+        let multi_line = state.mode.is_multi_line();
+
+        // ---------- 可视区间（显示行恒等高，闭式解；Zed PositionMap 同款） ----------
+        let wrap = state.wrap_map.snapshot();
+        let total_rows = if is_empty {
+            self.placeholder.split('\n').count() as u32
+        } else if multi_line {
+            wrap.max_point().row() + 1
         } else {
-            (&text, self.text_color.unwrap_or(cx.theme().foreground))
+            1
+        };
+        let scroll_top = if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
+            deferred_scroll_offset.y
+        } else {
+            state.scroll_handle.offset().y
+        };
+        let rows_above = ((-scroll_top) / line_height).max(0.) as u32;
+        let visible_rows = (bounds.size.height / line_height).ceil().max(0.) as u32;
+        let start = rows_above.min(total_rows.saturating_sub(1));
+        let end = (start + visible_rows + EXTRA_SHAPE_ROWS + 2).min(total_rows);
+        let visible_range = start as usize..end as usize;
+        let visible_top = start as f32 * line_height;
+
+        // ---------- PF-024 装饰 provider（md Live Preview 旁路，S3 收编链） ----------
+        let decorations: Option<Rc<Decorations>> = if is_empty {
+            None
+        } else {
+            state
+                .decorations
+                .as_ref()
+                .and_then(|p| {
+                    p.decorate(
+                        &state.text,
+                        start as usize..end as usize,
+                        state.selected_range.start..state.selected_range.end,
+                    )
+                })
+                .map(Rc::new)
         };
 
         let text_style = window.text_style();
+        let base_color = self.text_color.unwrap_or(cx.theme().foreground);
+        let document_colors = if is_empty {
+            Vec::new()
+        } else {
+            state
+                .lsp
+                .document_colors_for_range(&state.text, &visible_range)
+        };
 
-        // Calculate the width of the line numbers
+        // ---------- 行渲染数据 ----------
+        let mut rows: Vec<DisplayRowData> = Vec::with_capacity((end - start) as usize);
+        if state.masked && !is_empty {
+            // 掩码行（单行密码框）：显示 "*"*chars，换算仍走链（真实文本
+            // offset——非 ASCII 掩码的命中近似与旧版一致）
+            let mask_text: String = "*".repeat(state.text.chars().count());
+            let mask_len = mask_text.len();
+            for ix in start as usize..(end as usize).min(1) {
+                rows.push(DisplayRowData {
+                    wrap_row: ix as u32,
+                    tab_row: 0,
+                    buffer_row: 0,
+                    is_row_start: true,
+                    indent: 0,
+                    seg_start: 0,
+                    seg_end: mask_len as u32,
+                    row_start_fold: 0,
+                    exp: None,
+                    text: mask_text.clone().into(),
+                    runs: vec![TextRun {
+                        len: mask_len,
+                        font: text_style.font(),
+                        color: base_color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                });
+            }
+        } else if is_empty {
+            // 占位符行（无展开映射、无样式）
+            let placeholder_lines: Vec<&str> = self.placeholder.split('\n').collect();
+            for (ix, line) in placeholder_lines
+                .iter()
+                .enumerate()
+                .skip(start as usize)
+                .take((end - start) as usize)
+            {
+                rows.push(DisplayRowData {
+                    wrap_row: ix as u32,
+                    tab_row: ix as u32,
+                    buffer_row: ix as u32,
+                    is_row_start: true,
+                    indent: 0,
+                    seg_start: 0,
+                    seg_end: 0,
+                    row_start_fold: 0,
+                    exp: None,
+                    text: (*line).to_string().into(),
+                    runs: vec![TextRun {
+                        len: line.len(),
+                        font: text_style.font(),
+                        color: self
+                            .placeholder_color
+                            .unwrap_or(cx.theme().muted_foreground),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                });
+            }
+        } else if let Some(dec) = decorations.as_ref() {
+            // deco 行（024）：doc 行 = 显示行（folds 不跨行、行数不变；软换
+            // 行在 deco 态由 app 侧关闭——S3 收编链后解除）。样式 runs 复刻
+            // 旧全局 runs + runs_for_range 切片组合（slice 基准语义原样）。
+            let highlight_styles = dec.styles.clone();
+            let mut global_runs: Vec<TextRun> = highlight_styles
+                .iter()
+                .map(|(range, style)| {
+                    let mut run = text_style.clone().highlight(*style).to_run(range.len());
+                    if let Some(ime_marked_range) = &state.ime_marked_range {
+                        if range.start >= ime_marked_range.start
+                            && range.end <= ime_marked_range.end
+                        {
+                            run.color = base_color;
+                            run.strikethrough = Some(gpui::StrikethroughStyle {
+                                thickness: px(1.),
+                                color: Some(base_color),
+                            });
+                            run.underline = Some(UnderlineStyle {
+                                thickness: px(1.),
+                                color: Some(base_color),
+                                wavy: false,
+                            });
+                        }
+                    }
+                    run
+                })
+                .filter(|run| run.len > 0)
+                .collect();
+            if global_runs.is_empty() {
+                global_runs.push(TextRun {
+                    len: 0,
+                    font: text_style.font(),
+                    color: base_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+            for doc_row in start..end {
+                let vis_text = dec.display.slice_line(doc_row as usize).to_string();
+                let doc_line_start = state.text.line_start_offset(doc_row as usize);
+                let line_runs = runs_for_range(&global_runs, doc_line_start, &(0..vis_text.len()));
+                rows.push(DisplayRowData {
+                    wrap_row: doc_row,
+                    tab_row: doc_row,
+                    buffer_row: doc_row,
+                    is_row_start: true,
+                    indent: 0,
+                    seg_start: 0,
+                    seg_end: vis_text.len() as u32,
+                    row_start_fold: 0,
+                    exp: None,
+                    text: vis_text.into(),
+                    runs: line_runs,
+                });
+            }
+        } else {
+            // 链行（fold/plain/single-line 统一）：fold 行渲染数据缓存构建
+            // （tab 展开 + 样式 runs 每 fold 行一次，段切片共享）
+            let mut fold_cache: Option<(u32, Rc<TabExpansion>, Rc<str>, Vec<TextRun>)> = None;
+            for wrap_row in start..end {
+                let info = wrap.row_info(wrap_row);
+                let cache_hit = fold_cache
+                    .as_ref()
+                    .map(|(r, _, _, _)| *r == info.tab_row)
+                    .unwrap_or(false);
+                if !cache_hit {
+                    let exp = Rc::new(state.tab_snapshot.expand_row(info.tab_row));
+                    let expanded_text: Rc<str> = Rc::from(exp.text.as_str());
+                    let runs = self.row_source_runs(
+                        state,
+                        info.tab_row,
+                        &document_colors,
+                        &text_style,
+                        base_color,
+                        cx,
+                    );
+                    fold_cache = Some((info.tab_row, exp, expanded_text, runs));
+                }
+                let (_, exp, expanded_text, expanded_runs) = fold_cache.as_ref().unwrap();
+
+                let seg_start = (info.seg_start as usize).min(expanded_text.len());
+                let seg_end = (info.seg_end as usize).min(expanded_text.len());
+                let seg_text: &str = &expanded_text[seg_start..seg_end];
+                let indent = info.indent as usize;
+                let mut text = String::with_capacity(indent + seg_text.len());
+                if indent > 0 {
+                    text.push_str(&" ".repeat(indent));
+                }
+                text.push_str(seg_text);
+
+                // 段 runs：展开行 runs 切片 + 缩进前缀 run（缩进样式取段首）
+                let mut runs = Vec::new();
+                if indent > 0 {
+                    let (font, color) = expanded_runs
+                        .first()
+                        .map(|r| (r.font.clone(), r.color))
+                        .unwrap_or_else(|| (text_style.font(), base_color));
+                    runs.push(TextRun {
+                        len: indent,
+                        font,
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    });
+                }
+                runs.extend(slice_runs(expanded_runs, seg_start, seg_end));
+
+                let buffer_row = state.fold_snapshot.row_to_buffer_row(info.tab_row);
+                let row_start_fold = FoldPoint::new(info.tab_row, 0)
+                    .to_offset(&state.fold_snapshot)
+                    .0;
+                rows.push(DisplayRowData {
+                    wrap_row,
+                    tab_row: info.tab_row,
+                    buffer_row,
+                    is_row_start: info.is_row_start,
+                    indent: info.indent,
+                    seg_start: info.seg_start,
+                    seg_end: info.seg_end,
+                    row_start_fold,
+                    exp: Some(exp.clone()),
+                    text: text.into(),
+                    runs,
+                });
+            }
+        }
+
+        // ---------- shaping（每显示行一条 ShapedLine） ----------
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let lines: Vec<LineLayout> = rows
+            .iter()
+            .map(|row| {
+                // PF-024 P1：行级字号上浮（deco 标题行）——倍数来自装饰，
+                // cap 在行高内。
+                let row_font_size = match decorations.as_ref() {
+                    Some(dec) => dec
+                        .line_scale
+                        .iter()
+                        .find(|(l, _)| *l == row.buffer_row as usize)
+                        .map(|(_, s)| font_size * s.min(1.7))
+                        .unwrap_or(font_size),
+                    None => font_size,
+                };
+                let shaped_line = window.text_system().shape_line(
+                    row.text.clone(),
+                    row_font_size,
+                    &row.runs,
+                    None,
+                );
+                LineLayout::new().lines(smallvec::smallvec![shaped_line])
+            })
+            .collect();
+
+        // ---------- 行号宽 ----------
+        let display_text_for_gutter = if is_empty {
+            Rc::new(Rope::from(self.placeholder.as_str()))
+        } else {
+            Rc::new(state.text.clone())
+        };
         let (line_number_width, line_number_len, gutter_left_padding, gutter_right_padding) =
-            Self::layout_line_numbers(&state, &text, font_size, &text_style, window);
+            Self::layout_line_numbers(
+                &state,
+                &display_text_for_gutter,
+                font_size,
+                &text_style,
+                window,
+            );
 
         let wrap_width = if multi_line && state.soft_wrap {
             Some(bounds.size.width - line_number_width - RIGHT_MARGIN)
@@ -1554,257 +1028,14 @@ impl Element for TextElement {
             None
         };
 
-        let mut last_layout = LastLayout {
-            visible_range,
-            visible_top,
-            visible_range_offset: visible_start_offset..visible_end_offset,
-            line_height,
-            wrap_width,
-            line_number_width,
-            gutter_left_padding,
-            gutter_right_padding,
-            tab_size: state.mode.tab_size().map_or(2, |t| t.tab_size as u32),
-            // pi-flash patch（移植）：与 lines 平行的表——缓冲行号（行号
-            // 栏）/ fold 行首（非折叠 == buffer 行首）/ fold 行文本
-            buffer_rows: Rc::new(buffer_rows.clone()),
-            fold_row_starts: Rc::new(fold_row_starts.clone()),
-            fold_row_texts: Rc::new(fold_row_texts.clone()),
-            fold_mode: fold_active,
-            lines: Rc::new(vec![]),
-            cursor_bounds: None,
-            decorations: decorations.as_ref().map(Rc::clone),
-        };
-
-        let run = TextRun {
-            len: display_text.len(),
-            font: style.font(),
-            color: text_color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let marked_run = TextRun {
-            len: 0,
-            font: style.font(),
-            color: text_color,
-            background_color: None,
-            underline: Some(UnderlineStyle {
-                thickness: px(1.),
-                color: Some(text_color),
-                wavy: false,
-            }),
-            strikethrough: None,
-        };
-
-        let runs = if !is_empty {
-            if let Some(highlight_styles) = highlight_styles {
-                let mut runs = vec![];
-
-                runs.extend(highlight_styles.iter().map(|(range, style)| {
-                    let mut run = text_style.clone().highlight(*style).to_run(range.len());
-                    if let Some(ime_marked_range) = &state.ime_marked_range {
-                        if range.start >= ime_marked_range.start
-                            && range.end <= ime_marked_range.end
-                        {
-                            run.color = marked_run.color;
-                            run.strikethrough = marked_run.strikethrough;
-                            run.underline = marked_run.underline;
-                        }
-                    }
-
-                    run
-                }));
-
-                runs.into_iter().filter(|run| run.len > 0).collect()
-            } else {
-                vec![run]
-            }
-        } else if let Some(ime_marked_range) = &state.ime_marked_range {
-            // IME marked text
-            vec![
-                TextRun {
-                    len: ime_marked_range.start,
-                    ..run.clone()
-                },
-                TextRun {
-                    len: ime_marked_range.end - ime_marked_range.start,
-                    underline: marked_run.underline,
-                    ..run.clone()
-                },
-                TextRun {
-                    len: display_text.len() - ime_marked_range.end,
-                    ..run.clone()
-                },
-            ]
-            .into_iter()
-            .filter(|run| run.len > 0)
-            .collect()
-        } else {
-            vec![run]
-        };
-
-        let document_colors = state
-            .lsp
-            .document_colors_for_range(&text, &last_layout.visible_range);
-        let lines = if fold_active {
-            // pi-flash patch（移植）：fold 空间行 shaping——行文本含 "⋯"；
-            // runs 按行内分段（buffer 段走 ts 高亮，占位符段灰显）
-            let text_style = window.text_style();
-            let base_font = text_style.font();
-            let base_color = text_color;
-            let muted = cx.theme().muted_foreground;
-            fold_row_texts
-                .iter()
-                .enumerate()
-                .map(|(ix, text)| {
-                    let mut row_runs: Vec<TextRun> = vec![];
-                    let mut produced = 0usize;
-                    let row_len = text.len();
-                    // PF 修复（2026-11-13）：ix 是**可视窗内相对下标**（枚举
-                    // 起点 = visible_range.start），row_segments 要绝对 fold
-                    // 行号——滚动后错位配行：查到注释行整行灰、查到无捕获
-                    // 行整行默认色（折叠=全屏变灰的根因，用户实机截图 +
-                    // pif-ui 折叠 agent-workspace.sh 复现；未滚动时两者相等
-                    // 掩住了它）。zed 无此路径——fold 只是 transform，高亮
-                    // 仍在 buffer 空间，不变色。
-                    let fold_row = (last_layout.visible_range.start + ix) as u32;
-                    let segs = state.fold_snapshot.row_segments(fold_row);
-                    let mut styled: Vec<(Range<usize>, gpui::HighlightStyle)> = vec![];
-                    for (local, buf) in &segs {
-                        match buf {
-                            Some(buf) => {
-                                if let Some((hl, _diagnostics)) = match &state.mode {
-                                    InputMode::CodeEditor {
-                                        highlighter,
-                                        diagnostics,
-                                        ..
-                                    } => Some((highlighter.borrow(), diagnostics)),
-                                    _ => None,
-                                } {
-                                    if let Some(hl) = hl.as_ref() {
-                                        // 样式相对 buf.start，平移到行内 local 坐标
-                                        let mut seg_styles = hl
-                                            .styles(buf, &cx.theme().highlight_theme)
-                                            .into_iter()
-                                            .filter_map(|(r, st)| {
-                                                let a = local.start + r.start.saturating_sub(buf.start);
-                                                let b = local.start + r.end.saturating_sub(buf.start);
-                                                (b > a).then_some((a..b.min(local.end), st))
-                                            })
-                                            .collect::<Vec<_>>();
-                                        seg_styles.sort_by_key(|(r, _)| r.start);
-                                        let mut cursor = local.start;
-                                        for (r, st) in seg_styles {
-                                            if r.start > cursor {
-                                                styled.push((cursor..r.start, gpui::HighlightStyle::default()));
-                                            }
-                                            styled.push((r.clone(), st));
-                                            cursor = cursor.max(r.end);
-                                        }
-                                        if cursor < local.end {
-                                            styled.push((cursor..local.end, gpui::HighlightStyle::default()));
-                                        }
-                                    } else {
-                                        styled.push((local.clone(), gpui::HighlightStyle::default()));
-                                    }
-                                } else {
-                                    styled.push((local.clone(), gpui::HighlightStyle::default()));
-                                }
-                            }
-                            None => {
-                                styled.push((local.clone(), gpui::HighlightStyle::default()));
-                            }
-                        }
-                        let _ = &mut row_runs;
-                    }
-                    styled.sort_by_key(|(r, _)| r.start);
-                    let mut merged: Vec<(Range<usize>, gpui::HighlightStyle)> = vec![];
-                    for (r, st) in styled {
-                        let r = r.start..r.end.min(row_len);
-                        if r.end <= r.start {
-                            continue;
-                        }
-                        if let Some(last) = merged.last_mut() {
-                            if last.0.end == r.start && last.1 == st {
-                                last.0.end = r.end;
-                                continue;
-                            }
-                        }
-                        merged.push((r, st));
-                    }
-                    let mut cursor = 0usize;
-                    for (r, st) in &merged {
-                        if r.start > cursor {
-                            row_runs.push(TextRun {
-                                len: r.start - cursor,
-                                font: base_font.clone(),
-                                color: base_color,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            });
-                        }
-                        let mut run = text_style.clone().highlight(*st).to_run(r.len());
-                        // 占位符段（buffer=None 的 local 区间）灰显
-                        if segs.iter().any(|(l, b)| b.is_none() && l.start <= r.start && l.end >= r.end) {
-                            run.color = muted;
-                        }
-                        row_runs.push(run);
-                        cursor = r.end;
-                    }
-                    if cursor < row_len {
-                        row_runs.push(TextRun {
-                            len: row_len - cursor,
-                            font: base_font.clone(),
-                            color: base_color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        });
-                    }
-                    produced = row_len;
-                    let _ = produced;
-                    // pi-flash patch（移植）：tab 展开层（同 layout_lines）
-                    let tab_size = state
-                        .mode
-                        .tab_size()
-                        .map_or(2, |t| t.tab_size as u32);
-                    let exp = super::tab_map::TabExpansion::build(&text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                    let expanded: SharedString = exp.text.clone().into();
-                    let row_runs = super::tab_map::rerun_expanded(
-                        &row_runs,
-                        &exp,
-                        base_font.clone(),
-                        base_color,
-                    );
-                    let shaped = window.text_system().shape_line(
-                        expanded,
-                        font_size,
-                        &row_runs,
-                        None,
-                    );
-                    LineLayout::new().lines(smallvec::smallvec![shaped])
-                })
-                .collect()
-        } else {
-            Self::layout_lines(
-                &state,
-                &display_text,
-                &last_layout,
-                font_size,
-                &runs,
-                &document_colors,
-                &shape_window,
-                window,
-            )
-        };
-
+        // ---------- 横向内容宽（无软换行 = 最长行实宽） ----------
         let mut longest_line_width = wrap_width.unwrap_or(px(0.));
-        // pi-flash patch（移植）：fold 态横向宽度按最长显示行（zed
-        // TransformSummary.output.longest_row）
-        if fold_active {
-            let longest_row = state.fold_snapshot.longest_row();
-            let longest_text = state.fold_snapshot.row_text(longest_row);
+        if wrap_width.is_none() && multi_line && !is_empty && decorations.is_none() && !rows.is_empty()
+        {
+            // dqjd S2：最长行 = wrap 摘要 longest_row（字符口径；zed
+            // TransformSummary 同源），展开文本实 shape。
+            let longest_row = wrap.longest_row();
+            let longest_text = state.tab_snapshot.expand_row(longest_row).text;
             let longest_len = longest_text.len();
             longest_line_width = window
                 .text_system()
@@ -1813,7 +1044,7 @@ impl Element for TextElement {
                     font_size,
                     &[TextRun {
                         len: longest_len,
-                        font: style.font(),
+                        font: text_style.font(),
                         color: gpui::black(),
                         background_color: None,
                         underline: None,
@@ -1821,106 +1052,96 @@ impl Element for TextElement {
                     }],
                     None,
                 )
-                .width
-                + line_number_width
-                + RIGHT_MARGIN;
-        }
-        if state.mode.is_multi_line() && !state.soft_wrap && lines.len() > 1 {
-            let longest_row = state.text_wrapper.longest_row.row;
-            let longtest_line: SharedString = if let Some(dec) = &last_layout.decorations {
-                // PF-024: 横向滚动宽度按折叠后最长行（doc 最长行可能已折叠）
-                dec.display.slice_line(longest_row).to_string().into()
-            } else {
-                state.text.slice_line(longest_row).to_string().into()
-            };
-            longest_line_width = window
-                .text_system()
-                .shape_line(
-                    longtest_line.clone(),
-                    font_size,
-                    &[TextRun {
-                        len: longtest_line.len(),
-                        font: style.font(),
-                        color: gpui::black(),
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    }],
-                    wrap_width,
-                )
                 .width;
         }
-        last_layout.lines = Rc::new(lines);
+        if wrap_width.is_none() && multi_line && !is_empty {
+            if let Some(dec) = decorations.as_ref() {
+                // PF-024：横向滚动宽度按折叠后最长行（doc 最长行可能已折叠）
+                let longest_row = wrap.longest_row().min(dec.display.lines_len() as u32);
+                let longest_line: SharedString =
+                    dec.display.slice_line(longest_row as usize).to_string().into();
+                longest_line_width = window
+                    .text_system()
+                    .shape_line(
+                        longest_line.clone(),
+                        font_size,
+                        &[TextRun {
+                            len: longest_line.len(),
+                            font: text_style.font(),
+                            color: gpui::black(),
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                        None,
+                    )
+                    .width;
+            }
+        }
 
-        // pi-flash patch（移植）：fold 态滚动高度 = 显示行数×行高；非折叠
-        // 走 text_wrapper（软换行行数）
-        let total_wrapped_lines = if fold_active {
-            state.fold_snapshot.max_point().row() as usize + 1
+        // ---------- 可见源字节窗（观测/兼容字段） ----------
+        let visible_range_offset = if is_empty || rows.is_empty() {
+            0..0
+        } else if decorations.is_some() {
+            let first = rows.first().unwrap().buffer_row as usize;
+            let last = rows.last().unwrap().buffer_row as usize;
+            state.text.line_start_offset(first)..state.text.line_end_offset(last)
         } else {
-            state.text_wrapper.len()
+            let first = rows.first().unwrap();
+            let last = rows.last().unwrap();
+            let last_len = state.fold_snapshot.row_text(last.tab_row).len();
+            first.row_start_fold..last.row_start_fold + last_len
         };
-        let empty_bottom_height = bounds
-            .size
-            .height
-            .half()
-            .max(BOTTOM_MARGIN_ROWS * line_height);
-        let scroll_size = size(
-            if longest_line_width + line_number_width + RIGHT_MARGIN > bounds.size.width {
-                longest_line_width + line_number_width + RIGHT_MARGIN
-            } else {
-                longest_line_width
-            },
-            (total_wrapped_lines as f32 * line_height + empty_bottom_height)
-                .max(bounds.size.height),
-        );
 
-        // `position_for_index` for example
-        //
-        // #### text
-        //
-        // Hello 世界，this is GPUI component.
-        // The GPUI Component is a collection of UI components for
-        // GPUI framework, including Button, Input, Checkbox, Radio,
-        // Dropdown, Tab, and more...
-        //
-        // wrap_width: 444px, line_height: 20px
-        //
-        // #### lines[0]
-        //
-        // | index | pos              | line |
-        // |-------|------------------|------|
-        // | 5     | (37 px, 0.0)     | 0    |
-        // | 38    | (261.7 px, 20.0) | 0    |
-        // | 40    | None             | -    |
-        //
-        // #### lines[1]
-        //
-        // | index | position              | line |
-        // |-------|-----------------------|------|
-        // | 5     | (43.578125 px, 0.0)   | 0    |
-        // | 56    | (422.21094 px, 0.0)   | 0    |
-        // | 57    | (11.6328125 px, 20.0) | 1    |
-        // | 114   | (429.85938 px, 20.0)  | 1    |
-        // | 115   | (11.3125 px, 40.0)    | 2    |
+        let mut last_layout = LastLayout {
+            visible_range: visible_range.clone(),
+            visible_top,
+            visible_range_offset,
+            line_height,
+            wrap_width,
+            line_number_width,
+            gutter_left_padding,
+            gutter_right_padding,
+            tab_size: state.mode.tab_size().map_or(2, |t| t.tab_size as u32),
+            rows: Rc::new(rows),
+            fold_mode: decorations.is_none(),
+            lines: Rc::new(lines),
+            cursor_bounds: None,
+            decorations: decorations.clone(),
+        };
 
-        // Calculate the scroll offset to keep the cursor in view
+        // 相位一返回（行号在相位二构建——需要 current_row）
+        (
+            last_layout,
+            total_rows,
+            font_size,
+            text_style,
+            line_number_len,
+            line_number_width,
+            longest_line_width,
+            document_colors,
+        )
+        };
 
+        let (mut last_layout, total_rows, font_size, text_style, line_number_len, line_number_width, longest_line_width, document_colors) = phase1;
+
+        // ---------- 相位二（&mut cx）：光标 / 命中 / 行号 ----------
         let (cursor_bounds, cursor_scroll_offset, current_row) =
             self.layout_cursor(&last_layout, &mut bounds, window, cx);
         last_layout.cursor_bounds = cursor_bounds;
 
-        let search_match_quads = self.layout_search_matches(&last_layout, &mut bounds, cx);
-        let selection_quads = self.layout_selections(&last_layout, &mut bounds, cx);
-        let hover_highlight_quads = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
+        let search_match_quads = self.layout_search_matches(&last_layout, &bounds, cx);
+        let selection_quads = self.layout_selections(&last_layout, &bounds, cx);
+        let hover_highlight_quads = self.layout_hover_highlight(&last_layout, &bounds, cx);
         let document_color_quads =
             self.layout_document_colors(&document_colors, &last_layout, &bounds, cx);
 
-        let state = self.state.read(cx);
-                let line_numbers = if state.mode.line_number() {
+        // ---------- 行号 ----------
+        let line_numbers = if self.state.read(cx).mode.line_number() {
             let mut line_numbers = vec![];
             let other_line_runs = vec![TextRun {
                 len: line_number_len,
-                font: style.font(),
+                font: text_style.font(),
                 color: cx.theme().muted_foreground,
                 background_color: None,
                 underline: None,
@@ -1928,24 +1149,23 @@ impl Element for TextElement {
             }];
             let current_line_runs = vec![TextRun {
                 len: line_number_len,
-                font: style.font(),
+                font: text_style.font(),
                 color: cx.theme().foreground,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
             }];
 
-            // build line numbers（pi-flash patch（折叠）：行号 = 缓冲行号，
-            // 显示行经 buffer_rows 表回映）
-            for (ix, line) in last_layout.lines.iter().enumerate() {
-                let ix = last_layout
-                    .buffer_rows
-                    .get(ix)
-                    .copied()
-                    .unwrap_or(last_layout.visible_range.start + ix);
-                let line_no = format!("{:>width$}", ix + 1, width = line_number_len).into();
+            // build line numbers（dqjd S2：行号 = 缓冲行号，行首段显示、
+            // 续行空位）
+            for (ix, row) in last_layout.rows.iter().enumerate() {
+                let line_no: SharedString = if row.is_row_start {
+                    format!("{:>width$}", row.buffer_row + 1, width = line_number_len).into()
+                } else {
+                    " ".repeat(line_number_len).into()
+                };
 
-                let runs = if current_row == Some(ix) {
+                let runs = if current_row == Some(ix + last_layout.visible_range.start) {
                     &current_line_runs
                 } else {
                     &other_line_runs
@@ -1957,9 +1177,6 @@ impl Element for TextElement {
                         .text_system()
                         .shape_line(line_no, font_size, &runs, None),
                 );
-                for _ in 0..line.wrapped_lines.len().saturating_sub(1) {
-                    sub_lines.push(ShapedLine::default());
-                }
                 line_numbers.push(sub_lines);
             }
             Some(line_numbers)
@@ -1967,7 +1184,23 @@ impl Element for TextElement {
             None
         };
 
-        let hover_definition_hitbox = self.layout_hover_definition_hitbox(state, window, cx);
+        let hover_definition_hitbox =
+            self.layout_hover_definition_hitbox(&self.state.read(cx), window, cx);
+
+        // ---------- 滚动内容尺寸 ----------
+        let empty_bottom_height = bounds
+            .size
+            .height
+            .half()
+            .max(BOTTOM_MARGIN_ROWS * line_height);
+        let scroll_size = size(
+            if longest_line_width + line_number_width + RIGHT_MARGIN > bounds.size.width {
+                longest_line_width + line_number_width + RIGHT_MARGIN
+            } else {
+                longest_line_width
+            },
+            (total_rows as f32 * line_height + empty_bottom_height).max(bounds.size.height),
+        );
 
         PrepaintState {
             bounds,
@@ -2071,11 +1304,11 @@ impl Element for TextElement {
             offset_y += invisible_top_padding;
 
             // Each item is the normal lines.
-            for (ix, lines) in line_numbers.iter().enumerate() {
+            for (ix, _) in line_numbers.iter().enumerate() {
                 let row = visible_range.start + ix;
                 let is_active = prepaint.current_row == Some(row);
                 let p = point(input_bounds.origin.x, origin.y + offset_y);
-                let height = line_height * lines.len() as f32;
+                let height = line_height;
                 // Paint the current line background
                 if is_active {
                     if let Some(bg_color) = active_line_color {
@@ -2162,9 +1395,9 @@ impl Element for TextElement {
                 // pi-flash patch（折叠）：行号/当前行高亮按缓冲行
                 let row = prepaint
                     .last_layout
-                    .buffer_rows
+                    .rows
                     .get(ix)
-                    .copied()
+                    .map(|r| r.buffer_row as usize)
                     .unwrap_or(visible_range.start + ix);
 
                 // pi-flash patch（移植）：行号右对齐于折叠符号带左侧
@@ -2173,14 +1406,16 @@ impl Element for TextElement {
                     input_bounds.origin.x + prepaint.last_layout.gutter_left_padding,
                     origin.y + offset_y,
                 );
-                let is_active = prepaint.current_row == Some(row);
+                let is_active = prepaint.current_row == Some(ix + visible_range.start);
 
-                let height = line_height * lines.len() as f32;
                 // paint active line number background
                 if is_active {
                     if let Some(bg_color) = active_line_color {
                         window.paint_quad(fill(
-                            Bounds::new(p, size(prepaint.last_layout.line_number_width, height)),
+                            Bounds::new(
+                                p,
+                                size(prepaint.last_layout.line_number_width, line_height),
+                            ),
                             bg_color,
                         ));
                     }
@@ -2200,7 +1435,7 @@ impl Element for TextElement {
             // 态）；色 = 折叠态 Color::Selected(text_accent) / 展开态
             // Color::Muted（IconButton render 分支）。点击命中带见 state 侧
             // gutter_arrow_hit（同符号带）。
-            if self.state.read(cx).mode.is_code_editor() {
+            if self.state.read(cx).mode.is_code_editor() && prepaint.last_layout.fold_mode {
                 let muted = cx.theme().muted_foreground;
                 let accent = cx.theme().accent;
                 let pill_bg = cx.theme().secondary;
@@ -2209,28 +1444,30 @@ impl Element for TextElement {
                 let right_padding = f32::from(prepaint.last_layout.gutter_right_padding);
                 let fold_area_x = input_bounds.origin.x + px(gutter_w - right_padding);
                 let fold_area_w = px(right_padding);
-                let rows_info: Vec<(usize, bool, bool, bool)> = {
+                let rows_info: Vec<(bool, bool, bool)> = {
                     let fs = self.state.read(cx);
                     let gutter_hovered = fs.gutter_hover_row.is_some();
                     let mut v = Vec::new();
-                    for (ix, sub_lines) in line_numbers.iter().enumerate() {
-                        // pi-flash patch（移植）：buffer_rows = 每显示行的缓冲
-                        // 行号；folded = 该缓冲行首有折叠块（crease 起点 =
-                        // 行尾，fold_starting_at_row 按行查）
-                        let Some(&buf_row) = prepaint.last_layout.buffer_rows.get(ix) else {
-                            break;
-                        };
-                        let folded = fs.fold_starts_at_row(buf_row as u32);
-                        let foldable = folded || fs.text.starts_indent(buf_row as u32);
+                    for row in prepaint.last_layout.rows.iter() {
+                        if !row.is_row_start {
+                            // 续行无符号（行首段才挂折叠符号）
+                            v.push((false, false, false));
+                            continue;
+                        }
+                        let buf_row = row.buffer_row as u32;
+                        let folded = fs.fold_starts_at_row(buf_row);
+                        let foldable = folded || fs.text.starts_indent(buf_row);
                         let show = folded
-                            || (foldable && (gutter_hovered || prepaint.current_row == Some(buf_row)));
-                        let hovered = fs.gutter_hover_row == Some(buf_row);
-                        v.push((sub_lines.len(), folded, show, hovered));
+                            || (foldable
+                                && (gutter_hovered
+                                    || prepaint.current_row == Some(row.wrap_row as usize)));
+                        let hovered = fs.gutter_hover_row == Some(buf_row as usize);
+                        v.push((folded, show, hovered));
                     }
                     v
                 };
                 let mut arrow_y = invisible_top_padding;
-                for (sub_count, folded, show, hovered) in rows_info {
+                for (folded, show, hovered) in rows_info {
                     if show {
                         // zed prepaint_crease_toggles：centering = (fold_area
                         // - toggle) / 2, (line_height - toggle) / 2
@@ -2268,7 +1505,7 @@ impl Element for TextElement {
                         let icon_color = if folded { accent } else { muted };
                         paint_chevron(window, icon_origin, icon_px, !folded, icon_color);
                     }
-                    arrow_y += line_height * sub_count as f32;
+                    arrow_y += line_height;
                 }
             }
         }
@@ -2313,6 +1550,209 @@ impl Element for TextElement {
     }
 }
 
+impl TextElement {
+    /// 一条结构行（tab/fold 行）的**展开空间**样式 runs：fold 行走
+    /// row_segments（buffer 段 ts 高亮 + 占位符灰显），普通行走 ts 高亮 +
+    /// diagnostics + document colors + IME（dqjd S2 自旧全局 runs / 折行
+    /// runs 两路收编为每行直查——「从 doc 0 连续平铺」filler 不变式随之消灭）。
+    #[allow(clippy::too_many_arguments)]
+    fn row_source_runs(
+        &self,
+        state: &InputState,
+        tab_row: u32,
+        document_colors: &[(Range<usize>, Hsla)],
+        text_style: &TextStyle,
+        base_color: Hsla,
+        cx: &App,
+    ) -> Vec<TextRun> {
+        let has_folds = state.fold_snapshot.has_folds();
+        let row_text = state.fold_snapshot.row_text(tab_row);
+        let row_len = row_text.len();
+        let base_font = text_style.font();
+        let mut src_runs: Vec<TextRun> = Vec::new();
+
+        if has_folds {
+            // fold 行：buffer 段走 ts 高亮，占位符段灰显（zed fold chunk
+            // placeholder 语义；行号 = 绝对 fold 行）
+            let segs = state.fold_snapshot.row_segments(tab_row);
+            let mut styled: Vec<(Range<usize>, HighlightStyle)> = vec![];
+            let highlighter = match &state.mode {
+                InputMode::CodeEditor {
+                    highlighter,
+                    diagnostics: _,
+                    ..
+                } => Some(highlighter.borrow()),
+                _ => None,
+            };
+            for (local, buf) in &segs {
+                match buf {
+                    Some(buf) => {
+                        let seg_styles = highlighter
+                            .as_ref()
+                            .and_then(|hl| hl.as_ref())
+                            .map(|hl| {
+                                hl.styles(buf, &cx.theme().highlight_theme)
+                                    .into_iter()
+                                    .filter_map(|(r, st)| {
+                                        let a = local.start + r.start.saturating_sub(buf.start);
+                                        let b = local.start + r.end.saturating_sub(buf.start);
+                                        (b > a).then_some((a..b.min(local.end), st))
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_else(|| vec![(local.clone(), HighlightStyle::default())]);
+                        let mut seg_styles = seg_styles;
+                        seg_styles.sort_by_key(|(r, _)| r.start);
+                        let mut cursor = local.start;
+                        for (r, st) in seg_styles {
+                            if r.start > cursor {
+                                styled.push((cursor..r.start, HighlightStyle::default()));
+                            }
+                            styled.push((r.clone(), st));
+                            cursor = cursor.max(r.end);
+                        }
+                        if cursor < local.end {
+                            styled.push((cursor..local.end, HighlightStyle::default()));
+                        }
+                    }
+                    None => {
+                        styled.push((local.clone(), HighlightStyle::default()));
+                    }
+                }
+            }
+            styled.sort_by_key(|(r, _)| r.start);
+            let mut merged: Vec<(Range<usize>, HighlightStyle)> = vec![];
+            for (r, st) in styled {
+                let r = r.start..r.end.min(row_len);
+                if r.end <= r.start {
+                    continue;
+                }
+                if let Some(last) = merged.last_mut() {
+                    if last.0.end == r.start && last.1 == st {
+                        last.0.end = r.end;
+                        continue;
+                    }
+                }
+                merged.push((r, st));
+            }
+            let muted = cx.theme().muted_foreground;
+            let mut cursor = 0usize;
+            for (r, st) in &merged {
+                if r.start > cursor {
+                    src_runs.push(TextRun {
+                        len: r.start - cursor,
+                        font: base_font.clone(),
+                        color: base_color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    });
+                }
+                let mut run = text_style.clone().highlight(*st).to_run(r.len());
+                // 占位符段（buffer=None 的 local 区间）灰显
+                if segs
+                    .iter()
+                    .any(|(l, b)| b.is_none() && l.start <= r.start && l.end >= r.end)
+                {
+                    run.color = muted;
+                }
+                src_runs.push(run);
+                cursor = r.end;
+            }
+            if cursor < row_len {
+                src_runs.push(TextRun {
+                    len: row_len - cursor,
+                    font: base_font.clone(),
+                    color: base_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+        } else {
+            // 普通行：ts 高亮 + diagnostics + document colors（bg）+ IME
+            let row_start = state.text.line_start_offset(tab_row as usize);
+            let row_end = row_start + state.text.line_len(tab_row as usize) + 1;
+            let mut styles: Vec<(Range<usize>, HighlightStyle)> = vec![];
+            if let InputMode::CodeEditor { highlighter, .. } = &state.mode {
+                if let Some(hl) = highlighter.borrow().as_ref() {
+                    styles.extend(hl.styles(&(row_start..row_end), &cx.theme().highlight_theme));
+                }
+            }
+            if let Some(set) = state.mode.diagnostics() {
+                let ds = set.styles_for_range(&(row_start..row_end), cx);
+                styles = gpui::combine_highlights(ds, styles).collect();
+            }
+            // hover definition style（lsp/definitions.rs 的 TextElement 方法）
+            if let Some((hr, hover_style)) = self.layout_hover_definition(cx) {
+                if hr.start < row_end && hr.end > row_start {
+                    let a = hr.start.max(row_start) - row_start;
+                    let b = hr.end.min(row_end) - row_start;
+                    styles.push((a..b, hover_style));
+                }
+            }
+            styles.sort_by_key(|(r, _)| r.start);
+            // 行内 local 坐标 + 全覆盖分区
+            let local_styles: Vec<(Range<usize>, HighlightStyle)> = styles
+                .into_iter()
+                .filter_map(|(r, st)| {
+                    let a = r.start.saturating_sub(row_start);
+                    let b = r.end.saturating_sub(row_start).min(row_len);
+                    (b > a).then_some((a..b, st))
+                })
+                .collect();
+            let partitioned = style_partition(local_styles, row_len);
+            let mut line_runs: Vec<TextRun> = Vec::new();
+            let mut cursor = 0usize;
+            for (r, st) in &partitioned {
+                if r.start > cursor {
+                    line_runs.push(TextRun {
+                        len: r.start - cursor,
+                        font: base_font.clone(),
+                        color: base_color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    });
+                }
+                line_runs.push(text_style.clone().highlight(*st).to_run(r.len()));
+                cursor = r.end;
+            }
+            if cursor < row_len {
+                line_runs.push(TextRun {
+                    len: row_len - cursor,
+                    font: base_font.clone(),
+                    color: base_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+            // document colors：bg 段拆分（绝对字节游标语义保留）
+            let bg: Vec<(Range<usize>, Hsla)> = document_colors
+                .iter()
+                .filter(|(r, _)| r.start < row_end && r.end > row_start)
+                .cloned()
+                .collect();
+            let line_runs = if bg.is_empty() {
+                line_runs
+            } else {
+                split_runs_by_bg_segments(row_start, &line_runs, &bg)
+            };
+            // IME 组串下划线（行内相交区间）
+            src_runs = apply_ime_marking(state, line_runs, row_start..row_end);
+        }
+
+        // tab 展开层：runs 重排到展开坐标（shape 输入同坐标系）
+        let exp = state.tab_snapshot.expand_row(tab_row);
+        let (fb_font, fb_color) = src_runs
+            .first()
+            .map(|r| (r.font.clone(), r.color))
+            .unwrap_or_else(|| (base_font.clone(), base_color));
+        super::tab_map::rerun_expanded(&src_runs, &exp, fb_font, fb_color)
+    }
+}
+
 /// Get the runs for the given range.
 ///
 /// The range is the byte range of the wrapped line.
@@ -2350,6 +1790,100 @@ pub(super) fn runs_for_range(
     }
 
     result
+}
+
+/// dqjd S2：runs 字节区间切片（展开空间行内段切分，重基到 0）。
+fn slice_runs(runs: &[TextRun], start: usize, end: usize) -> Vec<TextRun> {
+    runs_for_range(runs, 0, &(start..end))
+}
+
+/// dqjd S2：全覆盖分区（样式区间 → 按序全覆盖，间隙填默认）。
+fn style_partition(
+    styles: Vec<(Range<usize>, HighlightStyle)>,
+    total: usize,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    for (r, st) in styles {
+        let r = r.start..r.end.min(total);
+        if r.end <= r.start {
+            continue;
+        }
+        if r.start > cursor {
+            out.push((cursor..r.start, HighlightStyle::default()));
+        }
+        let extend = match out.last_mut() {
+            Some(last) if last.0.end == r.start && last.1 == st => {
+                last.0.end = r.end;
+                false
+            }
+            _ => true,
+        };
+        let end = r.end;
+        if extend {
+            out.push((r, st));
+        }
+        cursor = cursor.max(end);
+    }
+    if cursor < total {
+        out.push((cursor..total, HighlightStyle::default()));
+    }
+    out
+}
+
+/// dqjd S2：IME 组选区下划线——行 runs 与 ime 区间相交段拆分加标记。
+fn apply_ime_marking(
+    state: &InputState,
+    mut runs: Vec<TextRun>,
+    row_range: Range<usize>,
+) -> Vec<TextRun> {
+    let Some(ime) = &state.ime_marked_range else {
+        return runs;
+    };
+    let ime = ime.clone();
+    if ime.end <= row_range.start || ime.start >= row_range.end {
+        return runs;
+    }
+    let a = ime.start.max(row_range.start) - row_range.start;
+    let b = ime.end.min(row_range.end) - row_range.start;
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut cursor = 0usize;
+    for run in runs.drain(..) {
+        let run_start = cursor;
+        let run_end = cursor + run.len;
+        cursor = run_end;
+        if run_end <= a || run_start >= b {
+            out.push(run);
+            continue;
+        }
+        // 拆 [run_start..run_end] 与 [a..b] 的差/交
+        if a > run_start {
+            out.push(TextRun {
+                len: a - run_start,
+                ..run.clone()
+            });
+        }
+        let mark_start = a.max(run_start);
+        let mark_end = b.min(run_end);
+        if mark_end > mark_start {
+            out.push(TextRun {
+                len: mark_end - mark_start,
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(run.color),
+                    wavy: false,
+                }),
+                ..run.clone()
+            });
+        }
+        if run_end > b {
+            out.push(TextRun {
+                len: run_end - b,
+                ..run
+            });
+        }
+    }
+    out
 }
 
 fn split_runs_by_bg_segments(
@@ -2474,6 +2008,30 @@ mod tests {
         assert_runs(runs_for_range(&runs, 3, &(0..3)), &[1, 2]);
         assert_runs(runs_for_range(&runs, 3, &(2..10)), &[4, 1, 3]);
         assert_runs(runs_for_range(&runs, 9, &(0..8)), &[1, 7]);
+    }
+
+    #[test]
+    fn test_slice_runs() {
+        let run = TextRun {
+            len: 0,
+            font: gpui::font(".SystemUIFont"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let runs = vec![
+            TextRun {
+                len: 5,
+                ..run.clone()
+            },
+            TextRun {
+                len: 7,
+                ..run.clone()
+            },
+        ];
+        let sliced = slice_runs(&runs, 3, 9);
+        assert_eq!(sliced.iter().map(|r| r.len).collect::<Vec<_>>(), vec![2, 4]);
     }
 
     #[test]

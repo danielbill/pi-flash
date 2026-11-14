@@ -40,6 +40,7 @@ use super::rope_ext::RopeExt as _;
 use super::state::InputState;
 use super::mode::InputMode;
 use super::tab_map::{TabMap, TabSnapshot};
+use gpui::Context;
 
 // ---------- Point（zed crates/language/src/point.rs 移植） ----------
 
@@ -1095,6 +1096,11 @@ impl FoldSnapshot {
         FoldPoint(self.transforms.summary().output.lines)
     }
 
+    /// zed text_summary：全树输出摘要（fold 空间；wrap 直通层复用）。
+    pub fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().output.clone()
+    }
+
     /// zed FoldSnapshot::longest_row（fold_map.rs:925 原文）。
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
@@ -1966,7 +1972,7 @@ fn is_line_blank(buffer: &Rope, row: u32) -> bool {
 
 impl InputState {
     /// zed fold_at（fold.rs:424 移植）：折叠 buffer_row 所在 crease。
-    pub(super) fn fold_map_fold_at(&mut self, buffer_row: u32) {
+    pub(super) fn fold_map_fold_at(&mut self, buffer_row: u32, cx: &mut Context<Self>) {
         // closing_bracket_indent_len 的语言表入口（zed language_scope_at
         // 的 PF 对应物 = CodeEditor mode 的 language 名）
         let language = match &self.mode {
@@ -1984,8 +1990,9 @@ impl InputState {
             version,
         };
         let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
-        writer.fold([(range, placeholder)]);
-        self.sync_fold_snapshot();
+        let (_snap, fold_edits) = writer.fold([(range, placeholder)]);
+        self.fold_snapshot = self.fold_map.snapshot.clone();
+        self.sync_chain_fold_edits(fold_edits, cx);
         self.fold_clip_selections();
     }
 
@@ -1995,7 +2002,7 @@ impl InputState {
     }
 
     /// zed unfold_at（fold.rs 移植）：展开与 buffer_row 相交的折叠。
-    pub(super) fn fold_map_unfold_at(&mut self, buffer_row: u32) {
+    pub(super) fn fold_map_unfold_at(&mut self, buffer_row: u32, cx: &mut Context<Self>) {
         let row_start = self
             .text
             .point_to_offset(tree_sitter::Point::new(buffer_row as usize, 0));
@@ -2011,25 +2018,39 @@ impl InputState {
         let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
         // zed unfold_at（fold.rs:497）→ unfold_ranges(..., inclusive=true,
         // ...)：行区间与 crease 相切也算相交（crease 起点在行尾）。
-        writer.unfold_intersecting([row_start..row_end], true);
-        self.sync_fold_snapshot();
+        let (_snap, fold_edits) = writer.unfold_intersecting([row_start..row_end], true);
+        self.fold_snapshot = self.fold_map.snapshot.clone();
+        self.sync_chain_fold_edits(fold_edits, cx);
         self.fold_clip_selections();
     }
 
     /// zed unfold_intersecting（字节区间入口；编辑 reveal 用）。
-    pub(super) fn fold_map_unfold_ranges(&mut self, ranges: impl IntoIterator<Item = Range<usize>>) {
+    pub(super) fn fold_map_unfold_ranges(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
         let version = self.fold_snapshot.version;
         let inlay_snapshot = InlaySnapshot {
             buffer: self.text.clone(),
             version,
         };
         let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
-        writer.unfold_intersecting(ranges, true);
-        self.sync_fold_snapshot();
+        let (_snap, fold_edits) = writer.unfold_intersecting(ranges, true);
+        self.fold_snapshot = self.fold_map.snapshot.clone();
+        self.sync_chain_fold_edits(fold_edits, cx);
     }
 
-    /// buffer 编辑后：fold 区间按 zed anchor 语义平移 + read/sync。
-    pub(super) fn fold_map_sync_edit(&mut self, old_range: Range<usize>, new_text_len: usize) {
+    /// buffer 编辑后的链同步（dqjd S2）：fold read（折叠区间 anchor 平移
+    /// + transforms 重建，产出 fold 编辑）→ tab 映射 → wrap rewrap。
+    /// zed 分居三层的 read/sync 链在 PF 收口为 sync_chain_after_edit（编辑）
+    /// 与 sync_chain_fold_edits（折叠结构变化）两个入口。
+    pub(super) fn sync_chain_after_edit(
+        &mut self,
+        old_range: Range<usize>,
+        new_text_len: usize,
+        cx: &mut Context<Self>,
+    ) {
         shift_fold_ranges_for_edit(&mut self.fold_snapshot, old_range.clone(), new_text_len);
         let version = self.fold_snapshot.version;
         let inlay_snapshot = InlaySnapshot {
@@ -2040,32 +2061,25 @@ impl InputState {
             old: InlayOffset(old_range.start)..InlayOffset(old_range.end),
             new: InlayOffset(old_range.start)..InlayOffset(old_range.start + new_text_len),
         }];
-        let (snapshot, _) = self.fold_map.read(inlay_snapshot, edits);
-        self.fold_snapshot = snapshot;
-        self.sync_tab_snapshot();
+        let (fold_snapshot, fold_edits) = self.fold_map.read(inlay_snapshot, edits);
+        self.fold_snapshot = fold_snapshot;
+        self.sync_chain_fold_edits(fold_edits, cx);
     }
 
-    /// writer 产物回填（fold/unfold 后 folds 树在 writer 内已重建，这里
-    /// 只取回 snapshot；buffer 未变，inlay 版本不变）。
-    fn sync_fold_snapshot(&mut self) {
-        self.fold_snapshot = self.fold_map.snapshot.clone();
-        self.sync_tab_snapshot();
-    }
-
-    /// pi-flash patch（移植）：TabMap 链层随 fold 快照前进（tab_size 取
-    /// mode 配置；fold 编辑经 TabMap::sync 透传给下游 wrap 层）。
-    pub(super) fn sync_tab_snapshot(&mut self) {
+    /// 折叠结构变化（fold/unfold）后的链同步：fold 编辑 → tab → wrap。
+    fn sync_chain_fold_edits(&mut self, fold_edits: Vec<FoldEdit>, cx: &mut Context<Self>) {
         let tab_size = self
             .mode
             .tab_size()
             .map_or(2u32, |t| (t.tab_size as u32).max(1));
+        let nz = NonZeroU32::new(tab_size).unwrap();
         let mut tab_map = TabMap(std::mem::replace(
             &mut self.tab_snapshot,
-            TabSnapshot::new(self.fold_snapshot.clone(), NonZeroU32::new(tab_size).unwrap()),
+            TabSnapshot::new(self.fold_snapshot.clone(), nz),
         ));
-        let (snapshot, _edits) =
-            tab_map.sync(self.fold_snapshot.clone(), Vec::new(), NonZeroU32::new(tab_size).unwrap());
-        self.tab_snapshot = snapshot;
+        let (tab_snapshot, tab_edits) = tab_map.sync(self.fold_snapshot.clone(), fold_edits, nz);
+        self.tab_snapshot = tab_snapshot.clone();
+        self.wrap_map.sync(tab_snapshot, tab_edits, cx);
     }
 
     /// zed 折叠后选区收口（fold.rs fold_creases → 显示换算经 clip_point；

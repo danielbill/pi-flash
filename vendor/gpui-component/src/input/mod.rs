@@ -6,6 +6,7 @@ mod cursor;
 mod decorations;
 mod element;
 mod fold_map;
+mod line_layout;
 mod lsp;
 mod mask_pattern;
 mod mode;
@@ -18,7 +19,7 @@ mod search;
 mod state;
 mod tab_map;
 mod text_input;
-mod text_wrapper;
+mod wrap_map;
 
 pub(crate) use clear_button::*;
 pub use cursor::*;

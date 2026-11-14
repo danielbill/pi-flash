@@ -5,7 +5,6 @@ use gpui::{App, SharedString};
 use ropey::Rope;
 use tree_sitter::InputEdit;
 
-use super::text_wrapper::TextWrapper;
 use crate::highlighter::DiagnosticSet;
 use crate::highlighter::SyntaxHighlighter;
 use crate::input::RopeExt as _;
@@ -105,13 +104,14 @@ impl InputMode {
         }
     }
 
-    pub(super) fn update_auto_grow(&mut self, text_wrapper: &TextWrapper) {
+    /// pi-flash patch（dqjd S2）：行数来源改 wrap 链显示行数（原
+    /// TextWrapper::len；软换行行数语义不变——wrap 快照 max_row + 1）。
+    pub(super) fn update_auto_grow(&mut self, display_rows: usize) {
         if self.is_single_line() {
             return;
         }
 
-        let wrapped_lines = text_wrapper.len();
-        self.set_rows(wrapped_lines);
+        self.set_rows(display_rows);
     }
 
     /// At least 1 row be return.

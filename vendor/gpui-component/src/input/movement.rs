@@ -1,74 +1,36 @@
 use gpui::{px, Context, Point, Window};
 use sum_tree::Bias;
 
-#[allow(unused_imports)]
-use super::fold_map;
-
 use crate::input::{
     InputState, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp, MoveRight,
-    MoveToEnd, MoveToNextWord, MoveToPreviousWord, MoveToStart, MoveUp, RopeExt as _,
+    MoveToEnd, MoveToNextWord, MoveToPreviousWord, MoveToStart, MoveUp,
 };
 
 impl InputState {
     /// Called after moving the cursor. Updates preferred_column if we know where the cursor now is.
+    ///
+    /// pi-flash patch（dqjd S2）：列 = **显示列**（wrap 显示字节，续行含缩
+    /// 进）——纵向移动的保列/兜底全在同一坐标系（zed 同语义）。x 仅在光标
+    /// 行可视时可得（不可视 → None，同旧口径）。
     pub(super) fn update_preferred_column(&mut self) {
         let Some(last_layout) = &self.last_layout else {
             self.preferred_column = None;
             return;
         };
 
-        let point = self.text.offset_to_point(self.cursor());
-        // pi-flash patch（移植）：fold 态 preferred 列取 fold 空间列
-        if self.fold_snapshot.has_folds() {
-            let fp = self.fold_snapshot.to_fold_point(
-                fold_map::InlayPoint(fold_map::Point::new(point.row as u32, point.column as u32)),
-                Bias::Right,
-            );
-            let Some(line) = last_layout.lines.get(fp.row() as usize) else {
-                self.preferred_column = None;
-                return;
-            };
-            // pi-flash patch（移植）：行 shape 用 tab 展开文本，列换展开坐标
-            let row_text = self.fold_snapshot.row_text(fp.row());
-            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-            let Some(pos) = line.position_for_index(
-                exp.source_to_expanded(fp.column() as usize),
-                last_layout.line_height,
-            ) else {
-                self.preferred_column = None;
-                return;
-            };
-            self.preferred_column = Some((pos.x, fp.column() as usize));
-            return;
-        }
-        let Some(line) = last_layout.line(point.row) else {
+        let (disp_row, disp_col) =
+            self.offset_to_display_point(last_layout, self.cursor(), Bias::Right);
+        let Some(line) = last_layout.line(disp_row as usize) else {
             self.preferred_column = None;
             return;
         };
 
-        // PF-024: 折叠态下 point.column 是 doc 列，显示行按折叠列量取 x
-        // （x 存进 preferred_column，column 仍存 doc 供非可见行兑底）。
-        let mut col = point.column;
-        if let Some(dec) = &last_layout.decorations {
-            let line_start = self.text.line_start_offset(point.row);
-            col = dec
-                .doc_to_vis(line_start + col)
-                .saturating_sub(dec.doc_to_vis(line_start));
-        }
-
-        // pi-flash patch（移植）：tab 展开坐标（md 装饰态不展开）
-        if last_layout.decorations.is_none() {
-            let row_text = self.text.slice_line(point.row).to_string();
-            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-            col = exp.source_to_expanded(col);
-        }
-
-        let Some(pos) = line.position_for_index(col, last_layout.line_height) else {
+        let Some(pos) = line.position_for_index(disp_col, last_layout.line_height) else {
             self.preferred_column = None;
             return;
         };
 
-        self.preferred_column = Some((pos.x, point.column));
+        self.preferred_column = Some((pos.x, disp_col));
     }
 
     /// Move the cursor to the given offset.
@@ -82,8 +44,8 @@ impl InputState {
         // 键盘移动与鼠标点击都汇经本方法（zed region 仅在选区处于对内时
         // 参与输入辅助）
         self.autoclose_invalidate_outside(offset);
-        // pi-flash patch（移植）：光标在 fold 空间渲染（折叠内 offset 经
-        // to_fold_point 贴边显示），buffer offset 不动（zed 同语义）
+        // pi-flash patch（移植）：光标在显示空间渲染（折叠内 offset 经
+        // 链换算贴边显示），buffer offset 不动（zed 同语义）
         self.selected_range = (offset..offset).into();
         self.scroll_to(offset, cx);
         self.pause_blink_cursor(cx);
@@ -95,6 +57,9 @@ impl InputState {
     /// Move the cursor vertically by one line (up or down) while preserving the column if possible.
     ///
     /// move_lines: Number of lines to move vertically (positive for down, negative for up).
+    ///
+    /// pi-flash patch（dqjd S2）：统一按**显示行**移动（fold 隐藏行与软换
+    /// 行段同为此空间的行——zed display 行移动同语义），列经显示换算收口。
     pub(super) fn move_vertical(
         &mut self,
         move_lines: isize,
@@ -108,94 +73,34 @@ impl InputState {
             return;
         };
 
-        let offset = self.cursor();
         let was_preferred_column = self.preferred_column;
 
-        // pi-flash patch（移植）：fold 态按显示行移动（fold 空间无隐藏行，
-        // zed display 行移动同语义）
-        if self.fold_snapshot.has_folds() {
-            let p = self.text.offset_to_point(offset);
-            let fp = self.fold_snapshot.to_fold_point(
-                fold_map::InlayPoint(fold_map::Point::new(p.row as u32, p.column as u32)),
-                Bias::Right,
-            );
-            let target = (fp.row() as isize + move_lines).max(0) as u32;
-            let target = target.min(self.fold_snapshot.max_point().row());
-            let row_start = fold_map::FoldPoint::new(target, 0)
-                .to_offset(&self.fold_snapshot)
-                .0;
-            let mut new_offset =
-                self.fold_snapshot.fold_offset_to_buffer(fold_map::FoldOffset(row_start));
-            if let Some((preferred_x, _)) = was_preferred_column {
-                if let Some(line) = last_layout.line(target as usize) {
-                    if let Some(x) = line.closest_index_for_position(
-                        gpui::Point { x: preferred_x, y: px(0.) },
-                        last_layout.line_height,
-                    ) {
-                        // pi-flash patch（移植）：closest 返回 tab 展开字节，
-                        // 换回源字节再进 fold 偏移
-                        let row_text = self.fold_snapshot.row_text(target);
-                        let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                        let x_src = exp.expanded_to_source(x);
-                        new_offset = self.fold_snapshot.fold_offset_to_buffer(
-                            fold_map::FoldOffset(row_start + x_src),
-                        );
-                    }
-                }
-            }
-            self.pause_blink_cursor(cx);
-            self.move_to(new_offset, cx);
-            self.preferred_column = was_preferred_column;
-            cx.notify();
-            return;
-        }
+        let cur_offset = self.cursor();
+        let (cur_row, _) = self.offset_to_display_point(last_layout, cur_offset, Bias::Right);
+        let max_row = self.wrap_map.snapshot().max_point().row();
+        let target = (cur_row as isize + move_lines).clamp(0, max_row as isize) as u32;
 
-        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        display_point.row = display_point.row.saturating_add_signed(move_lines);
-        display_point.column = 0;
-        let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
-
-        if let Some((preferred_x, column)) = was_preferred_column {
-            // Get display point again to update local_row.
-            let mut next_display_point = self.text_wrapper.offset_to_display_point(new_offset);
-            next_display_point.column = 0;
-            let next_point = self.text_wrapper.display_point_to_point(next_display_point);
-            let line_start_offset = self.text.line_start_offset(next_point.row);
-
-            // If in visible range, prefer to use position to get column.
-            if let Some(line) = last_layout.line(next_point.row) {
-                if let Some(x) = line.closest_index_for_position(
+        let new_offset = if let Some((preferred_x, preferred_col)) = was_preferred_column {
+            if let Some(line) = last_layout.line(target as usize) {
+                if let Some(d) = line.closest_index_for_position(
                     Point {
                         x: preferred_x,
-                        y: next_display_point.local_row * last_layout.line_height,
+                        y: px(0.),
                     },
                     last_layout.line_height,
                 ) {
-                    // PF-024: closest 返回折叠列 → 经 FoldSet 换回 doc 偏移
-                    // （直接 line_start + x 会把折叠坐标当 doc 用，光标漂移）
-                    // pi-flash patch（移植）：closest 返回 tab 展开字节，换回
-                    // 源字节（md 装饰态不展开）
-                    let x_src = if last_layout.decorations.is_none() {
-                        let row_text = self.text.slice_line(next_point.row).to_string();
-                        let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                        exp.expanded_to_source(x)
-                    } else {
-                        x
-                    };
-                    new_offset = if let Some(dec) = &last_layout.decorations {
-                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x_src)
-                    } else {
-                        line_start_offset + x_src
-                    };
+                    // closest 返回显示字节（缩进区内 = 段边界，zed clip 同语义）
+                    self.display_point_to_offset(last_layout, target, d, Bias::Right)
+                } else {
+                    self.display_point_to_offset(last_layout, target, 0, Bias::Right)
                 }
             } else {
-                // Not in visible range, use column directly.
-                let max_line_len = self.text.slice_line(next_point.row).len();
-                new_offset = line_start_offset + column.min(max_line_len);
+                // Not in visible range, use column directly（显示列兜底，钳行长）
+                self.display_point_to_offset(last_layout, target, preferred_col, Bias::Right)
             }
-        }
+        } else {
+            self.display_point_to_offset(last_layout, target, 0, Bias::Right)
+        };
 
         self.pause_blink_cursor(cx);
         self.move_to(new_offset, cx);
@@ -207,9 +112,8 @@ impl InputState {
     /// pi-flash patch（对齐 zed）：选区头纵向移动——Shift+↑/↓ 用。
     ///
     /// 与 [`Self::move_vertical`] 同一套换算（按**显示行**走、preferred
-    /// column 锚定目标列、PF-024 折叠列换回 doc 偏移），区别只在终点走
-    /// `select_to`（保留选区另一端，越过锚点时的翻转由它处理）而非
-    /// `move_to`（塌缩成光标）。
+    /// column 锚定目标列），区别只在终点走 `select_to`（保留选区另一端，
+    /// 越过锚点时的翻转由它处理）而非 `move_to`（塌缩成光标）。
     ///
     /// move_lines: 选区头移动的显示行数（正 = 向下，负 = 向上）。
     pub(super) fn select_vertical(&mut self, move_lines: isize, cx: &mut Context<Self>) {
@@ -220,91 +124,32 @@ impl InputState {
             return;
         };
 
-        let offset = self.cursor();
         let was_preferred_column = self.preferred_column;
 
-        // pi-flash patch（移植）：fold 态按显示行移动（选区头）
-        if self.fold_snapshot.has_folds() {
-            let p = self.text.offset_to_point(offset);
-            let fp = self.fold_snapshot.to_fold_point(
-                fold_map::InlayPoint(fold_map::Point::new(p.row as u32, p.column as u32)),
-                Bias::Right,
-            );
-            let target = (fp.row() as isize + move_lines).max(0) as u32;
-            let target = target.min(self.fold_snapshot.max_point().row());
-            let row_start = fold_map::FoldPoint::new(target, 0)
-                .to_offset(&self.fold_snapshot)
-                .0;
-            let mut new_offset =
-                self.fold_snapshot.fold_offset_to_buffer(fold_map::FoldOffset(row_start));
-            if let Some((preferred_x, _)) = was_preferred_column {
-                if let Some(line) = last_layout.line(target as usize) {
-                    if let Some(x) = line.closest_index_for_position(
-                        gpui::Point { x: preferred_x, y: px(0.) },
-                        last_layout.line_height,
-                    ) {
-                        // pi-flash patch（移植）：closest 返回 tab 展开字节，
-                        // 换回源字节再进 fold 偏移
-                        let row_text = self.fold_snapshot.row_text(target);
-                        let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                        let x_src = exp.expanded_to_source(x);
-                        new_offset = self.fold_snapshot.fold_offset_to_buffer(
-                            fold_map::FoldOffset(row_start + x_src),
-                        );
-                    }
-                }
-            }
-            self.pause_blink_cursor(cx);
-            self.select_to(new_offset, cx);
-            self.preferred_column = was_preferred_column;
-            cx.notify();
-            return;
-        }
+        let cur_offset = self.cursor();
+        let (cur_row, _) = self.offset_to_display_point(last_layout, cur_offset, Bias::Right);
+        let max_row = self.wrap_map.snapshot().max_point().row();
+        let target = (cur_row as isize + move_lines).clamp(0, max_row as isize) as u32;
 
-        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        display_point.row = display_point.row.saturating_add_signed(move_lines);
-        display_point.column = 0;
-        let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
-
-        if let Some((preferred_x, column)) = was_preferred_column {
-            // Get display point again to update local_row.
-            let mut next_display_point = self.text_wrapper.offset_to_display_point(new_offset);
-            next_display_point.column = 0;
-            let next_point = self.text_wrapper.display_point_to_point(next_display_point);
-            let line_start_offset = self.text.line_start_offset(next_point.row);
-
-            // If in visible range, prefer to use position to get column.
-            if let Some(line) = last_layout.line(next_point.row) {
-                if let Some(x) = line.closest_index_for_position(
+        let new_offset = if let Some((preferred_x, preferred_col)) = was_preferred_column {
+            if let Some(line) = last_layout.line(target as usize) {
+                if let Some(d) = line.closest_index_for_position(
                     Point {
                         x: preferred_x,
-                        y: next_display_point.local_row * last_layout.line_height,
+                        y: px(0.),
                     },
                     last_layout.line_height,
                 ) {
-                    // pi-flash patch（移植）：closest 返回 tab 展开字节，换回
-                    // 源字节（md 装饰态不展开，其 close 本就 vis 坐标）
-                    let x_src = if last_layout.decorations.is_none() {
-                        let row_text = self.text.slice_line(next_point.row).to_string();
-                        let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
-                        exp.expanded_to_source(x)
-                    } else {
-                        x
-                    };
-                    new_offset = if let Some(dec) = &last_layout.decorations {
-                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x_src)
-                    } else {
-                        line_start_offset + x_src
-                    };
+                    self.display_point_to_offset(last_layout, target, d, Bias::Right)
+                } else {
+                    self.display_point_to_offset(last_layout, target, 0, Bias::Right)
                 }
             } else {
-                // Not in visible range, use column directly.
-                let max_line_len = self.text.slice_line(next_point.row).len();
-                new_offset = line_start_offset + column.min(max_line_len);
+                self.display_point_to_offset(last_layout, target, preferred_col, Bias::Right)
             }
-        }
+        } else {
+            self.display_point_to_offset(last_layout, target, 0, Bias::Right)
+        };
 
         self.pause_blink_cursor(cx);
         self.select_to(new_offset, cx);
