@@ -26,7 +26,7 @@ use super::{
     decorations::{DecorationProvider, Decorations},
     element::TextElement,
     fold_map::{
-        FoldBufferExt, FoldMap, FoldOffset, FoldPoint, FoldSnapshot, InlaySnapshot, InlayPoint,
+        FoldBufferExt, FoldMap, FoldOffset, FoldSnapshot, InlaySnapshot,
         Point as FoldSpacePoint,
     },
     line_layout::LineLayout,
@@ -34,7 +34,7 @@ use super::{
     mode::{InputMode, TabSize},
     number_input,
     tab_map::TabSnapshot,
-    wrap_map::{WrapMap, WrapPoint, WrapSnapshot},
+    wrap_map::{WrapMap, WrapPoint},
 };
 use std::num::NonZeroU32;
 use crate::input::{

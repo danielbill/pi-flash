@@ -26,7 +26,7 @@ pub mod widget;
 
 use std::ops::Range;
 
-use gpui_component::input::{DecorationProvider, Decorations, LineType, Rope, RopeExt as _};
+use gpui_component::input::{DecorationProvider, Decorations, LineType, Rope};
 
 /// md Live Preview 装饰 provider：每帧 prepaint 现算（纯函数，无状态、
 /// 不落缓存——reveal 因此免费：selection 变了下帧自然拿到新 cursor）。

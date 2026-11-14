@@ -19,7 +19,7 @@
 use std::ops::Range;
 
 use gpui::{App, Font, LineFragment, Pixels};
-use sum_tree::{Bias, Cursor, Dimensions, SumTree};
+use sum_tree::{Bias, Dimensions, SumTree};
 
 use super::fold_map::{Point as FoldSpacePoint, TextSummary};
 use super::tab_map::{TabEdit, TabPoint, TabSnapshot};

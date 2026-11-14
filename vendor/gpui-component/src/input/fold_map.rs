@@ -988,6 +988,18 @@ impl FoldSnapshot {
             .collect()
     }
 
+    /// 折叠树是否**全部为 deco 空占位符折叠**（dqjd S3 修复）：deco 折叠
+    /// 由 rebuild_fold_snapshot_from_ranges 以 collapsed_text=Some("")
+    /// 重建，手动 gutter 折叠恒 FoldPlaceholder::default（collapsed_text
+    /// = None）——据此区分"摘装饰残留"（可整体清空）与用户手动折叠
+    /// （用户态，element 相位一 reconcile 不得清）。空树 false，
+    /// 调用方先 has_folds 短路。
+    pub fn is_deco_folded(&self) -> bool {
+        self.folds
+            .items(&self.inlay_snapshot.buffer)
+            .iter()
+            .all(|f| f.placeholder.collapsed_text.as_ref().is_some_and(|t| t.as_str().is_empty()))
+    }
     /// 隐藏行总数（缓冲行数 − 显示行数）。
     pub fn hidden_rows(&self) -> usize {
         self.buffer
@@ -2511,5 +2523,50 @@ mod fold_tests {
         }
         let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 2 }, Vec::new());
         assert_eq!(snap.fold_ranges(), vec![0..2, 6..8, 10..12]);
+    }
+
+    /// dqjd 修复回归：折叠来源判别 is_deco_folded——deco 折叠恒空占位符
+    /// （collapsed_text=Some("")），手动 gutter 折叠恒 FoldPlaceholder::default
+    /// （None）。element 相位一 reconcile 据此区分「摘装饰残留」（清空）与
+    /// 「code editor 手动折叠」（用户态，任何帧不得清——否则点箭头折上的
+    /// 块下一帧就被抹掉，折叠永远挂不住）。
+    #[test]
+    fn test_is_deco_folded_provenance() {
+        let rope = Rope::from("# 标题\n正文甲\n正文乙\n");
+        let ph_deco = || FoldPlaceholder {
+            collapsed_text: Some("".into()),
+            ..Default::default()
+        };
+        let (mut map, _snap) = FoldMap::new(InlaySnapshot {
+            buffer: rope.clone(),
+            version: 0,
+        });
+        // 纯 deco 折叠 → deco 来源
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 1 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![(0..6, ph_deco())]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 1 }, Vec::new());
+        assert!(snap.is_deco_folded());
+        // 纯手动折叠 → 用户态
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 2 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![(0..6, FoldPlaceholder::default())]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 2 }, Vec::new());
+        assert!(!snap.is_deco_folded());
+        // 混合树（手动 + deco）必须保守判非 deco
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 3 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![
+                (8..14, ph_deco()),
+                (16..22, FoldPlaceholder::default()),
+            ]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 3 }, Vec::new());
+        assert!(!snap.is_deco_folded());
     }
 }

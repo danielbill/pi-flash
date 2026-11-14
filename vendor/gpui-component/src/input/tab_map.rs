@@ -32,7 +32,7 @@ use gpui::TextRun;
 use sum_tree::Bias;
 
 use super::fold_map::{
-    FoldEdit, FoldOffset, FoldPoint, FoldSnapshot, InlayPoint, Point as FoldSpacePoint,
+    FoldEdit, FoldPoint, FoldSnapshot, InlayPoint, Point as FoldSpacePoint,
 };
 
 /// zed MAX_EXPANSION_COLUMN（tab_map.rs:11）：行内 collapsed 字节超过此

@@ -763,7 +763,12 @@ impl Element for TextElement {
         };
         let deco_stale = match decorations.as_ref() {
             Some(dec) => dec.folds != state.fold_snapshot.fold_ranges(),
-            None => state.fold_snapshot.has_folds(),
+            // pi-flash patch（dqjd 修复）：无 provider ≠ 可清。code editor
+            // 的手动 gutter 折叠是用户态，任何一帧都不许清（原 has_folds()
+            // 判定把点箭头折上的块下一帧就抹掉——折叠永远挂不住）；只有
+            // **全 deco 空占位符**的残留折叠（md 摘装饰/provider 本帧空手
+            // 而归）才回无折叠态。
+            None => state.fold_snapshot.has_folds() && state.fold_snapshot.is_deco_folded(),
         };
         drop(state);
         if deco_stale {
@@ -1355,13 +1360,6 @@ impl Element for TextElement {
 
             // Each item is the normal lines.
             for (ix, lines) in line_numbers.iter().enumerate() {
-                // pi-flash patch（折叠）：行号/当前行高亮按缓冲行
-                let row = prepaint
-                    .last_layout
-                    .rows
-                    .get(ix)
-                    .map(|r| r.buffer_row as usize)
-                    .unwrap_or(visible_range.start + ix);
 
                 // pi-flash patch（移植）：行号右对齐于折叠符号带左侧
                 // （zed 行号 justify_end；统一位数时 = origin + left_padding）

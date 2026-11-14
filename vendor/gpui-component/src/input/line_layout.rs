@@ -4,8 +4,6 @@
 //! （doc 行 + 软换行段表）已被 wrap_map.rs 的 SumTree Transform 链取代，
 //! 本模块只保留 shape 输出的行容器（每显示行一条）。
 
-use std::ops::Range;
-
 use gpui::{point, px, size, ShapedLine, Size, Window, App, Pixels, Point};
 use smallvec::SmallVec;
 
