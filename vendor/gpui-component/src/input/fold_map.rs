@@ -36,6 +36,7 @@ use gpui::SharedString;
 use ropey::Rope;
 use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary};
 
+use super::decorations::SectionFold;
 use super::rope_ext::RopeExt as _;
 use super::state::InputState;
 use super::mode::InputMode;
@@ -995,17 +996,43 @@ impl FoldSnapshot {
             .collect()
     }
 
-    /// 折叠树是否**全部为 deco 空占位符折叠**（dqjd S3 修复）：deco 折叠
-    /// 由 rebuild_fold_snapshot_from_ranges 以 collapsed_text=Some("")
-    /// 重建，手动 gutter 折叠恒 FoldPlaceholder::default（collapsed_text
-    /// = None）——据此区分"摘装饰残留"（可整体清空）与用户手动折叠
-    /// （用户态，element 相位一 reconcile 不得清）。空树 false，
-    /// 调用方先 has_folds 短路。
+    /// 折叠树是否**全部为 deco 折叠**（dqjd S3 修复 + k34j 扩展）：deco
+    /// 折叠由 rebuild_fold_snapshot_from_ranges 以 collapsed_text=Some(_)
+    /// 重建（行内语法标记 = Some("")、章节折叠 = Some("⋯")），手动 gutter
+    /// 折叠恒 FoldPlaceholder::default（collapsed_text = None）——据此区分
+    /// "摘装饰残留"（可整体清空）与用户手动折叠（用户态，element 相位一
+    /// reconcile 不得清）。空树 false，调用方先 has_folds 短路。
     pub fn is_deco_folded(&self) -> bool {
         self.folds
             .items(&self.inlay_snapshot.buffer)
             .iter()
-            .all(|f| f.placeholder.collapsed_text.as_ref().is_some_and(|t| t.as_str().is_empty()))
+            .all(|f| f.placeholder.collapsed_text.is_some())
+    }
+
+    /// deco 折叠分类读出（k34j）：`(行内零宽段, 章节段)`。行内段 =
+    /// collapsed_text==Some("")（024 语法标记）；章节段 = Some(非空)
+    /// （可见占位符，row = 折叠块首 buffer 行）；手动折叠（None）不产出。
+    /// element 相位一对账用：行内段与 provider 本帧 folds 比对、章节段
+    /// 作为 `decorate` 的 `folded_sections` 回读。
+    pub fn deco_folds(&self) -> (Vec<Range<usize>>, Vec<SectionFold>) {
+        let mut inline = Vec::new();
+        let mut sections = Vec::new();
+        for f in self.folds.items(&self.inlay_snapshot.buffer) {
+            let Some(text) = f.placeholder.collapsed_text.as_ref() else {
+                continue; // 手动折叠（用户态）
+            };
+            if text.is_empty() {
+                inline.push(f.range.0.clone());
+            } else {
+                let row = self.buffer.offset_to_point(f.range.start).row as u32;
+                sections.push(SectionFold {
+                    range: f.range.0.clone(),
+                    row,
+                    collapsed_text: text.clone(),
+                });
+            }
+        }
+        (inline, sections)
     }
     /// 隐藏行总数（缓冲行数 − 显示行数）。
     pub fn hidden_rows(&self) -> usize {
@@ -2053,6 +2080,33 @@ impl InputState {
         self.fold_snapshot.fold_starting_at_row(buffer_row).is_some()
     }
 
+    /// k34j：按**显式区间**折叠（md 章节折叠入口——crease 语义由 app 声明
+    /// （Decorations::section_folds），vendor 不做缩进/括号推断）。折叠替换
+    /// 文本 = `collapsed_text`（"⋯"，与声明表一致）。
+    pub(super) fn fold_map_fold_range(
+        &mut self,
+        range: Range<usize>,
+        collapsed_text: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let version = self.fold_snapshot.version;
+        let inlay_snapshot = InlaySnapshot {
+            buffer: self.text.clone(),
+            version,
+        };
+        let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
+        let (_snap, fold_edits) = writer.fold([(
+            range,
+            FoldPlaceholder {
+                collapsed_text: Some(collapsed_text),
+                ..Default::default()
+            },
+        )]);
+        self.fold_snapshot = self.fold_map.snapshot.clone();
+        self.sync_chain_fold_edits(fold_edits, cx);
+        self.fold_clip_selections();
+    }
+
     /// zed unfold_at（fold.rs 移植）：展开与 buffer_row 相交的折叠。
     pub(super) fn fold_map_unfold_at(&mut self, buffer_row: u32, cx: &mut Context<Self>) {
         let row_start = self
@@ -2145,32 +2199,46 @@ impl InputState {
         }
     }
 
-    /// dqjd S3：从区间表重建折叠快照（md 装饰链用）——折叠替换文本 =
-    /// **空占位符**（Some("")：行内字节删除、行数不变），等价 024 的
-    /// doc_to_vis 折叠语义但进 Transform 链（可与 tab/软换行组合）。
+    /// dqjd S3 + k34j：从区间表重建折叠快照（md 装饰链用）。行内段
+    /// （`folds`）替换文本 = **空占位符**（Some("")：行内字节删除），章节段
+    /// （`sections`）替换文本 = **可见占位符**（Some("⋯")：占 collapsed_text
+    /// 宽）——两表统一并集归一后进 Transform 链（可与 tab/软换行组合）。
     /// 全量重建 O(doc)：md 文档小、且仅在折叠集变化时调用。
     pub(super) fn rebuild_fold_snapshot_from_ranges(
         &mut self,
-        ranges: Vec<Range<usize>>,
+        folds: Vec<Range<usize>>,
+        sections: Vec<SectionFold>,
         cx: &mut Context<Self>,
     ) {
         // 归一化：排序 + 空区间剔除 + 重叠/嵌套区间并集归并——fold 树游标
         // 只前进，重叠区间会触发 "cannot seek backward" panic（真机 md
-        // reveal 实测：容器级 reveal 会产出与合并集相交的区间）。
-        let mut sorted = ranges;
-        sorted.sort_by_key(|r| (r.start, r.end));
-        let mut normalized: Vec<Range<usize>> = Vec::with_capacity(sorted.len());
-        for r in sorted {
+        // reveal 实测：容器级 reveal 会产出与合并集相交的区间）。归并时
+        // 占位文本取**非空**优先（章节段吞并行内段：可见 "⋯" 不被空串覆盖）。
+        let mut sorted: Vec<(Range<usize>, SharedString)> = folds
+            .into_iter()
+            .map(|r| (r, SharedString::from("")))
+            .chain(
+                sections
+                    .into_iter()
+                    .map(|s| (s.range, s.collapsed_text)),
+            )
+            .collect();
+        sorted.sort_by_key(|(r, _)| (r.start, r.end));
+        let mut normalized: Vec<(Range<usize>, SharedString)> = Vec::with_capacity(sorted.len());
+        for (r, text) in sorted {
             if r.end <= r.start {
                 continue;
             }
             match normalized.last_mut() {
-                Some(last) if r.start <= last.end => {
+                Some((last, last_text)) if r.start <= last.end => {
                     if r.end > last.end {
                         last.end = r.end;
                     }
+                    if last_text.is_empty() && !text.is_empty() {
+                        *last_text = text;
+                    }
                 }
-                _ => normalized.push(r),
+                _ => normalized.push((r, text)),
             }
         }
 
@@ -2183,11 +2251,11 @@ impl InputState {
         let (_fs, fold_edits) = writer.fold(
             normalized
                 .into_iter()
-                .map(|r| {
+                .map(|(r, text)| {
                     (
                         r,
                         FoldPlaceholder {
-                            collapsed_text: Some("".into()),
+                            collapsed_text: Some(text),
                             ..Default::default()
                         },
                     )
@@ -2245,8 +2313,18 @@ impl InputState {
 
     /// 折叠是否启用（code_editor 且非 024 装饰态——md wysiwyg 行内折叠
     /// 系统与块级折叠互斥，同 024 折叠/折行互斥先例）。
+    /// 折叠观测/宿主 API 放行判定：code editor 手动折叠（无装饰）或 md
+    /// deco 态带章节折叠声明（k34j——fold_ranges/fold_hidden_rows 对 md
+    /// Live Preview 照常有意义）。声明表读自上一帧 LastLayout（首帧前
+    /// None → 视为无声明，观测空表——仅观测语义，不影响渲染路径）。
     pub(super) fn fold_allowed(&self) -> bool {
-        self.mode.is_code_editor() && self.decorations.is_none()
+        self.mode.is_code_editor()
+            && (self.decorations.is_none()
+                || self.last_layout.as_ref().is_some_and(|l| {
+                    l.decorations
+                        .as_ref()
+                        .is_some_and(|d| !d.section_decl.is_empty())
+                }))
     }
 
     /// zed indent_guides.rs 的 fold 过滤（indent_guides_in_range 的 filter
@@ -2554,5 +2632,41 @@ mod fold_tests {
         }
         let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 3 }, Vec::new());
         assert!(!snap.is_deco_folded());
+    }
+
+    /// k34j：rebuild 带章节段——占位文本并集归并时非空优先（章节吞行内：
+    /// 可见 "⋯" 不被空串覆盖）；deco_folds 按 Some("")/Some(非空) 拆分，
+    /// 章节段 row = 折叠块首 buffer 行。
+    #[test]
+    fn test_rebuild_sections_and_deco_split() {
+        // deco_folds/row 推导走 FoldSnapshot 层：手工 fold 出章节段
+        //（Some("⋯")）+ 行内段（Some("")），读快照断言
+        let rope = Rope::from("# 标题\n正文甲\n正文乙\n");
+        let (mut map, _snap) = FoldMap::new(InlaySnapshot { buffer: rope.clone(), version: 0 });
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 1 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![
+                // 章节段：标题行尾(6)→文尾(19)，可见占位符
+                (
+                    6..19,
+                    FoldPlaceholder {
+                        collapsed_text: Some("⋯".into()),
+                        ..Default::default()
+                    },
+                ),
+                // 行内段：零宽
+                (0..2, FoldPlaceholder { collapsed_text: Some("".into()), ..Default::default() }),
+            ]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 1 }, Vec::new());
+        let (inline, sections) = snap.deco_folds();
+        assert_eq!(inline, vec![0..2]);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].range, 6..19);
+        assert_eq!(sections[0].row, 0, "章节块首 = 标题行");
+        assert_eq!(sections[0].collapsed_text.as_str(), "⋯");
+        // is_deco_folded：章节段也是 deco 来源（摘装饰可整体清）
+        assert!(snap.is_deco_folded());
     }
 }

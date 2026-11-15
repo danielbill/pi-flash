@@ -1852,15 +1852,31 @@ impl InputState {
         }
 
         // pi-flash patch（对齐 zed）：gutter 折叠箭头点击 → toggle fold
-        // （Disclosure toggle_callback 语义；命中带 = 折叠符号带 right_padding）
+        // （Disclosure toggle_callback 语义；命中带 = 折叠符号带 right_padding）。
+        // k34j：md deco 态——可折叠判定走声明表（dec.section_folds，缩进
+        // 启发式对顶格 md 标题不触发）；展开 → 按声明区间+占位文本折叠
+        // （fold_map_fold_range），折叠态由快照持有、下帧对账自然收敛。
         if event.button == MouseButton::Left {
             if let Some(row) = self.gutter_arrow_hit(event.position) {
                 let folded = self.fold_snapshot.is_line_folded(row as u32)
                     || self.fold_starts_at_row(row as u32);
-                if folded || self.text.starts_indent(row as u32) {
+                let dec_sections = self
+                    .last_layout
+                    .as_ref()
+                    .and_then(|l| l.decorations.as_ref())
+                    .map(|d| &d.section_decl);
+                let declared = dec_sections
+                    .and_then(|sections| sections.iter().find(|s| s.row == row as u32))
+                    .map(|s| (s.range.clone(), s.collapsed_text.clone()));
+                let foldable = folded
+                    || declared.is_some()
+                    || (dec_sections.is_none() && self.text.starts_indent(row as u32));
+                if foldable {
                     self.selecting = false;
                     if folded {
                         self.fold_map_unfold_at(row as u32, cx);
+                    } else if let Some((range, text)) = declared {
+                        self.fold_map_fold_range(range, text, cx);
                     } else {
                         self.fold_map_fold_at(row as u32, cx);
                     }

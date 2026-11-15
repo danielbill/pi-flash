@@ -26,6 +26,16 @@ pub struct Span {
     pub style: Style,
 }
 
+/// 标题级别表条目（k34j）：fence 感知扫描产出的全部 ATX 标题（1..=6 级
+/// 全量——样式/字号不受折叠级别影响；章节折叠在 fold.rs 按 ≤5 过滤）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeadingLine {
+    /// 标题所在 doc 行（0-based buffer 行号）
+    pub row: usize,
+    /// 级别（`#` 个数，1..=6）
+    pub level: u8,
+}
+
 /// 语法容器（024 P2 段级 reveal 单位）：一个语法结构（strong/em/行内
 /// code/链接/标题前缀/围栏标记）的内容区间与其全部定界 folds——
 /// reveal 时整容器同进退（`**粗体**` 光标触碰即整对标记同显，
@@ -89,13 +99,22 @@ impl Frame {
 
 /// 解析行内 span、语法容器（段级 reveal 单位）与行级字号倍数。
 ///
-/// 返回 `(spans, containers, line_scale)`：容器带 folds（平铺用
+/// 返回 `(spans, containers, line_scale, headings)`：容器带 folds（平铺用
 /// [`flat_folds`]，整体升序不重叠）；`line_scale` 为 (doc 行号, 倍数)，
-/// folds 不含换行 → 行号与 vis 一一对应。
-pub fn parse(src: &str) -> (Vec<Span>, Vec<Container>, Vec<(usize, f32)>) {
+/// folds 不含换行 → 行号与 vis 一一对应；`headings` 为标题级别表
+/// （k34j，fence 感知，doc 序）。
+pub fn parse(
+    src: &str,
+) -> (
+    Vec<Span>,
+    Vec<Container>,
+    Vec<(usize, f32)>,
+    Vec<HeadingLine>,
+) {
     let mut spans = Vec::new();
     let mut containers: Vec<Container> = Vec::new();
     let mut line_scale: Vec<(usize, f32)> = Vec::new();
+    let mut headings: Vec<HeadingLine> = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
     // 链接起点（`[` 字节位）；活动期内 Text 产 Link span
     let mut link_open: Option<usize> = None;
@@ -159,8 +178,14 @@ pub fn parse(src: &str) -> (Vec<Span>, Vec<Container>, Vec<(usize, f32)>) {
         }
     }
 
-    scan_headings(src, &mut containers, &mut spans, &mut line_scale);
-    (spans, containers, line_scale)
+    scan_headings(
+        src,
+        &mut containers,
+        &mut spans,
+        &mut line_scale,
+        &mut headings,
+    );
+    (spans, containers, line_scale, headings)
 }
 
 /// 链接容器：`[text](url)` → 保 text（Link 样式），折 `[` 与 `](url)`。
@@ -290,15 +315,16 @@ fn combine(stack: &[Frame]) -> Style {
 }
 
 /// 逐行扫描：ATX 标题（`#{1,6}` + 空格/行尾）→ 折叠前缀 + 整行样式
-/// span + 行级字号倍数；围栏行（``` / ~~~ + 语言名）→ 整段折叠
-/// （Obsidian 式：fence 标记不可见，块级 widget 留 P3）。
-/// 感知 ``` / ~~~ 围栏（围栏内不认标题）；缩进 >3 空格视为代码不认。
-/// 不做 setext 与引用块内标题——保守漏折。
+/// span + 行级字号倍数 + 标题级别表（k34j）；围栏行（``` / ~~~ + 语言名）
+/// → 整段折叠（Obsidian 式：fence 标记不可见，块级 widget 留 P3）。
+/// 感知 ``` / ~~~ 围栏（围栏内不认标题，级别表同滤）；缩进 >3 空格视为
+/// 代码不认。不做 setext 与引用块内标题——保守漏折。
 fn scan_headings(
     src: &str,
     containers: &mut Vec<Container>,
     spans: &mut Vec<Span>,
     line_scale: &mut Vec<(usize, f32)>,
+    headings: &mut Vec<HeadingLine>,
 ) {
     const HEADING_SCALE: [f32; 6] = [1.62, 1.42, 1.26, 1.12, 1.0, 1.0];
     let b = src.as_bytes();
@@ -359,6 +385,10 @@ fn scan_headings(
                         folds: vec![prefix],
                     });
                     line_scale.push((line_no, HEADING_SCALE[hashes - 1]));
+                    headings.push(HeadingLine {
+                        row: line_no,
+                        level: hashes as u8,
+                    });
                 }
             }
         }

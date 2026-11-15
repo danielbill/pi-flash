@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::fold_map::{FoldBufferExt, FoldPoint, Point as FoldSpacePoint};
-use super::{mode::InputMode, Decorations, DisplayRowData, InputState, LastLayout};
+use super::{mode::InputMode, Decorations, DisplayRowData, InputState, LastLayout, SectionFold};
 use sum_tree::Bias;
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
@@ -747,11 +747,21 @@ impl Element for TextElement {
         let is_empty = state.text.len() == 0;
         let multi_line = state.mode.is_multi_line();
 
-        // ---------- PF-024 装饰 provider（dqjd S3 收编链） ----------
-        // provider 每帧纯函数现算（折叠集随选区 reveal）；折叠集与链快照
-        // 不一致时重建 fold→tab→wrap 链（deco 折叠 = 空占位符 Transform，
-        // 与 tab/软换行自由组合）。styles = **绝对 vis 坐标**（契约 v2）。
-        // 摘装饰后残留 deco 折叠也在此清空（快照回无折叠态）。
+        // ---------- PF-024 装饰 provider（dqjd S3 收编链 + k34j 章节折叠） ----------
+        // provider 每帧纯函数现算（行内折叠集随选区 reveal）；行内折叠集与
+        // 链快照不一致时重建 fold→tab→wrap 链（deco 折叠 = 空占位符/可见
+        // 占位符 Transform，与 tab/软换行自由组合）。styles = **绝对 vis 坐标**
+        // （契约 v2）。摘装饰后残留 deco 折叠也在此清空（快照回无折叠态）。
+        //
+        // k34j 章节折叠状态机：折叠态由 **vendor fold 快照持有**（Some("⋯")
+        // 段，anchor 随编辑平移、行身份跨编辑正确），provider 无状态只声明
+        // 全部可折叠章节（dec.section_folds）。对账规则：
+        //   行内段  —— 与快照 Some("") 段比对，不一致 → 重建；
+        //   章节段  —— 快照已折章节的 (row, range) 必须与声明表完全一致
+        //              （标题删除 → row 不在声明表 → 撤折；标题级别改动 →
+        //              range 变 → 换新区间重折），不一致 → 重建（重建输入 =
+        //              本帧行内段 + 已折行在声明表中的**新**区间）。
+        let (inline_snapshot, folded_sections) = state.fold_snapshot.deco_folds();
         let decorations: Option<Rc<Decorations>> = if is_empty {
             None
         } else {
@@ -761,27 +771,41 @@ impl Element for TextElement {
                         &state.text,
                         0..state.text.lines_len(),
                         state.selected_range.start..state.selected_range.end,
+                        &folded_sections,
                     )
                     .map(Rc::new),
                 None => None,
             }
         };
+        let sections_stale = |snapshot: &[SectionFold], effective: &[SectionFold]| -> bool {
+            snapshot.len() != effective.len()
+                || snapshot
+                    .iter()
+                    .zip(effective.iter())
+                    .any(|(a, b)| a.range != b.range || a.row != b.row)
+        };
         let deco_stale = match decorations.as_ref() {
-            Some(dec) => dec.folds != state.fold_snapshot.fold_ranges(),
+            // dec.section_folds = 生效集（provider 已按快照折叠行 ∩ 声明表
+            // 取当前区间）——与快照逐项比对，不一致（标题编辑/删除）→ 重建
+            Some(dec) => {
+                dec.folds != inline_snapshot || sections_stale(&folded_sections, &dec.section_folds)
+            }
             // pi-flash patch（dqjd 修复）：无 provider ≠ 可清。code editor
             // 的手动 gutter 折叠是用户态，任何一帧都不许清（原 has_folds()
             // 判定把点箭头折上的块下一帧就抹掉——折叠永远挂不住）；只有
-            // **全 deco 空占位符**的残留折叠（md 摘装饰/provider 本帧空手
+            // **全 deco 占位符**的残留折叠（md 摘装饰/provider 本帧空手
             // 而归）才回无折叠态。
             None => state.fold_snapshot.has_folds() && state.fold_snapshot.is_deco_folded(),
         };
         if deco_stale {
-            let folds = decorations
-                .as_ref()
-                .map(|d| d.folds.clone())
-                .unwrap_or_default();
-            self.state
-                .update(cx, |st, scx| st.rebuild_fold_snapshot_from_ranges(folds, scx));
+            let dec = decorations.as_ref();
+            let folds = dec.map(|d| d.folds.clone()).unwrap_or_default();
+            // 重建输入章节段 = 生效集（与 provider vis 数学同帧同源）；
+            // 摘装饰（dec=None）→ 空表整体清
+            let sections = dec.map(|d| d.section_folds.clone()).unwrap_or_default();
+            self.state.update(cx, |st, scx| {
+                st.rebuild_fold_snapshot_from_ranges(folds, sections, scx)
+            });
         }
         let state = self.state.read(cx);
 
@@ -1162,7 +1186,13 @@ impl Element for TextElement {
         let mut fold_band_hitboxes = Vec::new();
         {
             let state = self.state.read(cx);
-            if state.mode.is_code_editor() && last_layout.fold_mode {
+            // k34j：md deco 态章节折叠也渲染折叠符号带——fold_mode 门旁路，
+            // 可折叠判定改走声明表（dec.section_decl，缩进启发式对顶格
+            // md 标题不触发）。
+            let dec_sections = last_layout.decorations.as_ref().map(|d| &d.section_decl);
+            if state.mode.is_code_editor()
+                && (last_layout.fold_mode || dec_sections.is_some_and(|s| !s.is_empty()))
+            {
                 let band_x = bounds.origin.x + last_layout.line_number_width
                     - last_layout.gutter_right_padding;
                 for (ix, row) in last_layout.rows.iter().enumerate() {
@@ -1171,7 +1201,11 @@ impl Element for TextElement {
                     }
                     let buf_row = row.buffer_row as u32;
                     let folded = state.fold_starts_at_row(buf_row);
-                    let foldable = folded || state.text.starts_indent(buf_row);
+                    let foldable = folded
+                        || match dec_sections {
+                            Some(sections) => sections.iter().any(|s| s.row == buf_row),
+                            None => state.text.starts_indent(buf_row),
+                        };
                     if !foldable {
                         continue;
                     }
@@ -1432,7 +1466,17 @@ impl Element for TextElement {
             // 态）；色 = 折叠态 Color::Selected(text_accent) / 展开态
             // Color::Muted（IconButton render 分支）。点击命中带见 state 侧
             // gutter_arrow_hit（同符号带）。
-            if self.state.read(cx).mode.is_code_editor() && prepaint.last_layout.fold_mode {
+            // k34j：md deco 态章节折叠箭头——fold_mode 门旁路（可折叠判定
+            // 走声明表 dec.section_decl；folded 判定 fold_starts_at_row 对
+            // 章节折叠天然成立——crease 起点 = 标题行尾）。
+            let dec_sections = prepaint
+                .last_layout
+                .decorations
+                .as_ref()
+                .map(|d| &d.section_decl);
+            if self.state.read(cx).mode.is_code_editor()
+                && (prepaint.last_layout.fold_mode || dec_sections.is_some_and(|s| !s.is_empty()))
+            {
                 let muted = cx.theme().muted_foreground;
                 let accent = cx.theme().accent;
                 let pill_bg = cx.theme().secondary;
@@ -1453,7 +1497,11 @@ impl Element for TextElement {
                         }
                         let buf_row = row.buffer_row as u32;
                         let folded = fs.fold_starts_at_row(buf_row);
-                        let foldable = folded || fs.text.starts_indent(buf_row);
+                        let foldable = folded
+                            || match dec_sections {
+                                Some(sections) => sections.iter().any(|s| s.row == buf_row),
+                                None => fs.text.starts_indent(buf_row),
+                            };
                         let show = folded
                             || (foldable
                                 && (gutter_hovered

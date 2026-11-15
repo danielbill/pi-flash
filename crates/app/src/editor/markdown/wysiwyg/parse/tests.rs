@@ -4,7 +4,7 @@ use super::*;
 
 /// 折叠集渲染：应用 folds 后的文本（模拟隐藏语法）。
 fn folded(src: &str) -> String {
-    let (_, cs, _) = parse(src);
+    let (_, cs, _, _) = parse(src);
     let mut folds = flat_folds(&cs);
     folds.sort_by_key(|f| f.start);
     let mut out = src.to_string();
@@ -15,7 +15,7 @@ fn folded(src: &str) -> String {
 }
 
 fn has_fold_covering(src: &str, needle: Range<usize>) -> bool {
-    let (_, cs, _) = parse(src);
+    let (_, cs, _, _) = parse(src);
     // parse 产出单字符 fold（由 fold::merge 归一后再判断覆盖）
     let merged = crate::editor::markdown::wysiwyg::fold::merge(flat_folds(&cs));
     merged
@@ -28,7 +28,7 @@ fn strong_markers_folded_text_intact() {
     let src = "hello **world** bye";
     assert_eq!(folded(src), "hello world bye");
     // 样式 span 覆盖 world
-    let (spans, _, _) = parse(src);
+    let (spans, _, _, _) = parse(src);
     assert_eq!(spans.len(), 1);
     assert_eq!(spans[0].range, 8..13);
     assert!(matches!(spans[0].style, Style::Bold));
@@ -42,7 +42,7 @@ fn underscore_strong() {
 #[test]
 fn emphasis_single() {
     assert_eq!(folded("a *b* c"), "a b c");
-    let (spans, _, _) = parse("a *b* c");
+    let (spans, _, _, _) = parse("a *b* c");
     assert!(matches!(spans[0].style, Style::Italic));
 }
 
@@ -50,14 +50,14 @@ fn emphasis_single() {
 fn nested_bold_italic_triple_marker() {
     // `***a***` → 三枚星号全折（em 拿 1、strong 拿满 2，dedupe 后并集）
     assert_eq!(folded("***a***"), "a");
-    let (spans, _, _) = parse("***a***");
+    let (spans, _, _, _) = parse("***a***");
     assert!(matches!(spans[0].style, Style::BoldItalic));
 }
 
 #[test]
 fn unclosed_strong_conservative() {
     // 未闭合 → pulldown 不产生 Strong 容器 → 不折不样式
-    let (spans, cs, _) = parse("**abc");
+    let (spans, cs, _, _) = parse("**abc");
     let folds = flat_folds(&cs);
     assert!(spans.is_empty());
     assert!(folds.is_empty());
@@ -73,7 +73,7 @@ fn adjacent_after_closing() {
 #[test]
 fn inline_code() {
     assert_eq!(folded("run `cargo test` now"), "run cargo test now");
-    let (spans, _, _) = parse("run `cargo test` now");
+    let (spans, _, _, _) = parse("run `cargo test` now");
     assert_eq!(spans.len(), 1);
     assert!(matches!(spans[0].style, Style::Code));
 }
@@ -112,7 +112,7 @@ fn cjk_boundaries() {
 fn no_fold_crosses_newline() {
     // 强调跨行：定界符各自贴着本行内容，fold 不得含 \n
     let src = "**line1\nline2**";
-    let (_, cs, _) = parse(src);
+    let (_, cs, _, _) = parse(src);
     let folds = flat_folds(&cs);
     for f in &folds {
         assert!(!src[f.clone()].contains('\n'), "fold {f:?} 跨行了");
@@ -123,7 +123,7 @@ fn no_fold_crosses_newline() {
 #[test]
 fn plain_text_untouched() {
     for src in ["", "hello", "a_b_c", "1 * 2 * 3", "snake_case_name"] {
-        let (spans, cs, _) = parse(src);
+        let (spans, cs, _, _) = parse(src);
         let folds = flat_folds(&cs);
         assert!(spans.is_empty(), "{src} 不该有 span");
         assert!(folds.is_empty(), "{src} 不该有 fold");
@@ -141,7 +141,7 @@ fn has_fold_covering_helper_works() {
 #[test]
 fn heading_spans_scale_and_folds() {
     let src = "# 一级\n正文\n## 二级\n";
-    let (spans, _folds, scale) = parse(src);
+    let (spans, _folds, scale, _) = parse(src);
     let heads: Vec<(Range<usize>, u8)> = spans
         .iter()
         .filter_map(|s| match s.style {
@@ -167,7 +167,7 @@ fn heading_spans_scale_and_folds() {
 #[test]
 fn link_folds_brackets_and_url() {
     let src = "见 [pi-web](https://x.com) 主页";
-    let (spans, cs, _) = parse(src);
+    let (spans, cs, _, _) = parse(src);
     let folds = flat_folds(&cs);
     let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
     let lb = src.find('[').unwrap();
@@ -191,7 +191,7 @@ fn link_folds_brackets_and_url() {
 #[test]
 fn fence_marker_lines_folded() {
     let src = "```bash\nnpm i\n```\n";
-    let (_, cs, _) = parse(src);
+    let (_, cs, _, _) = parse(src);
     let folds = flat_folds(&cs);
     let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
     let mut out = src.to_string();
