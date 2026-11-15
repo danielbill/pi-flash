@@ -90,6 +90,7 @@ impl DbSource {
                             finished_at  INTEGER,
                             outcome      TEXT NOT NULL DEFAULT 'running',
                             session_path TEXT,
+                            model        TEXT,
                             result_json  TEXT
                         );
                         CREATE INDEX idx_task_runs_def ON task_runs(def_id, started_at DESC);",

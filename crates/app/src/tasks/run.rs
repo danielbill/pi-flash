@@ -1,0 +1,538 @@
+//! 046-S3 执行链：把认领到的作业变成一次真实运行。
+//!
+//! - **agent 任务**（§2.3）：每次触发经 session/runtime 新建会话（后台
+//!   draft 懒 spawn，不抢前台）——project 用任务所选项目；model/tools/
+//!   thinking 覆盖或继承；投递 prompt（task.desc）；run 记 session_path，
+//!   turn 终态（`SessionEvent::TurnSettled`，唯一可靠轮终）回写 outcome。
+//!   模型 run 内一次性冻结（ZCode fixRunModelSelection 语义）。
+//! - **脚本任务**：独立子进程（不经内置终端），cwd = 脚本所在目录，
+//!   **30min 超时强杀**；输出尾 + exit code 写 result_json（§1.4 脚本行
+//!   620 弹窗消费）。
+//! - **立即运行**：[`Chat::task_run_now`]，trigger = manual——settle_job
+//!   对 manual 只写结果不动 next_run/锚点（不污染周期，ZCode
+//!   automationRepo.ts:666-751）；运行中再触发被 in-flight 守卫挡下。
+//!
+//! 两类执行体都经 oneshot 回报 [`JobOutcome`]，结算统一走 scheduler
+//! `spawn_settle` → TasksSource::settle → settle_job（单一路径）。
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use pf_context::domain::tasks::{TaskKind, TaskSpec, Trigger};
+
+use gpui::AppContext as _;
+
+use crate::services::scheduler::{self, JobOutcome};
+use crate::session::runtime::SessionRuntime;
+use crate::{Chat, services};
+
+use super::store::open_store;
+
+/// 脚本任务超时（§1.3 说明行：超时 30 分钟自动终止）。
+const SCRIPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// 脚本轮询间隔（try_wait + kill 旗标检查）。
+const SCRIPT_POLL: Duration = Duration::from_millis(500);
+/// 输出尾保留字符数（§1.4 hover / 620 弹窗消费）。
+const TAIL_LIMIT: usize = 4000;
+
+// ---------------------------------------------------------------------------
+// 在途上下文（按 runtime key 索引；main 线程独占访问，无锁）
+// ---------------------------------------------------------------------------
+
+/// 一次派发的在途上下文：把「会话事件」翻译回「run 台账」的桥。
+pub(crate) struct RunCtx {
+    pub def_id: String,
+    pub run_id: i64,
+    pub trigger: Trigger,
+    /// 派发时冻结的模型（"provider/id"；None = pi 默认）。
+    pub model_frozen: Option<String>,
+    /// agent 派发：会话实体（S4 删除中止走 Interrupt；None = script）。
+    #[allow(dead_code)] // 046-S4 删除接线
+    pub rt: Option<gpui::Entity<SessionRuntime>>,
+    /// script 派发：中止旗标（poll 循环看见即提前 kill；S4 删除接线）。
+    #[allow(dead_code)] // 046-S4 删除接线
+    pub kill: Option<Arc<AtomicBool>>,
+    tx: futures::channel::oneshot::Sender<JobOutcome>,
+}
+
+impl std::fmt::Debug for RunCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunCtx")
+            .field("def_id", &self.def_id)
+            .field("run_id", &self.run_id)
+            .field("trigger", &self.trigger)
+            .field("model_frozen", &self.model_frozen)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 供 mod.rs 的 TasksState.pending 复用的 map 类型。
+pub(crate) type PendingMap = HashMap<String, RunCtx>;
+
+/// 按 def id 找在途上下文的 runtime key（S4 删除中止用）。
+#[allow(dead_code)] // 046-S4 删除接线
+pub(crate) fn pending_key_for(chat: &Chat, def_id: &str) -> Option<String> {
+    chat.tasks
+        .pending
+        .iter()
+        .find(|(_, c)| c.def_id == def_id)
+        .map(|(k, _)| k.clone())
+}
+
+// ---------------------------------------------------------------------------
+// 派发入口
+// ---------------------------------------------------------------------------
+
+/// 派发一次运行：start_run 落台账（running）→ 按类型起执行体 → oneshot。
+/// 起执行体失败（目录/脚本不存在等）直接 Err——scheduler/run_now 的统一
+/// 失败路径会结算该 run（running 行在，settle_job 收口 + 周期推进）。
+pub(crate) fn dispatch(
+    chat: &mut Chat,
+    def_id: &str,
+    trigger: Trigger,
+    cx: &mut gpui::Context<Chat>,
+) -> Result<scheduler::JobRx, String> {
+    let store = open_store()?;
+    let def = store
+        .get_def(def_id)?
+        .ok_or_else(|| format!("任务不存在: {def_id}"))?;
+    let spec = TaskSpec::from_json(&def.spec_json)?;
+    let run_id = store.start_run(def_id, trigger, scheduler::now_ms(), None)?;
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let spawned = match &spec.kind {
+        TaskKind::Agent => spawn_agent_turn(chat, def_id, run_id, trigger, &spec, tx, cx),
+        TaskKind::Script => spawn_script_run(&spec, tx),
+    };
+    match spawned {
+        Ok(()) => {
+            eprintln!(
+                "[tasks] 派发: task={def_id} trigger={} title={}",
+                trigger.as_str(),
+                def.title
+            );
+            Ok(rx)
+        }
+        Err(e) => {
+            // run 行已落（running）——执行体没起来，先标记派发失败再交回
+            // 统一失败路径（settle_job 找不到 running 行 → 只重排周期）
+            let _ = store.settle_run(
+                run_id,
+                pf_context::domain::tasks::Outcome::Failed,
+                scheduler::now_ms(),
+                Some(&error_json(&format!("派发失败: {}", e.replace('"', "'")))),
+            );
+            Err(e)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// agent 任务：新建会话 + 投递 prompt
+// ---------------------------------------------------------------------------
+
+fn spawn_agent_turn(
+    chat: &mut Chat,
+    def_id: &str,
+    run_id: i64,
+    trigger: Trigger,
+    spec: &TaskSpec,
+    tx: futures::channel::oneshot::Sender<JobOutcome>,
+    cx: &mut gpui::Context<Chat>,
+) -> Result<(), String> {
+    let a = spec
+        .agent
+        .as_ref()
+        .ok_or_else(|| "agent 任务缺少 agent 字段".to_string())?;
+    let cwd = PathBuf::from(&a.project);
+    if !cwd.is_dir() {
+        return Err(format!("项目目录不存在: {}", a.project));
+    }
+
+    // 模型冻结：派发时刻解析（任务覆盖 > 新会话默认 > pi 默认）——ZCode
+    // fixRunModelSelection「回看不重读默认」
+    let frozen_pair = a
+        .model
+        .clone()
+        .or_else(|| services::workspace::default_model_pref());
+
+    // 后台铸 draft（不 switch_to 不抢前台）。task_owned 防两处误伤：
+    // 新会话复用逻辑捡走任务 draft；FileBound 清掉用户同 cwd 草稿
+    let key = format!("draft-{}", chat.pool.draft_seq);
+    chat.pool.draft_seq += 1;
+    let rt = cx.new(|_| {
+        let mut r = SessionRuntime::new(key.clone(), cwd.clone(), None);
+        r.task_owned = true;
+        if let Some((p, m)) = &frozen_pair {
+            r.pending_model = Some((p.clone(), m.clone()));
+        }
+        // thinking：auto = 继承 pi 默认（不落 override）；其余档 spawn 带
+        // --thinking（§1.3 与 PillMenu::Thinking 同清单）
+        if a.thinking != "auto" {
+            r.thinking_override = Some(a.thinking.clone());
+        }
+        // tools 档位：spawn 期 CLI flags 生效（034 档位键；custom = 沿用
+        // 会话级配方，fresh runtime 无自选扩展 = full，v1 不做每任务配方）
+        r.tools_preset = a.tools.clone();
+        r.status = "任务运行中".into();
+        r
+    });
+    chat.pool.runtimes.insert(key.clone(), rt.clone());
+    chat.subscribe_runtime(&rt, cx);
+    pi_link::projects::register_project(&cwd);
+
+    // 模型冻结写台账 + 在途上下文（TurnSettled 钩子消费）
+    let model_str = frozen_pair.as_ref().map(|(p, m)| format!("{p}/{m}"));
+    let _ = open_store()?.bind_run(run_id, None, model_str.as_deref());
+    chat.tasks.pending.insert(
+        key,
+        RunCtx {
+            def_id: def_id.to_string(),
+            run_id,
+            trigger,
+            model_frozen: model_str,
+            rt: Some(rt.clone()),
+            kill: None,
+            tx,
+        },
+    );
+
+    // 投递 prompt（懒 spawn：首个 send 起进程；file 随首个 prompt 落盘后
+    // FileBound 事件回填 session_path）
+    rt.update(cx, |r, cx| {
+        r.input = a.prompt.clone();
+        r.send_input(cx);
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 脚本任务：子进程 + 30min 超时强杀
+// ---------------------------------------------------------------------------
+
+fn spawn_script_run(
+    spec: &TaskSpec,
+    tx: futures::channel::oneshot::Sender<JobOutcome>,
+) -> Result<(), String> {
+    let sc = spec
+        .script
+        .as_ref()
+        .ok_or_else(|| "script 任务缺少 script 字段".to_string())?;
+    let path = PathBuf::from(&sc.path);
+    if !path.is_file() {
+        return Err(format!("脚本文件不存在: {}", sc.path));
+    }
+    // 配方解析（扩展名支持集/探测链与文件树【执行】同源）；ws_cwd 传 None
+    // ——脚本任务的 py 解释器探测不走「当前项目 venv」（运行目录=脚本目录）
+    let (program, args) = services::script_exec::spawn_plan(&path, None).ok_or_else(|| {
+        format!(
+            "不支持的脚本类型: {}",
+            path.extension().unwrap_or_default().to_string_lossy()
+        )
+    })?;
+    let cwd = path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "脚本路径无父目录".to_string())?;
+    let kill = Arc::new(AtomicBool::new(false));
+
+    std::thread::spawn(move || {
+        let outcome = run_script_block(&program, &args, &cwd, &kill, SCRIPT_TIMEOUT);
+        let _ = tx.send(outcome);
+    });
+    Ok(())
+}
+
+/// 阻塞跑脚本（独立线程）：输出双管道并发抽干（防 pipe 满死锁）+
+/// 轮询 try_wait，超时/中止即 kill。exit code + 输出尾写 result_json。
+fn run_script_block(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    kill: &AtomicBool,
+    timeout: Duration,
+) -> JobOutcome {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    // GUI 宿主裸 spawn 控制台程序会闪黑窗（services/git.rs 同款治理）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return JobOutcome::failed("failed", Some(error_json(&format!("起进程失败: {e}"))));
+        }
+    };
+
+    // 双 reader：从 spawn 起抽干管道，kill/退出后管道闭合自然 EOF
+    let mut pipes: Vec<Box<dyn std::io::Read + Send>> = Vec::new();
+    if let Some(p) = child.stdout.take() {
+        pipes.push(Box::new(p));
+    }
+    if let Some(p) = child.stderr.take() {
+        pipes.push(Box::new(p));
+    }
+    let readers: Vec<_> = pipes
+        .into_iter()
+        .map(|mut pipe| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+                buf
+            })
+        })
+        .collect();
+
+    let started = Instant::now();
+    let mut timed_out = false;
+    let mut exit_status: Option<ExitStatus> = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return JobOutcome::failed("failed", Some(error_json(&format!("wait 失败: {e}"))));
+            }
+        }
+        if started.elapsed() >= timeout || kill.load(Ordering::Relaxed) {
+            let aborted = kill.load(Ordering::Relaxed);
+            let _ = child.kill();
+            let _ = child.wait();
+            if aborted {
+                return JobOutcome::failed("failed", Some(error_json("运行被中止")));
+            }
+            timed_out = true;
+            break;
+        }
+        std::thread::sleep(SCRIPT_POLL);
+    }
+
+    let mut out = Vec::new();
+    for h in readers {
+        if let Ok(part) = h.join() {
+            out.extend_from_slice(&part);
+        }
+    }
+    let tail: String = String::from_utf8_lossy(&out)
+        .chars()
+        .rev()
+        .take(TAIL_LIMIT)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let result = serde_json::json!({
+        "exit": exit_status.and_then(|s| s.code()),
+        "timeout": timed_out,
+        "tail": tail.trim_end(),
+    })
+    .to_string();
+    if timed_out {
+        JobOutcome::failed("timeout", Some(result))
+    } else if exit_status.and_then(|s| s.code()) == Some(0) {
+        JobOutcome::ok(Some(result))
+    } else {
+        JobOutcome::failed("failed", Some(result))
+    }
+}
+
+fn error_json(msg: &str) -> String {
+    serde_json::json!({ "error": msg }).to_string()
+}
+
+// ---------------------------------------------------------------------------
+// 会话事件钩子（pool/runtime_link.rs / session_ops.rs 调用）
+// ---------------------------------------------------------------------------
+
+/// `SessionEvent::TurnSettled`（唯一可靠轮终）：在途 agent 上下文 →
+/// session_path 回填 + outcome 经 oneshot 送回统一结算路径。
+/// 非任务会话（pending 无条目）零成本直接返回。
+pub(crate) fn on_turn_settled(
+    chat: &mut Chat,
+    rt: &gpui::Entity<SessionRuntime>,
+    cx: &mut gpui::Context<Chat>,
+) {
+    let (key, turn_error, turn_interrupted, file) = {
+        let r = rt.read(cx);
+        (
+            r.key.clone(),
+            r.turn_error,
+            r.turn_interrupted,
+            r.file.clone(),
+        )
+    };
+    let Some(ctx) = chat.tasks.pending.remove(&key) else {
+        return;
+    };
+    if let Some(f) = &file {
+        if let Ok(store) = open_store() {
+            let _ = store.bind_run(ctx.run_id, Some(&f.to_string_lossy()), None);
+        }
+    }
+    // 结局口径与三色点同源（turn_outcome_tests.rs）：error → failed、
+    // length/aborted → failed（黄档语义在台账里归 failed 带原因；成功行
+    // 的模型已有独立列，result_json 保持干净）
+    let bad = turn_error || turn_interrupted;
+    let outcome = if bad {
+        let reason = if turn_error {
+            "turn error（模型/接口层错误）"
+        } else {
+            "输出中断（length/aborted）"
+        };
+        JobOutcome::failed("failed", Some(error_json(reason)))
+    } else {
+        JobOutcome::ok(None)
+    };
+    eprintln!(
+        "[tasks] turn 终态: task={} run={} outcome={} session={}",
+        ctx.def_id,
+        ctx.run_id,
+        outcome.kind,
+        file.map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default()
+    );
+    let _ = ctx.tx.send(outcome);
+}
+
+/// `Chat::on_file_bound`（draft 晋级）：任务会话绑到真实文件 → 迁移在途
+/// 上下文的 key（session_path 在 TurnSettled 统一回填）。
+pub(crate) fn on_session_bound(
+    chat: &mut Chat,
+    old_key: &str,
+    path: &Path,
+    cx: &mut gpui::Context<Chat>,
+) {
+    let Some(mut ctx) = chat.tasks.pending.remove(old_key) else {
+        return;
+    };
+    let new_key = path.to_string_lossy().to_string();
+    ctx.rt = chat.pool.runtimes.get(&new_key).cloned();
+    chat.tasks.pending.insert(new_key, ctx);
+    let _ = cx;
+}
+
+// ---------------------------------------------------------------------------
+// 立即运行（§1.5；S4 ⋯菜单接线）
+// ---------------------------------------------------------------------------
+
+impl Chat {
+    /// ⋯菜单「立即运行」：trigger = manual（不动周期）；运行中再触发被
+    /// in-flight 守卫挡下（菜单置灰双保险）。
+    #[allow(dead_code)] // 046-S4 菜单接线
+    pub(crate) fn task_run_now(&mut self, def_id: &str, cx: &mut gpui::Context<Self>) {
+        let Some(src) = scheduler::source_by_id("tasks") else {
+            return;
+        };
+        let job = scheduler::DueJob {
+            key: def_id.to_string(),
+            scheduled_at: scheduler::now_ms(),
+        };
+        scheduler::dispatch_manual(src, job, self, cx);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 单测（脚本 runner 矩阵；agent 链走 S5 pif-ui 验收）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_script(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, content).unwrap();
+        p
+    }
+
+    #[test]
+    fn bat_exit_zero_is_ok_with_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_script(dir.path(), "ok.bat", "@echo off\r\necho pf-task-ok\r\n");
+        let (program, args) = services::script_exec::spawn_plan(&p, None).unwrap();
+        let outcome = run_script_block(
+            &program,
+            &args,
+            dir.path(),
+            &AtomicBool::new(false),
+            SCRIPT_TIMEOUT,
+        );
+        assert!(outcome.success, "{outcome:?}");
+        let detail = outcome.detail.unwrap();
+        assert!(detail.contains("\"exit\":0"), "{detail}");
+        assert!(detail.contains("pf-task-ok"), "{detail}");
+        assert!(detail.contains("\"timeout\":false"), "{detail}");
+    }
+
+    #[test]
+    fn bat_nonzero_exit_is_failed_with_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_script(dir.path(), "bad.bat", "@echo off\r\nexit /b 3\r\n");
+        let (program, args) = services::script_exec::spawn_plan(&p, None).unwrap();
+        let outcome = run_script_block(
+            &program,
+            &args,
+            dir.path(),
+            &AtomicBool::new(false),
+            SCRIPT_TIMEOUT,
+        );
+        assert_eq!(outcome.kind, "failed");
+        assert!(outcome.detail.unwrap().contains("\"exit\":3"));
+    }
+
+    #[test]
+    fn script_timeout_kills_and_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        // ping -n 挂住 ~10s；700ms 超时即强杀
+        let p = write_script(
+            dir.path(),
+            "slow.bat",
+            "@echo off\r\nping -n 10 127.0.0.1 >nul\r\n",
+        );
+        let (program, args) = services::script_exec::spawn_plan(&p, None).unwrap();
+        let outcome = run_script_block(
+            &program,
+            &args,
+            dir.path(),
+            &AtomicBool::new(false),
+            Duration::from_millis(700),
+        );
+        assert_eq!(outcome.kind, "timeout");
+        assert!(outcome.detail.unwrap().contains("\"timeout\":true"));
+    }
+
+    #[test]
+    fn kill_flag_aborts_before_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_script(
+            dir.path(),
+            "slow2.bat",
+            "@echo off\r\nping -n 10 127.0.0.1 >nul\r\n",
+        );
+        let (program, args) = services::script_exec::spawn_plan(&p, None).unwrap();
+        let kill = AtomicBool::new(true);
+        let outcome = run_script_block(&program, &args, dir.path(), &kill, SCRIPT_TIMEOUT);
+        assert_eq!(outcome.kind, "failed");
+        assert!(outcome.detail.unwrap().contains("中止"));
+    }
+
+    #[test]
+    fn unsupported_ext_has_no_plan() {
+        assert!(services::script_exec::spawn_plan(Path::new("readme.txt"), None).is_none());
+        assert!(services::script_exec::spawn_plan(Path::new("noext"), None).is_none());
+    }
+}

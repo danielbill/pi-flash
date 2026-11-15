@@ -63,6 +63,17 @@ impl JobOutcome {
         }
     }
 
+    /// 派发失败（execute 返回 Err）的统一载荷新闻。
+    pub(crate) fn dispatch_failed(err: &str) -> Self {
+        Self::failed(
+            "failed",
+            Some(format!(
+                "{{\"error\":\"派发失败: {}\"}}",
+                err.replace('"', "'")
+            )),
+        )
+    }
+
     /// oneshot 送回通道断开（执行方 drop 未回报）——按失败结算。
     fn lost() -> Self {
         Self::failed("failed", Some("{\"error\":\"执行链 oneshot 丢失\"}".into()))
@@ -154,6 +165,22 @@ fn remove_in_flight(key: &str) {
         .retain(|k| k != key);
 }
 
+/// 作业在途查询（run_now 手动派发的运行中守卫，§1.5 ⋯菜单置灰双保险）。
+#[allow(dead_code)] // 046-S4 菜单/删除接线
+pub(crate) fn is_in_flight(key: &str) -> bool {
+    IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|k| k == key)
+}
+
+/// 按 id 取 source（run_now 手动派发复用 tasks source 的 execute/settle 管线）。
+#[allow(dead_code)] // 046-S4 接线
+pub(crate) fn source_by_id(id: &str) -> Option<Arc<dyn ScheduleSource>> {
+    sources().into_iter().find(|s| s.id() == id)
+}
+
 /// 外部唤醒（作业结算 / S4 任务增删改后即时排程）。tick 间隙到来的唤醒等
 /// 下一轮 20s timer 兜底；tick 进行中到来的不丢弃（见 [`tick`]）。
 #[allow(dead_code)] // 046-S4 任务 CRUD 接线
@@ -217,34 +244,13 @@ fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> bool {
                 Ok(rx) => {
                     dispatched += 1;
                     add_in_flight(&job.key);
-                    let src = Arc::clone(&source);
-                    cx.spawn(async move |this, cx| {
-                        let outcome = rx.await.unwrap_or_else(|_| JobOutcome::lost());
-                        src.settle(job.clone(), outcome, now_ms());
-                        remove_in_flight(&job.key);
-                        // 作业结算后统一刷新任务状态面 + cx.notify()（状态驱动 UI）
-                        let _ = this.update(cx, |chat, cx| {
-                            chat.tasks_refresh();
-                            cx.notify();
-                        });
-                    })
-                    .detach();
+                    spawn_settle(Arc::clone(&source), job, rx, cx);
                 }
                 Err(e) => {
                     // 派发失败：v1 不自动重试，直接结算 failed，下轮按周期继续
                     // （ZCode automationRepo 退避重试列为 v2）
                     eprintln!("[scheduler] 派发失败 {} task={}: {e}", source.id(), job.key);
-                    source.settle(
-                        job,
-                        JobOutcome::failed(
-                            "failed",
-                            Some(format!(
-                                "{{\"error\":\"派发失败: {}\"}}",
-                                e.replace('"', "'")
-                            )),
-                        ),
-                        now_ms(),
-                    );
+                    source.settle(job, JobOutcome::dispatch_failed(&e), now_ms());
                 }
             }
         }
@@ -256,6 +262,52 @@ fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> bool {
     let more = TICK_REQUESTED.swap(false, Ordering::SeqCst);
     TICKING.store(false, Ordering::SeqCst);
     more
+}
+
+/// 结算协程（tick 定时派发与 run_now 手动派发共用）：等 oneshot → settle →
+/// 出 in-flight → 刷任务状态面 + 统一 cx.notify()（状态驱动 UI，§1.5）。
+pub(crate) fn spawn_settle(
+    source: Arc<dyn ScheduleSource>,
+    job: DueJob,
+    rx: JobRx,
+    cx: &mut gpui::Context<Chat>,
+) {
+    cx.spawn(async move |this, cx| {
+        let outcome = rx.await.unwrap_or_else(|_| JobOutcome::lost());
+        source.settle(job.clone(), outcome, now_ms());
+        remove_in_flight(&job.key);
+        let _ = this.update(cx, |chat, cx| {
+            chat.tasks_refresh();
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+/// 手动派发（046-S3 run_now / §1.5「立即运行」）：进 in-flight → execute →
+/// 结算协程；派发失败直接结算 failed（manual 不动周期，settle_job 保证）。
+/// 运行中再触发被守卫挡下（静默返回——菜单已置灰，这里是双保险）。
+pub(crate) fn dispatch_manual(
+    source: Arc<dyn ScheduleSource>,
+    job: DueJob,
+    chat: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+) {
+    if is_in_flight(&job.key) {
+        return;
+    }
+    match source.execute(&job, chat, cx) {
+        Ok(rx) => {
+            add_in_flight(&job.key);
+            spawn_settle(source, job, rx, cx);
+        }
+        Err(e) => {
+            eprintln!("[scheduler] 手动派发失败 {}: {e}", job.key);
+            source.settle(job, JobOutcome::dispatch_failed(&e), now_ms());
+            chat.tasks_refresh();
+            cx.notify();
+        }
+    }
 }
 
 fn sources() -> Vec<Arc<dyn ScheduleSource>> {

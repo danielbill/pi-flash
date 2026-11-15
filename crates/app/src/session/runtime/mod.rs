@@ -70,6 +70,10 @@ pub(crate) struct SessionRuntime {
     /// 置位点唯一：`open_subagent_session_window`（身份由调用意图携带，
     /// 不从文件反推——2026-11-10 挤占主会话 tab 根因）。
     pub observer: bool,
+    /// 046 任务派发铸造的会话（tasks/run.rs dispatch）：「新会话」复用逻辑
+    /// 不许捡走它（任务 prompt 不是用户的输入页）；FileBound 也不许清用户
+    /// 同 cwd 草稿。置位点唯一：spawn_agent_turn。
+    pub task_owned: bool,
     /// disk-side message count at open time — get_messages shorter than
     /// this means pi's restored leaf chain is truncated (mis-parented
     /// non-message entry) and the display rebuilds from the file instead
@@ -358,6 +362,7 @@ impl SessionRuntime {
             pager: ChatList::new(),
             collapsed: std::collections::HashMap::new(),
             observer: false,
+            task_owned: false,
             phase_waiting: false,
             streaming_content: false,
             pending_echoes: Vec::new(),

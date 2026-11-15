@@ -209,6 +209,43 @@ fn quote(p: &Path) -> String {
     format!("\"{}\"", p.display())
 }
 
+/// 046 脚本任务的子进程配方：解释器 program + argv（**不经** cmd /k 外壳；
+/// bat/cmd 走 `cmd /C`）。与 [`resolve`] 共享探测链与 node 路径，两处配方
+/// 语义不许漂移（resolve 管「终端里跑」，本函数管「子进程跑」，扩展名
+/// 支持集以 exec_kind 为唯一事实源）。
+/// 返回 (program, args)；cwd 恒 = 脚本所在目录（调用方落 current_dir）。
+pub(crate) fn spawn_plan(path: &Path, ws_cwd: Option<&Path>) -> Option<(PathBuf, Vec<String>)> {
+    let kind = exec_kind(path)?;
+    let file = path.to_string_lossy().to_string();
+    match kind {
+        // exe/com 直接自身启动（com 由 loader 接管）
+        "exe" => Some((path.to_path_buf(), Vec::new())),
+        "bat" => {
+            let com = std::env::var_os("COMSPEC")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cmd"));
+            Some((com, vec!["/C".into(), file]))
+        }
+        "ps1" => Some((
+            PathBuf::from("powershell"),
+            vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                file,
+            ],
+        )),
+        "js" => Some((PathBuf::from(pi_link::vendor::node_bin()), vec![file])),
+        "py" => match probe_py(ws_cwd)? {
+            PyInterp::Launcher(p) => Some((p, vec!["-3".into(), file])),
+            PyInterp::Direct(p) => Some((p, vec![file])),
+        },
+        "sh" => Some((probe_sh()?, vec![file])),
+        _ => None,
+    }
+}
+
 /// 裸命令名（node_bin 可能是 "node" 也可能是绝对路径）仅含空格才包引号
 fn q(name: &str) -> String {
     if name.contains(' ') {

@@ -68,6 +68,9 @@ impl Chat {
                             }
                         }
                     }
+                    // 046 任务派发链：在途任务上下文 → run 台账结算（非任务
+                    // 会话 pending 无条目，钩子零成本返回）
+                    crate::tasks::run::on_turn_settled(chat, &rt, cx);
                     cx.notify();
                 }
                 SessionEvent::ListDirty => {

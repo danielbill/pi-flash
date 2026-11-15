@@ -8,13 +8,14 @@
 //! log 约定 `[tasks]`：创建/编辑/启停/删除、skip、结算、prune、recover；
 //! 错误（会话创建失败/脚本起进程失败/DB 写失败）error 级带 task id（046-0）。
 
+pub(crate) mod run;
 pub(crate) mod sched;
 pub(crate) mod store;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use pf_context::domain::tasks::{RUN_KEEP_LIMIT, TaskDef, TaskSpec};
+use pf_context::domain::tasks::{RUN_KEEP_LIMIT, TaskDef, TaskSpec, Trigger};
 
 use crate::Chat;
 use crate::services::scheduler::{self, DueJob, JobOutcome};
@@ -49,6 +50,9 @@ pub(crate) struct TasksState {
     pub defs: Vec<DefRow>,
     /// 运行中 def id（= 调度泵 in-flight 快照；spinner + ⋯菜单置灰读点）。
     pub running: Vec<String>,
+    /// 在途派发上下文（run.rs；按 runtime key 索引，TurnSettled/FileBound
+    /// 钩子消费——把会话事件翻译回 run 台账）。
+    pub pending: run::PendingMap,
 }
 
 impl Chat {
@@ -109,14 +113,14 @@ impl scheduler::ScheduleSource for TasksSource {
 
     fn execute(
         &self,
-        _job: &DueJob,
-        _chat: &mut Chat,
-        _cx: &mut gpui::Context<Chat>,
+        job: &DueJob,
+        chat: &mut Chat,
+        cx: &mut gpui::Context<Chat>,
     ) -> Result<scheduler::JobRx, String> {
-        // 046-S3 交棒点：agent 会话 / 脚本子进程派发（run 落 started +
-        // session_path，oneshot 回报 outcome）。S2 阶段无任务可达此（创建
-        // UI 在 S4）——防御性 Err 走「派发失败 → 结算 failed」通用路径。
-        Err("执行链未接入（046-S3）".into())
+        // 046-S3 执行链：agent 会话 / 脚本子进程（run.rs dispatch）。run 行
+        // 落 started 于 dispatch 内；Err = 起执行体失败（run 行已由 dispatch
+        // 结算为 failed，这里把 Err 交回统一失败路径重排周期）。
+        run::dispatch(chat, &job.key, Trigger::Schedule, cx)
     }
 
     fn settle(&self, job: DueJob, outcome: JobOutcome, now: i64) {

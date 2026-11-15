@@ -51,6 +51,8 @@ pub(crate) fn list_cached() -> Vec<DefRow> {
 
 /// 创建任务：id 生成、创建即锚（anchor_at = now）、next_run 从锚点起算。
 /// 返回 id。上限 20 与 spec 校验在存储层（非法值拒写）。
+/// 046-S4 创建表单接线。
+#[allow(dead_code)]
 pub(crate) fn create_task(title: &str, spec: &TaskSpec, now: i64) -> Result<String, String> {
     let id = format!(
         "task-{:x}-{:x}",
@@ -75,6 +77,8 @@ pub(crate) fn create_task(title: &str, spec: &TaskSpec, now: i64) -> Result<Stri
 
 /// 保存编辑：schedule 内容变化 → 重锚 now + next_run 重算；未变（只改名称/
 /// 描述等）→ 保留原锚与原 next_run（ZCode automationService.ts:279-285）。
+/// 046-S4 编辑表单接线。
+#[allow(dead_code)]
 pub(crate) fn save_edit(
     def_id: &str,
     title: &str,
@@ -110,6 +114,8 @@ pub(crate) fn save_edit(
 
 /// 启用⇄停用：启用时 next_run 缺失或已过期 → 从 now 重排（锚点保留，防
 /// 漂移）；未来仍有排期则原样放行。
+/// 046-S4 行菜单启停接线。
+#[allow(dead_code)]
 pub(crate) fn set_enabled_task(def_id: &str, enabled: bool, now: i64) -> Result<(), String> {
     let store = open_store()?;
     if enabled {
@@ -133,6 +139,8 @@ pub(crate) fn set_enabled_task(def_id: &str, enabled: bool, now: i64) -> Result<
 
 /// 删除任务（同事务连带删 runs；删除量进 log）。运行中删除先中止再删的
 /// abort 归 046-S3 执行链；本层直删后结算路径对已删任务记 error（不复活）。
+/// 046-S4 删除接线。
+#[allow(dead_code)]
 pub(crate) fn delete_task(def_id: &str) -> Result<usize, String> {
     let n = open_store()?.delete(def_id)?;
     tasks_log(&format!("删除任务: id={def_id} 连带 run {n} 条"));

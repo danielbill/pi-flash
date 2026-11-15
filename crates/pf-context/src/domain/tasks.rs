@@ -158,9 +158,10 @@ pub struct AgentSpec {
     pub project: String,
     /// 工具权限档位键（[`TOOLS_PRESETS`] 之一）。
     pub tools: String,
-    /// 模型覆盖；None = 继承新会话默认（§1.3「继承新会话默认」）。
+    /// 模型覆盖 (provider, id)；None = 继承新会话默认（§1.3「继承新会话
+    /// 默认」）。派发时一次性冻结进 run 行（046-S3）。
     #[serde(default)]
-    pub model: Option<String>,
+    pub model: Option<(String, String)>,
     /// 思考强度键（[`THINKING_LEVELS`] 之一）。
     pub thinking: String,
 }
@@ -289,6 +290,8 @@ pub struct TaskRun {
     pub outcome: Outcome,
     /// agent 任务跳转会话用（脚本任务 = None）。
     pub session_path: Option<String>,
+    /// 派发时一次性冻结的模型（"provider/id"；None = pi 默认，046-S3）。
+    pub model: Option<String>,
     /// 结果载荷：失败原因摘要 / 脚本输出尾+exit code（§1.4 hover 消费）。
     pub result_json: Option<String>,
 }
@@ -468,8 +471,8 @@ impl<'a> TaskStore<'a> {
     }
 
     /// 记一次运行开始（outcome = running；def 必须存在，防孤儿台账行）。
-    /// agent 任务在派发时已知 session_path 一次写入（模型冻结随 result_json
-    /// 归结算，046-S3）。返回 run id。
+    /// agent 任务的 session_path 随会话绑文件回填（[`bind_run`]），模型冻结
+    /// 也在派发时走 [`bind_run`]（046-S3）。返回 run id。
     pub fn start_run(
         &self,
         def_id: &str,
@@ -495,6 +498,29 @@ impl<'a> TaskStore<'a> {
             )
             .map_err(|e| e.to_string())?;
             Ok(tx.last_insert_rowid())
+        })
+    }
+
+    /// 派发上下文回填（046-S3）：session_path（agent 会话绑文件后）/ model
+    /// （派发时一次性冻结）。None = 保留现值。
+    pub fn bind_run(
+        &self,
+        run_id: i64,
+        session_path: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(), String> {
+        self.db.with_tx(|tx| {
+            let n = tx
+                .execute(
+                    "UPDATE task_runs
+                     SET session_path = COALESCE(?2, session_path), model = COALESCE(?3, model)
+                     WHERE id = ?1",
+                    params![run_id, session_path, model],
+                )
+                .map_err(|e| e.to_string())?;
+            (n == 1)
+                .then_some(())
+                .ok_or_else(|| format!("run {run_id} 不存在"))
         })
     }
 
@@ -559,13 +585,13 @@ impl<'a> TaskStore<'a> {
         self.db.with_conn(|c| {
             let (sql, bind_def): (&str, Option<&str>) = match def_id {
                 Some(_) => (
-                    "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, result_json
+                    "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, model, result_json
                      FROM task_runs WHERE def_id = ?1
                      ORDER BY started_at DESC, id DESC LIMIT ?2",
                     def_id,
                 ),
                 None => (
-                    "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, result_json
+                    "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, model, result_json
                      FROM task_runs
                      ORDER BY started_at DESC, id DESC LIMIT ?1",
                     None,
@@ -591,7 +617,7 @@ impl<'a> TaskStore<'a> {
     pub fn running_runs(&self) -> Result<Vec<TaskRun>, String> {
         self.db.with_conn(|c| {
             let mut stmt = c
-                .prepare("SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, result_json
+                .prepare("SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, model, result_json
                           FROM task_runs WHERE outcome = 'running'
                           ORDER BY started_at")
                 .map_err(|e| e.to_string())?;
@@ -659,7 +685,8 @@ impl<'a> TaskStore<'a> {
             finished_at: r.get(4)?,
             outcome,
             session_path: r.get(6)?,
-            result_json: r.get(7)?,
+            model: r.get(7)?,
+            result_json: r.get(8)?,
         })
     }
 }
@@ -957,14 +984,21 @@ mod tests {
         tasks.create(&agent_def("a")).unwrap();
 
         assert!(tasks.last_run("a").unwrap().is_none());
-        let run_id = tasks
-            .start_run("a", Trigger::Manual, 100, Some("sess\\abc.jsonl"))
-            .unwrap();
+        let run_id = tasks.start_run("a", Trigger::Manual, 100, None).unwrap();
         assert_eq!(
             tasks.running_runs().unwrap().len(),
             1,
             "运行中可见（recover 扫描源）"
         );
+
+        // bind_run：模型派发时冻结 + 会话绑文件回填（None = 保留现值）
+        tasks
+            .bind_run(run_id, None, Some("bigmodel/glm-5.3"))
+            .unwrap();
+        tasks
+            .bind_run(run_id, Some("sess\\abc.jsonl"), None)
+            .unwrap();
+        assert!(tasks.bind_run(999, Some("x"), None).is_err());
 
         tasks
             .settle_run(run_id, Outcome::Ok, 200, Some(r#"{"summary":"done"}"#))
@@ -975,6 +1009,7 @@ mod tests {
         assert_eq!(last.outcome, Outcome::Ok);
         assert_eq!(last.finished_at, Some(200));
         assert_eq!(last.session_path.as_deref(), Some("sess\\abc.jsonl"));
+        assert_eq!(last.model.as_deref(), Some("bigmodel/glm-5.3"));
         assert_eq!(last.result_json.as_deref(), Some(r#"{"summary":"done"}"#));
         assert!(
             tasks.running_runs().unwrap().is_empty(),

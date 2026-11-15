@@ -33,7 +33,8 @@ impl Chat {
                 .values()
                 .filter(|rt| {
                     let r = rt.read(cx);
-                    !r.observer && r.file.is_none() && same_path(&r.cwd, &cwd)
+                    // task_owned（046）：任务派发铸造的 draft 不是用户的输入页
+                    !r.observer && !r.task_owned && r.file.is_none() && same_path(&r.cwd, &cwd)
                 })
                 .max_by_key(|rt| rt.read(cx).input.len())
                 .cloned()
@@ -92,9 +93,16 @@ impl Chat {
             return;
         }
         // 草稿已晋级成会话 = 输入已被消费：草稿页文件退役（2026-11-07）。
-        // 先取 cwd 再改 rt，晋级后下次点新会话铸的是干净新页
-        let draft_cwd = rt.read(cx).cwd.to_string_lossy().to_string();
-        pi_link::drafts::clear(&draft_cwd);
+        // 先取 cwd 再改 rt，晋级后下次点新会话铸的是干净新页。
+        // task_owned（046）跳过：任务会话绑定不代表用户草稿被消费，
+        // 清掉会把用户该项目未发送的草稿抹了
+        let (draft_cwd, task_owned) = {
+            let r = rt.read(cx);
+            (r.cwd.to_string_lossy().to_string(), r.task_owned)
+        };
+        if !task_owned {
+            pi_link::drafts::clear(&draft_cwd);
+        }
         // 伪标签到此退役：磁盘扫描现在找得到真文件，真标签接管
         self.psp.pending_tabs.retain(|e| e.key != old_key);
         rt.update(cx, |r, _| r.key = path_key.clone());
@@ -200,6 +208,8 @@ impl Chat {
             .collapsed_keys
             .remove(&same_ws_key(&rt.read(cx).cwd.to_string_lossy()));
         self.refresh_sessions();
+        // 046 任务派发链：在途上下文随身份搬家（draft-N → 会话文件键）
+        crate::tasks::run::on_session_bound(self, &old_key, &path, cx);
         cx.notify();
     }
 
