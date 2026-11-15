@@ -267,6 +267,7 @@ impl Chat {
                 op_tx: None,
             },
             plugins: pf_plugin::PluginUi::default(),
+            tasks: tasks::TasksState::default(),
             aux: AuxUi {
                 ext_widgets: Vec::new(),
                 ext_dialog: None,

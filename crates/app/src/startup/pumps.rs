@@ -70,6 +70,12 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     // PF 插件清单扫描（beads 360 ①；02 §4：启动只承担清单，store/ctx 懒加载
     // ——微秒级/个，后台落位后状态栏 tab / 右键【插件】即出现）
     crate::pf_plugin::spawn_plugin_scan(cx);
+    // 046-S2：定时调度共有泵——先注册 tasks source 再拉泵（泵先跑全部
+    // source 的 recover 再开 20s timer；空注册表空转成本 ≈ 0，046-0）。
+    // S4 起 dev-flag `auto_tasks` 门住 register（source 注册三处同源之一），
+    // 共有泵不受其管。
+    crate::tasks::register();
+    crate::services::scheduler::spawn(cx);
 }
 
 /// fs 监听泵（Zed worktree 扫描器的轻量对应物）：watcher 事件经后台

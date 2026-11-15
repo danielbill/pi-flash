@@ -107,3 +107,5 @@ gpui = { version = "0.2.2", features = ["test-support"] }
 ropey = "=2.0.0-beta.1"
 # perf_probe 的 reset 路径拆解测试用到（与 gpui 生态同款 smallvec 1.x）
 smallvec = "1"
+# 046-S2 调度业务单测：临时 context.db（sched.rs claim/settle/recover 矩阵）
+tempfile = "3"

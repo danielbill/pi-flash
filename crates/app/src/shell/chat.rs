@@ -28,6 +28,8 @@ pub(crate) struct Chat {
     pub(crate) ws: WsUi,
     /// PF 插件（090-4/02 规范）：清单注册表 + 懒加载运行时 + 面板行缓存
     pub(crate) plugins: pf_plugin::PluginUi,
+    /// 自动任务簇（046）：任务/运行状态面（泵与 CRUD 刷新，UI 只读缓存）
+    pub(crate) tasks: tasks::TasksState,
 }
 
 /// 工作区簇（4ea 字段重组）：文件树/fs 监听、编辑器 tab/md 预览、终端、

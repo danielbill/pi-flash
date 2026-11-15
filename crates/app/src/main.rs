@@ -46,6 +46,7 @@ mod settings;
 mod shell;
 mod startup;
 mod status_bar;
+mod tasks;
 mod terminal;
 mod titlebar;
 mod top_panels;
