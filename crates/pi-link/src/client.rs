@@ -110,6 +110,10 @@ pub fn spawn(
     })?;
 
     let node: String = vendor::node_bin();
+    // 047-P2-1：V8 堆上限（MB）。spawn 时读一次（PI_FLASH_PI_STDERR 同口径
+    // ——env 只读一次）；缺省 3072、0=显式禁用、非法值回落缺省。解析提前到
+    // 日志行之前：=== spawn 行带 heap=…，验收自动化可直接断言生效值。
+    let node_heap_mb = node_heap_mb_from_env().unwrap_or(DEFAULT_NODE_HEAP_MB);
     // Optional wire log (PI_FLASH_RPC_LOG=<path>): every spawn records its
     // full command line, then ">> " outgoing / "< " incoming lines and the
     // child's stderr — diagnosis for "RPC works in probes, dead in the app".
@@ -139,7 +143,7 @@ pub fn spawn(
         let mut f = log.lock().unwrap();
         let _ = writeln!(
             f,
-            "=== spawn ts={ts} node={node} cwd={} args={extra_args:?} cli={}",
+            "=== spawn ts={ts} node={node} cwd={} args={extra_args:?} cli={} heap={node_heap_mb}",
             cwd.display(),
             cli.display()
         );
@@ -156,9 +160,8 @@ pub fn spawn(
     };
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
-    // 047-P2-1：V8 堆上限。node 自己的 flag 必须在脚本路径之前——cli.js
+    // 047-P2-1：node 自己的 flag 必须在脚本路径之前——cli.js
     // 之后的 argv 全归 pi。0=禁用（不插旗）。
-    let node_heap_mb = node_heap_mb_from_env().unwrap_or(DEFAULT_NODE_HEAP_MB);
     if node_heap_mb > 0 {
         cmd.arg(format!("--max-old-space-size={node_heap_mb}"));
     }

@@ -175,6 +175,29 @@ pub(super) fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>
         },
         "active_key": chat.pool.active_key,
         "active_file": opt_path(chat.psp.active_file.as_ref()),
+        // 047-P2 验收载体：tab 带全序（打开序 = 视觉序）——编辑器 soft cap
+        // 逐出（最旧被逐/脏保留/全脏放行）断言读这里；file 含全路径便于
+        // fixture 定位
+        "tabs": chat
+            .ws
+            .panel_tabs
+            .iter()
+            .map(|t| match t {
+                crate::PanelTab::Term(id) => json!({"kind": "term", "id": id}),
+                crate::PanelTab::File(p) => {
+                    json!({"kind": "file", "path": p.display().to_string()})
+                }
+                crate::PanelTab::Observer { key } => json!({"kind": "observer", "key": key}),
+                crate::PanelTab::Plugin { pkg, page } => {
+                    json!({"kind": "plugin", "pkg": pkg, "page": page})
+                }
+                crate::PanelTab::Changelog => json!({"kind": "changelog"}),
+                crate::PanelTab::PiNativeMarket => json!({"kind": "pi-native-market"}),
+                crate::PanelTab::PfMarket => json!({"kind": "pf-market"}),
+                crate::PanelTab::Search => json!({"kind": "search"}),
+                crate::PanelTab::SessionSearch => json!({"kind": "session-search"}),
+            })
+            .collect::<Vec<_>>(),
         "terminals": chat.ws.terminals.len(),
         "active_terminal": chat.ws.active_terminal,
         // 031/040 full+ 档扩展面板：按钮可用性（full+ 档即可，勾选即生效）
