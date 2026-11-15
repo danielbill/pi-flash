@@ -67,6 +67,31 @@ bash test/047-内存削减/run.sh T1 T2   # 指定用例
 前置：`cargo build`（debug 二进制）。隔离实例 + `PI_FLASH_RPC_LOG` 全程
 走 pif-ui 数据面，不碰像素不抢屏幕。
 
+## 基准（bench.sh：047 §4 量化验收）
+
+`bench.sh <label> <exe> [vendor_dir]`：`bench-fixture.mjs` 生成 36.9MB
+真实形态会话（3600 条目：1200 条 20KB system sections + 600 条死分支 +
+大 toolResult；`PI_CODING_AGENT_SESSION_DIR` 指隔离根，不污染 ~/.pi）→
+session.open 装载（真实 vendored pi，零模型调用）→ PowerShell 采样
+WorkingSet64（装载期 200ms/次取 peak + 收场稳态）与 PrivateMemorySize64。
+
+对照二进制：当前 HEAD vs 047 基线 `a047b487`（git worktree 独立构建，
+同 debug profile、同夹具、同机器）。**每侧 3 跑取中位**（2026-11-15）：
+
+| 指标 | before (a047b487) | after (HEAD) | Δ |
+|---|---|---|---|
+| 装载期峰值 WS | 341.5 MB | **265.5 MB** | **−76 MB（−22%）** |
+| 稳态 WS | 209.6 MB | 191.0 MB | −18.6 MB（−9%） |
+| 稳态私有内存 | 257.6 MB | 229.4 MB | −28.2 MB（−11%） |
+
+- **峰值三跑完全分离**（before 全部 ≥330.7 > after 全部 ≤324）：主角是
+  P1-3 叶链两遍法（pre-047 全史 Value 驻留）+ P1-1 wire move 语义——
+  36.9MB 文件解析期的内存峰值；
+- 稳态/私有方向一致（after 优）但 run 间有重叠：debug 堆 + Windows 工作
+  集修剪的噪声（首轮 9.2MB 夹具实验里稳态噪声 ±50MB 完全淹没信号——
+  结论：小夹具测不出稳态差，量化看峰值 + 放大折叠负载）；
+- 绝对值偏大是 debug 构建（两侧同 profile，Δ 可信）。
+
 ## 已知口径
 
 - **真 OOM 崩溃→重启**（pi 实际吃满堆限）不确定性太高，不入自动化；T1 的
