@@ -116,6 +116,47 @@ export function settledEntry(result: SubagentResult): {
 	return { customType: SETTLED_ENTRY_TYPE, data: completionDetails(result) };
 }
 
+/**
+ * Durable completion message for a child that died without settling.
+ *
+ * Two facts force this channel rather than a `subagent-settled` entry:
+ * 1. `pi.appendEntry()` writes a **custom entry**, and pi keeps custom entries out
+ *    of the `get_messages` snapshot (`sessionEntryToContextMessages` returns `[]`
+ *    for `type: "custom"`) — a reopened session would never see it, so the card
+ *    would keep replaying the ack and spin.
+ * 2. A **custom message** IS in the snapshot, and the host folds every
+ *    `subagent-completion` message into its card at load
+ *    (`apply_completion_messages`, `crates/app/src/session/messages/model.rs`).
+ *
+ * Delivered with no `triggerTurn`: an idle session stores the message without
+ * starting a run, so reopening a session never burns a turn on an old notice.
+ * `stopReason: "aborted"` is the truthful terminal state (the child was stopped
+ * before it finished) and lands on the host's warn tone, not a red error.
+ * `reason` is ignored by the host (`settled_patch_fields` reads only
+ * childId/stopReason/errorCode/session_file) and lets a transcript tell a user
+ * abort from a process death.
+ */
+export function orphanCompletionMessage(
+	childId: string,
+	sessionFile: string | undefined,
+): { customType: string; content: string; display: true; details: Record<string, unknown> } {
+	const details: Record<string, unknown> = {
+		childId,
+		stopReason: "aborted",
+		reason: "orphaned-at-reopen",
+	};
+	if (sessionFile) details.session_file = sessionFile;
+	const resume = sessionFile
+		? ` Resume it with \`agent(prompt, { resumeFrom: "${sessionFile}" })\` to continue with its full history instead of redoing the work.`
+		: "";
+	return {
+		customType: COMPLETION_TYPE,
+		content: `Background subagent ${childId} was stopped before it finished — the host process exited while it was still running, so no result was ever recorded.${resume}`,
+		display: true,
+		details,
+	};
+}
+
 /** Builds the toast + parent-session message for one settled child. */
 export function composeCompletion(result: SubagentResult): CompletionMessage {
 	const details = completionDetails(result);

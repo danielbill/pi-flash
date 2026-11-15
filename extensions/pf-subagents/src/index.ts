@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import type { ChildSession, ResolvedComposition, SessionFactory, SessionFactoryOptions } from "./backends/local.ts";
 import { LocalProvider } from "./backends/local.ts";
-import { COMPLETION_TYPE, composeCompletion, settledEntry } from "./completion.ts";
+import { COMPLETION_TYPE, composeCompletion, orphanCompletionMessage, SETTLED_ENTRY_TYPE, settledEntry } from "./completion.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
 import {
@@ -356,23 +356,171 @@ export function currentDepthOf(ctx: ExtensionContext): number {
 }
 
 /**
+ * One background dispatch (delivery: parent) whose toolResult was only an ack.
+ * `session_file` is carried through so the reconciled card still clicks
+ * through to the child transcript.
+ */
+export interface DispatchAck {
+	childId: string;
+	sessionFile?: string;
+}
+
+/** Everything one pass over the session branch yields. */
+export interface BranchScan {
+	/** This session's transcript file (depth cache key). */
+	file: string | undefined;
+	/** Delegation depth from the `subagent/child` marker (child sessions only). */
+	depth: number | undefined;
+	/** Terminal records already on disk, keyed by child (see `childKey`). */
+	settled: Set<string>;
+	/** Child ids whose terminal record carried no session file (id-only fallback). */
+	settledWithoutFile: Set<string>;
+	/** Acks that never reached a terminal state, in transcript order. */
+	acks: DispatchAck[];
+}
+
+/**
+ * Identity of one child across process restarts.
+ *
+ * `childId` ALONE IS NOT UNIQUE: the manager numbers children from `sub-1` on
+ * every process start, so a transcript that survived a restart holds two `sub-1`s.
+ * The child session file is the one field both the ack and the terminal record
+ * carry, so the pair is the real key. (Real case, 2026-11-15: batches one and two
+ * both had `sub-1..sub-3`; keying on the id alone would let batch one's settled
+ * `sub-3` mask batch two's orphaned `sub-3`.)
+ */
+function childKey(childId: string, sessionFile: string | undefined): string {
+	return sessionFile ? `${childId}\u0000${sessionFile}` : childId;
+}
+
+/**
+ * Tool statuses that mean the result *is* the terminal state.
+ * Mirrors `agent_details_terminal` in `crates/app/src/session/messages/model.rs:
+ * a background dispatch's ack (`started`/`running`) is not terminal by design,
+ * otherwise the card flashes red between the two channels.
+ */
+const TERMINAL_STATUS = new Set(["failed", "completed", "done", "aborted", "error"]);
+
+function isTerminalDetails(details: Record<string, unknown>): boolean {
+	if ("stop_reason" in details || "error_code" in details) return true;
+	const status = details.status;
+	return typeof status === "string" && TERMINAL_STATUS.has(status);
+}
+
+/**
+ * Single pass over the branch for both session-start jobs: child depth restore
+ * and dispatch bookkeeping (settled ids + non-terminal acks).
+ *
+ * Why one pass: `getBranch()` is cheap to call but returns the whole transcript,
+ * and `restoreChildDepth` already walked it. The ledger above is memory-only, so
+ * EVERY reopen has to re-derive it from the transcript — one O(n) sweep over
+ * already-parsed entries is the whole cost (microseconds for a 500 kB session,
+ * and it happens once per open, never per event).
+ */
+export function scanSessionBranch(ctx: ExtensionContext): BranchScan {
+	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
+	const scan: BranchScan = { file, depth: undefined, settled: new Set(), settledWithoutFile: new Set(), acks: [] };
+	const entries = (ctx.sessionManager as unknown as { getBranch?: () => unknown[] }).getBranch?.() ?? [];
+	// childId -> ack; deduped so a transcript that (somehow) repeats a result
+	// still reconciles each child once.
+	const ackByChild = new Map<string, DispatchAck>();
+	for (const entry of entries) {
+		const record = entry as {
+			type?: string;
+			customType?: string;
+			data?: unknown;
+			details?: unknown;
+			message?: { role?: string; toolName?: string; details?: unknown };
+		};
+		if (record.type === "custom") {
+			if (record.customType === CHILD_MARKER_TYPE) {
+				const data = record.data as { depth?: unknown } | undefined;
+				if (typeof data?.depth === "number") scan.depth = data.depth;
+				continue;
+			}
+			if (record.customType === SETTLED_ENTRY_TYPE) {
+				const data = record.data as { childId?: unknown; session_file?: unknown } | undefined;
+				if (typeof data?.childId === "string") {
+					const sf = typeof data.session_file === "string" ? data.session_file : undefined;
+					if (sf) scan.settled.add(childKey(data.childId, sf));
+					else scan.settledWithoutFile.add(data.childId);
+				}
+			}
+			continue;
+		}
+		// A completion message is the durable terminal record: it is also the only
+		// one a reopened session can see (custom entries never reach the message
+		// snapshot), so it doubles as the idempotency marker for reconciliation.
+		if (record.type === "custom_message") {
+			if (record.customType === COMPLETION_TYPE) {
+				const data = record.details as { childId?: unknown; session_file?: unknown } | undefined;
+				if (typeof data?.childId === "string") {
+					const sf = typeof data.session_file === "string" ? data.session_file : undefined;
+					if (sf) scan.settled.add(childKey(data.childId, sf));
+					else scan.settledWithoutFile.add(data.childId);
+				}
+			}
+			continue;
+		}
+		if (record.type !== "message") continue;
+		const message = record.message;
+		if (!message || message.role !== "toolResult" || message.toolName !== TOOL_NAME) continue;
+		const details = message.details as Record<string, unknown> | undefined;
+		if (!details) continue;
+		const childId = details.child_id;
+		if (typeof childId !== "string" || childId.length === 0) continue;
+		if (isTerminalDetails(details)) {
+			// A real result supersedes any earlier ack for the same child.
+			ackByChild.delete(childId);
+			continue;
+		}
+		ackByChild.set(childId, {
+			childId,
+			...(typeof details.session_file === "string" ? { sessionFile: details.session_file } : {}),
+		});
+	}
+	scan.acks = [...ackByChild.values()];
+	return scan;
+}
+
+/**
+ * Orphans: children stuck on an ack that this process does not know.
+ *
+ * Three gates, each load-bearing:
+ * 1. `settled` — idempotency. Without it every reopen appends another notice and
+ *    the transcript grows without bound (the 2026-11-07 209 MB incident was
+ *    per-progress `appendEntry`; this is per-orphan, but once is still the right
+ *    number). Keyed by child+session file, because ids repeat across restarts.
+ * 2. `isLive` — the manager is the only truthful liveness source. A child that
+ *    is genuinely running keeps its record, so switching views and back inside
+ *    one process must NOT be reported as interrupted.
+ * 3. acks only — a toolResult carrying `stop_reason`/`error_code` already is the
+ *    terminal state; settling it again would be noise.
+ */
+export function orphanChildren(scan: BranchScan, isLive: (childId: string) => boolean): DispatchAck[] {
+	return scan.acks.filter(
+		(ack) =>
+			!scan.settled.has(childKey(ack.childId, ack.sessionFile)) &&
+			!scan.settledWithoutFile.has(ack.childId) &&
+			!isLive(ack.childId),
+	);
+}
+
+/**
  * Restore this session's delegation depth from its own `subagent/child` marker.
  *
  * dsh reads depth from the agent header (`depth.ts`: absence = top-level depth
  * zero); our equivalent header is the marker persisted in the session file. The
  * in-memory map alone is enough while the child lives in this process, but a
  * child session the host reopens would otherwise look like a root.
+ *
+ * Returns the same single-pass scan `session_start` uses for orphan
+ * reconciliation, so reopening a session costs one sweep, not two.
  */
-export function restoreChildDepth(ctx: ExtensionContext): void {
-	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
-	if (!file) return;
-	const entries = (ctx.sessionManager as unknown as { getBranch?: () => unknown[] }).getBranch?.() ?? [];
-	for (const entry of entries) {
-		const record = entry as { type?: string; customType?: string; data?: unknown };
-		if (record.type !== "custom" || record.customType !== CHILD_MARKER_TYPE) continue;
-		const data = record.data as { depth?: unknown } | undefined;
-		if (typeof data?.depth === "number") childDepths.set(file, data.depth);
-	}
+export function restoreChildDepth(ctx: ExtensionContext): BranchScan {
+	const scan = scanSessionBranch(ctx);
+	if (scan.file && scan.depth !== undefined) childDepths.set(scan.file, scan.depth);
+	return scan;
 }
 
 export default function piSubagents(pi: ExtensionAPI): void {
@@ -649,7 +797,30 @@ export default function piSubagents(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		// A child session reopened by the host has no in-memory depth yet.
-		restoreChildDepth(ctx);
+		// The scan also feeds orphan reconciliation below — one sweep for both.
+		const scan = restoreChildDepth(ctx);
+
+		// 孤儿对账（2026-11-15）：后台派发的终态只走 `subagent-settled` 条目，
+		// 而子代理活在宿主进程里——进程随应用关闭/侧车重启而死时，那条条目
+		// 永远写不出来，卡片就只能永续重放 ack 里的 `status: started`（真机：
+		// 第二批 sub-3/sub-5 停在 13:56，重开后转个不停）。
+		// manager 是本进程的唯一活性源：它不认识的 child_id = 那个子代理已经
+		// 不在了，补一条终态把卡片收尾；已 settled 的 / 还活着的都不动。
+		for (const orphan of orphanChildren(
+			scan,
+			(childId) => manager.descriptorOf(childId) !== undefined,
+		)) {
+			try {
+				const message = orphanCompletionMessage(orphan.childId, orphan.sessionFile);
+				// 不带 triggerTurn：空闲会话只落盘不唤醒模型（pi `_appendCustomMessage`）——
+				// 否则每次开这个会话都会因为一条历史子代理的中断通知白烧一轮。
+				pi.sendMessage(message, {});
+			} catch {
+				// Best-effort: a failed append leaves the card spinning until the
+				// next reopen tries again. Never blocks session start.
+			}
+		}
+
 		// Re-register providers for this session's context (the factory closes over it).
 		manager.registry.unregister("spawn");
 		manager.registry.unregister("fork");
