@@ -9,9 +9,9 @@
 //! 误删防区：PF 自有清理逻辑只扫 sessions/assets 缓存子目录，不碰数据目录
 //! 根下的 `context.db`（与 app-settings.json 同级的常驻档）。
 //!
-//! 首个消费方 = 046 自动任务的持久层种子（[`tasks::TaskStore`]：任务定义 +
-//! 运行记录）——046 特性模块尚未开建，schema 与读写 API 先行落此，届时
-//! `pf_context::domain::TaskStore` 直接消费。
+//! 首个消费方 = 046 自动任务（[`tasks::TaskStore`]：任务定义 + 调度指针 +
+//! 运行台账；046-S1 扩列定稿）——app 侧 tasks 模块经
+//! `pf_context::domain::TaskStore` 直接消费，不再各写一份存储。
 
 mod db;
 pub mod tasks;

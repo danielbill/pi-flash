@@ -69,24 +69,30 @@ impl DbSource {
         let result = (v..SCHEMA_VERSION).try_for_each(|step| -> Result<(), String> {
             match step {
                 0 => {
-                    // v1：046 自动任务种子 schema（任务定义 + 运行记录）
+                    // v1：046 自动任务 schema（任务定义 + 调度指针 + 运行台账）。
+                    // 未发布免迁移：046 S1 直接原地扩列（046-0「存储」节）。
                     conn.execute_batch(
                         "CREATE TABLE task_defs (
-                            id         TEXT PRIMARY KEY,
-                            title      TEXT NOT NULL,
-                            spec_json  TEXT NOT NULL,
-                            created_at INTEGER NOT NULL,
-                            updated_at INTEGER NOT NULL
+                            id          TEXT PRIMARY KEY,
+                            title       TEXT NOT NULL,
+                            spec_json   TEXT NOT NULL,
+                            enabled     INTEGER NOT NULL DEFAULT 1,
+                            next_run_at INTEGER,
+                            anchor_at   INTEGER,
+                            created_at  INTEGER NOT NULL,
+                            updated_at  INTEGER NOT NULL
                         );
                         CREATE TABLE task_runs (
-                            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                            def_id      TEXT NOT NULL REFERENCES task_defs(id),
-                            started_at  INTEGER NOT NULL,
-                            finished_at INTEGER,
-                            ok          INTEGER,
-                            result_json TEXT
+                            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                            def_id       TEXT NOT NULL REFERENCES task_defs(id),
+                            trigger      TEXT NOT NULL DEFAULT 'schedule',
+                            started_at   INTEGER NOT NULL,
+                            finished_at  INTEGER,
+                            outcome      TEXT NOT NULL DEFAULT 'running',
+                            session_path TEXT,
+                            result_json  TEXT
                         );
-                        CREATE INDEX idx_task_runs_def ON task_runs(def_id, started_at);",
+                        CREATE INDEX idx_task_runs_def ON task_runs(def_id, started_at DESC);",
                     )
                     .map_err(|e| e.to_string())?;
                 }
@@ -217,7 +223,8 @@ mod tests {
             for i in 0..20 {
                 db1.with_tx(|tx| {
                     tx.execute(
-                        "INSERT INTO task_defs VALUES (?1, 'x', '{}', 0, 0)",
+                        "INSERT INTO task_defs (id, title, spec_json, created_at, updated_at)
+                         VALUES (?1, 'x', '{}', 0, 0)",
                         [format!("a{i}")],
                     )
                     .map_err(|e| e.to_string())?;
@@ -231,7 +238,8 @@ mod tests {
             for i in 0..20 {
                 db2.with_tx(|tx| {
                     tx.execute(
-                        "INSERT INTO task_defs VALUES (?1, 'y', '{}', 0, 0)",
+                        "INSERT INTO task_defs (id, title, spec_json, created_at, updated_at)
+                         VALUES (?1, 'y', '{}', 0, 0)",
                         [format!("b{i}")],
                     )
                     .map_err(|e| e.to_string())?;
@@ -259,8 +267,12 @@ mod tests {
         let dir = tmp_dir("rollback");
         let db = DbSource::open(&dir).unwrap();
         let r: Result<(), String> = db.with_tx(|tx| {
-            tx.execute("INSERT INTO task_defs VALUES ('t1','x','{}',0,0)", [])
-                .map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO task_defs (id, title, spec_json, created_at, updated_at)
+                 VALUES ('t1','x','{}',0,0)",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
             Err("业务失败".into()) // 闭包 Err → 回滚
         });
         assert!(r.is_err());
