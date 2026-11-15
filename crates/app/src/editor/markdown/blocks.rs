@@ -293,6 +293,11 @@ pub(crate) fn render_block(
             // 悬挂缩进（pi-web ul{padding-left:22px} + li{padding-left:2px}
             // + list-style-position:outside）：marker 落在文字左侧的固定
             // 槽里，文字统一从 24px 起排，嵌套每层 +22px。
+            // marker 列统一左对齐（pl 6 = 浏览器 outside marker 的悬挂内
+            // 缩观感）：此前 justify_end 右对齐，数字 advance 相同而 ink
+            // 宽窄不一（"1"窄"2"宽）→ 右缘钉死时"1."墨迹比"2."右缩 ~3px，
+            // 且圆点列与编号列错位（用户两轮反馈）；左对齐后圆点/勾选框/
+            // 编号共享同一左缘，多位数向右生长、槽内右缘余量兜底
             // items_start（非 center）：pi-web outside marker 与内容第一行
             // 对齐——多行 item 时圆点/勾选框必须钉在首行，垂直居中会漂到
             // 整条 item 中间；行盒 = 1.7×字号，文本 marker（"1."）行盒同高
@@ -302,8 +307,7 @@ pub(crate) fn render_block(
                 .flex_shrink_0()
                 .flex()
                 .items_start()
-                .justify_end() // marker 靠槽右缘 = 悬挂在文字左侧
-                .pr(px(4.)) // marker 右边到文字的视觉间隙（浏览器 outside marker）
+                .pl(px(6.))
                 // 字体大小设置.md「list mark = 设置值」；绝对差换算下
                 // 不随外层标题字号复利放大
                 .text_size(px(active_md_spec().size))
