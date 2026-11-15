@@ -26,6 +26,7 @@ pub(super) fn render_project_picker(
     weak: &gpui::WeakEntity<Chat>,
     input: &gpui::Entity<TextInput>,
     fresh: bool,
+    task_form: bool,
     scroll: &gpui::ScrollHandle,
     t: &theme::Theme,
     _cx: &App,
@@ -83,7 +84,10 @@ pub(super) fn render_project_picker(
                     let _ = weak_row.update(cx, |c, cx| {
                         // 菜单关闭是 UI 入口的职责（业务函数只管业务）
                         c.dlg.dialog = None;
-                        if fresh {
+                        if task_form {
+                            // 046 任务表单来源：只回填表单，不切工作区
+                            crate::dialogs::tasks::set_task_form_project(c, path.clone(), cx);
+                        } else if fresh {
                             c.new_session_in(path.clone(), cx);
                         } else {
                             c.switch_project(path.clone(), cx);
@@ -126,7 +130,11 @@ pub(super) fn render_project_picker(
             let _ = weak_open.update(cx, |c, cx| {
                 // 菜单关闭归 UI 入口（系统目录选择器接管之前的收尾）
                 c.dlg.dialog = None;
-                c.pick_project_folder(fresh, cx);
+                if task_form {
+                    crate::dialogs::tasks::pick_task_project_folder(c, cx);
+                } else {
+                    c.pick_project_folder(fresh, cx);
+                }
                 cx.notify();
             });
         })
@@ -156,7 +164,8 @@ pub(super) fn render_project_picker(
             cx.stop_propagation();
             let weak = weak_enter.clone();
             cx.defer(move |cx| {
-                let _ = weak.update(cx, |c, cx| c.project_activate(fresh, cx));
+                let tf = task_form;
+                let _ = weak.update(cx, |c, cx| c.project_activate(fresh, tf, cx));
             });
         })
         // ↑/↓：搜索框焦点下的组件词移动已被 Input 上下文绑定的
@@ -226,6 +235,16 @@ impl Chat {
     /// project_move_sel / project_activate；打开/回填即落默认选中
     /// （当前项目行，不在列则【打开文件夹】行）。
     pub(crate) fn open_project_picker(&mut self, fresh: bool, cx: &mut Context<Self>) {
+        self.open_project_picker_ext(fresh, false, cx);
+    }
+
+    /// 046 任务表单来源：选项目回填任务表单（`task_form` = true），不切
+    /// 工作区、不恢复 last_open。其余同 [`Self::open_project_picker`]。
+    pub(crate) fn open_project_picker_for_task(&mut self, cx: &mut Context<Self>) {
+        self.open_project_picker_ext(false, true, cx);
+    }
+
+    fn open_project_picker_ext(&mut self, fresh: bool, task_form: bool, cx: &mut Context<Self>) {
         let weak = cx.weak_entity();
         let weak_esc = weak.clone();
         let input = cx.new(|cx| {
@@ -254,6 +273,7 @@ impl Chat {
         self.dlg.dialog = Some(Dialog::ProjectPicker {
             input,
             fresh,
+            task_form,
             scroll: gpui::ScrollHandle::new(),
         });
         cx.notify();
@@ -315,17 +335,29 @@ impl Chat {
     /// 键盘激活（Enter）当前选中行：行号 0 = 打开目录选择器；项目行走
     /// 行点击同款落点（fresh = 新会话页来源落全新草稿，否则切项目恢复
     /// 上次会话）。
-    pub(crate) fn project_activate(&mut self, fresh: bool, cx: &mut Context<Self>) {
+    pub(crate) fn project_activate(
+        &mut self,
+        fresh: bool,
+        task_form: bool,
+        cx: &mut Context<Self>,
+    ) {
         let visible = project_visible(self);
         let sel = self.psp.project_sel.min(visible.len());
         if sel == 0 {
-            self.pick_project_folder(fresh, cx);
+            if task_form {
+                crate::dialogs::tasks::pick_task_project_folder(self, cx);
+            } else {
+                self.pick_project_folder(fresh, cx);
+            }
             return;
         }
         let path = self.psp.project_hits[visible[sel - 1]].path.clone();
         // 键盘 Enter 同一条 UI 收尾（菜单关闭不归业务函数管）
         self.dlg.dialog = None;
-        if fresh {
+        if task_form {
+            // 046 任务表单来源：只回填表单，不切工作区
+            crate::dialogs::tasks::set_task_form_project(self, path, cx);
+        } else if fresh {
             self.new_session_in(path, cx);
         } else {
             self.switch_project(path, cx);

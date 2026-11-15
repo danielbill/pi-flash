@@ -15,7 +15,7 @@ pub(crate) mod store;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use pf_context::domain::tasks::{RUN_KEEP_LIMIT, TaskDef, TaskSpec, Trigger};
+use pf_context::domain::tasks::{RUN_KEEP_LIMIT, TaskDef, TaskRun, TaskSpec, Trigger};
 
 use crate::Chat;
 use crate::services::scheduler::{self, DueJob, JobOutcome};
@@ -53,6 +53,9 @@ pub(crate) struct TasksState {
     /// 在途派发上下文（run.rs；按 runtime key 索引，TurnSettled/FileBound
     /// 钩子消费——把会话事件翻译回 run 台账）。
     pub pending: run::PendingMap,
+    /// 运行台账缓存（历史 tab 数据源；started_at 倒序全量 ≤20×50 行，
+    /// refresh 点与 defs 同）。UI 渲染只读这份，不自查库。
+    pub runs: Vec<TaskRun>,
 }
 
 impl Chat {
@@ -62,6 +65,7 @@ impl Chat {
         let mut running = scheduler::in_flight_keys();
         running.sort();
         self.tasks.running = running;
+        self.tasks.runs = store::list_runs_cached();
     }
 }
 

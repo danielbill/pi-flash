@@ -18,7 +18,7 @@
 use serde_json::Value;
 
 /// 已知旗标键（模块发版排除注册表）。新增可配置模块 = 在此加一个键。
-pub const KNOWN: &[&str] = &["subagents", "pi_native_market"];
+pub const KNOWN: &[&str] = &["subagents", "pi_native_market", "auto_tasks"];
 
 /// 键默认值（044-0 拍板：subagents 模块**默认开**——发布包子代理可见；
 /// 其余重型模块维持发版排除语义默认关）。dev-flags.json 显式值 / env

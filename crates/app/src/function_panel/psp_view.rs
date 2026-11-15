@@ -245,6 +245,7 @@ fn psp_ctrl_bar(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
     let grouped = chat.psp.list_mode == ListMode::Grouped;
     let w_open = weak.clone();
     let w_new = weak.clone();
+    let w_tasks = weak.clone();
     let w_search = weak.clone();
     let w_toggle = weak.clone();
     let w_max = weak.clone();
@@ -330,6 +331,18 @@ fn psp_ctrl_bar(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
                 .child(icon("icon-new-chat", 19.))
                 .child(tr("psp.session_label")),
         )
+        // 046 任务入口第三颗（dev-flag `auto_tasks` 关 = 不渲染，§1.0；
+        // 窗口自然不可达——与按钮/弹窗/source 注册三处同源）
+        .when(crate::services::workspace::auto_tasks_enabled(), |d| {
+            d.child(
+                btn("psp-open-tasks")
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = w_tasks.update(cx, |c, cx| c.open_tasks_dialog(cx));
+                    })
+                    .child(icon("clock-4", crate::ui::tokens::icon::LG))
+                    .child(tr("task.entry")),
+            )
+        })
         .child(div().flex_1())
         // 右三：纯 icon（钮盒 26 = 文件树操作栏 bar_btn 同款，bar gap 2 →
         // 与下方操作栏右缘逐列对齐：最大化列、次列图标中心严格同 x）。

@@ -165,6 +165,11 @@ fn remove_in_flight(key: &str) {
         .retain(|k| k != key);
 }
 
+/// 手动清除在途标记（046-S4 删除中止：run 已随任务删除，结算不会再发生）。
+pub(crate) fn clear_in_flight(key: &str) {
+    remove_in_flight(key);
+}
+
 /// 作业在途查询（run_now 手动派发的运行中守卫，§1.5 ⋯菜单置灰双保险）。
 #[allow(dead_code)] // 046-S4 菜单/删除接线
 pub(crate) fn is_in_flight(key: &str) -> bool {

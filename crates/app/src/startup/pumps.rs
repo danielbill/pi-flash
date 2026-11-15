@@ -72,9 +72,11 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     crate::pf_plugin::spawn_plugin_scan(cx);
     // 046-S2：定时调度共有泵——先注册 tasks source 再拉泵（泵先跑全部
     // source 的 recover 再开 20s timer；空注册表空转成本 ≈ 0，046-0）。
-    // S4 起 dev-flag `auto_tasks` 门住 register（source 注册三处同源之一），
+    // dev-flag `auto_tasks` 门住 register（source 注册三处同源之一），
     // 共有泵不受其管。
-    crate::tasks::register();
+    if crate::services::workspace::auto_tasks_enabled() {
+        crate::tasks::register();
+    }
     crate::services::scheduler::spawn(cx);
 }
 

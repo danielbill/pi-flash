@@ -32,6 +32,8 @@ pub(crate) enum Dialog {
     ProjectPicker {
         input: gpui::Entity<TextInput>,
         fresh: bool,
+        /// 046 任务表单来源：选中项目回填任务表单（不切工作区）
+        task_form: bool,
         scroll: gpui::ScrollHandle,
     },
     /// composer 缩略图点击大图预览：直接持渲染源（Arc 指针拷贝，无索引

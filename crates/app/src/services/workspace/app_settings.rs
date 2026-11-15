@@ -322,6 +322,13 @@ pub fn dev_flag_enabled(key: &str) -> bool {
 /// subagent 功能总闸（开发旗标，默认开（044-0）；dev-flags.json /
 /// PI_FLASH_SUBAGENTS 可强关）。只管设置页导航可见性；运行时生效开关 =
 /// 本旗标 && 用户面开关（`subagent_module_active`）。
+/// 046 自动任务总开关（默认关；dev-flags.json / env `PI_FLASH_AUTO_TASKS`
+/// 显式开）。门三处同源：psp 入口钮 / 任务大卡 / tasks source 注册——共有
+/// 泵不受其管（046-0）。
+pub fn auto_tasks_enabled() -> bool {
+    dev_flag_enabled("auto_tasks")
+}
+
 pub fn subagents_enabled() -> bool {
     dev_flag_enabled("subagents")
 }

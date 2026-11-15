@@ -33,6 +33,19 @@ impl Chat {
                 root = root.child(el);
             }
         }
+        // 046 任务管理大卡（独立槽 dlg.tasks；挂 settings 之后 = 画在设置
+        // 之上、dialogs 之前——后渲染者在上，从任务表单打开的项目选择弹窗
+        // 能叠其上）
+        if let Some(tp) = self.dlg.tasks.clone() {
+            root = root.child(dialogs::tasks::render_tasks(
+                self,
+                &tp,
+                &weak_for_dialog,
+                t,
+                window,
+                cx,
+            ));
+        }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
         // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉
         // 全部点击（"看得见点不着"）。弹窗永远是顶层模态，统一放 settings 上。

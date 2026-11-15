@@ -9,6 +9,7 @@ pub(crate) mod ask_card;
 pub(crate) mod ext_ui;
 mod project_picker;
 mod provider_picker;
+pub(crate) mod tasks;
 
 use project_picker::render_project_picker;
 use provider_picker::render_provider_picker;
@@ -58,11 +59,12 @@ pub(crate) fn render_dialogs(
     if let Some(Dialog::ProjectPicker {
         input,
         fresh,
+        task_form,
         scroll,
     }) = chat.dlg.dialog.as_ref()
     {
         root = root.child(render_project_picker(
-            chat, weak, input, *fresh, scroll, t, cx,
+            chat, weak, input, *fresh, *task_form, scroll, t, cx,
         ));
     }
     if let Some(Dialog::ImagePreview { image }) = chat.dlg.dialog.as_ref() {

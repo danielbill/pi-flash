@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pf_context::domain::tasks::{TaskDef, TaskSpec, TaskStore};
+use pf_context::domain::tasks::{TaskDef, TaskRun, TaskSpec, TaskStore};
 
 use super::sched;
 use super::{DefRow, tasks_err, tasks_log};
@@ -46,6 +46,14 @@ pub(crate) fn list_cached() -> Vec<DefRow> {
             tasks_err(&format!("任务列表查询失败: {e}"));
             Vec::new()
         }
+    }
+}
+
+/// 运行台账缓存（状态面 runs 源；limit ≤ 0 = 全量，started_at 倒序）。
+pub(crate) fn list_runs_cached() -> Vec<TaskRun> {
+    match open_store() {
+        Ok(s) => s.list_runs(None, -1).unwrap_or_default(),
+        Err(_) => Vec::new(),
     }
 }
 

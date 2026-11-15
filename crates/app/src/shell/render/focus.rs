@@ -103,6 +103,12 @@ impl Chat {
             {
                 window.focus(&self.dlg.dialog_focus);
             }
+        } else if let Some(tp) = self.dlg.tasks.as_ref() {
+            // 046 任务大卡同款：表单输入持焦不回收（TaskPanel::focus_within
+            // 结构化自检），点导航/空处归还 dialog_focus
+            if !tp.read(cx).focus_within(window, cx) && !self.dlg.dialog_focus.is_focused(window) {
+                window.focus(&self.dlg.dialog_focus);
+            }
         } else if matches!(
             self.layout.content_view,
             crate::ContentView::Search | crate::ContentView::SessionSearch
