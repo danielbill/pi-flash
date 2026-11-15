@@ -24,6 +24,7 @@ mod plugin;
 mod search;
 mod session;
 mod settings;
+mod tasks;
 
 type OpResult = Result<Value, (String, String)>;
 
@@ -44,6 +45,7 @@ pub(super) fn dispatch(
         "file" | "files" => files::dispatch(chat, window, cx, m, params),
         "git" => git::dispatch(chat, cx, m, params),
         "settings" => settings::dispatch(chat, cx, m, params),
+        "tasks" => tasks::dispatch(chat, cx, m, params),
         "plugin" | "plugin_picker" | "mcp_picker" => plugin::dispatch(chat, window, cx, m, params),
         "model" | "project" => pickers::dispatch(chat, cx, m, params),
         "search" => search::dispatch(chat, cx, m, params),

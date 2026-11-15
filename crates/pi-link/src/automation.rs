@@ -91,6 +91,9 @@ pub mod method {
     pub const GIT_PUSH: &str = "git.push";
     pub const GIT_REFRESH: &str = "git.refresh";
     pub const GIT_SET_TAB: &str = "git.set_tab";
+    /// 046 任务管理大卡（UI 测试用；snapshot dialogs 面上报 tasks 卡状态）
+    pub const TASKS_OPEN: &str = "tasks.open";
+    pub const TASKS_CLOSE: &str = "tasks.close";
     pub const SETTINGS_OPEN: &str = "settings.open";
     pub const SETTINGS_CLOSE: &str = "settings.close";
     /// 040 扩展页：直调安装（UI 测试用；source 支持整条 `pi install …`）

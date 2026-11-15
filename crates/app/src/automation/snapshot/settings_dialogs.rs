@@ -120,9 +120,23 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             .collect(),
         _ => Vec::new(),
     };
+    // 046 任务管理大卡（独立槽 dlg.tasks，不占 dialog 枚举——随本面一起
+    // 上报：开合/tab/编辑态/数据面计数，UI 测试断言三 tab 与列表用）
+    let tasks = chat.dlg.tasks.as_ref().map(|p| {
+        let p = p.read(cx);
+        json!({
+            "tab": p.tab,
+            "editing": p.edit_id.is_some(),
+            "defs": chat.tasks.defs.len(),
+            "running": chat.tasks.running.len(),
+            "runs": chat.tasks.runs.len(),
+            "limit": pf_context::domain::tasks::TASK_CREATE_LIMIT,
+        })
+    });
     // 文件搜索命中随弹窗上报（后台扫盘异步回填，UI 测试据此轮询就绪）
     json!({
         "dialog": dialog,
+        "tasks": tasks,
         // 扩展阻塞弹窗队头 id/方法（#7 排队语义 + test/ext-ui 台架断言用）。
         // 键名不能叫 ext_dialog：下方布尔（Some=有弹窗）同名会把它覆盖，
         // 富对象一直是死字段（json! 后键覆盖前键）
