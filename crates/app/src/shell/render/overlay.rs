@@ -33,11 +33,18 @@ impl Chat {
                 root = root.child(el);
             }
         }
+        // 046 任务页锚定菜单（调度/tpick/模型/工具/思考——inputpanel 同款
+        // pill_anchor_edges 定位）：挂在 dialogs **之前** = 画在模态之下
+        // （settings ag_menus 同序；菜单开着时弹模态，菜单不许浮在模态上——
+        // 2026-11-15 用户截图：工具菜单+项目弹窗双开浮在弹窗顶上）
+        if let Some(el) = crate::tasks::view::menus_overlay(self, &weak_for_dialog, window) {
+            root = root.child(el);
+        }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
         // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉
         // 全部点击（"看得见点不着"）。弹窗永远是顶层模态，统一放 settings 上。
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
-        // 046 任务页移除确认浮层（页签载体：随 overlay 栈挂载）
+        // 046 任务页移除确认浮层（页签载体随 overlay 栈挂载）
         if let Some(el) = crate::tasks::view::remove_confirm_overlay(self, cx) {
             root = root.child(el);
         }

@@ -36,7 +36,7 @@ pub(crate) fn content_main(
         ContentView::PiNativeMarket => crate::market::pi_native_market::page(chat, weak, window),
         ContentView::PfMarket => crate::market::pf_market::page(chat, weak, window),
         // 046 任务管理页（内容区页签；页头横向【任务】【日志】双 tab）
-        ContentView::Tasks => crate::tasks::view::page(chat, weak, window),
+        ContentView::Tasks => crate::tasks::view::page(chat, weak, window, cx),
         // 083 项目搜索（Zed ProjectSearchView 同位：内容区 tab）
         ContentView::Search => crate::search::view(chat, weak, window, cx),
         // 会话查询（同版式，只查询）

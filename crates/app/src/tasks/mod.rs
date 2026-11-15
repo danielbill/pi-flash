@@ -26,7 +26,6 @@ use pf_context::domain::tasks::{
 use crate::Chat;
 use crate::services::format::now_ms;
 use crate::services::scheduler::{self, DueJob, JobOutcome};
-use crate::ui::dropdown::DropdownState;
 use crate::ui::text_input::TextInput;
 
 /// prune 顺带跑周期（046-0：泵每小时 tick 计数器到点执行；启动 recover 已跑首轮）。
@@ -94,11 +93,61 @@ pub(crate) struct TaskPage {
     pub thinking: &'static str,
     pub script_path: Option<PathBuf>,
     pub script_err: Option<String>,
-    /// 当前展开的下拉/拾取器（互斥；0 = 全关）。
-    pub open_dd: u8,
-    pub dd: Option<Entity<DropdownState>>,
+    /// 当前展开的锚定菜单槽位（[`popup_slot`]；None = 全关）。
+    pub popup: Option<u8>,
+    /// 触发钮点击时的锚点（槽位 bounds 未就绪退点击坐标；inputpanel 同款）。
+    pub anchor: Option<crate::PillAnchor>,
+    /// 触发钮 bounds 槽位（锚定菜单定位端；PillBtns 独占同款语义）。
+    pub anchors: TaskAnchors,
     /// 移除确认（overlay::confirm 槽：(def_id, title)）。
     pub confirm_del: Option<(String, String)>,
+}
+
+/// 锚定菜单槽位号（[`TaskPage::popup`]）。
+pub(crate) mod popup_slot {
+    pub(crate) const FREQ: u8 = 1;
+    pub(crate) const INTERVAL: u8 = 2;
+    pub(crate) const MINUTE: u8 = 3;
+    pub(crate) const WD: u8 = 4;
+    pub(crate) const MDAY: u8 = 5;
+    pub(crate) const TIME: u8 = 6;
+    pub(crate) const MODEL: u8 = 7;
+    pub(crate) const TIER: u8 = 8;
+    pub(crate) const THINKING: u8 = 9;
+}
+
+/// 触发钮 bounds 槽位组（paint 期 tracker 每帧覆盖；独立槽位避免与
+/// composer/设置页互相覆盖——PillBtns 同款语义）。
+#[derive(Default, Clone)]
+pub(crate) struct TaskAnchors {
+    pub freq: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub interval: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub minute: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub wd: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub mday: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub time: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+}
+
+impl TaskAnchors {
+    pub(crate) fn get(
+        &self,
+        slot: u8,
+    ) -> &std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>> {
+        match slot {
+            popup_slot::INTERVAL => &self.interval,
+            popup_slot::MINUTE => &self.minute,
+            popup_slot::WD => &self.wd,
+            popup_slot::MDAY => &self.mday,
+            popup_slot::TIME => &self.time,
+            popup_slot::MODEL => &self.model,
+            popup_slot::THINKING => &self.thinking,
+            popup_slot::TIER => &self.tier,
+            _ => &self.freq,
+        }
+    }
 }
 
 impl Chat {
@@ -214,7 +263,12 @@ impl Chat {
             }
         }
         self.set_content_view(crate::ContentView::Tasks);
+        let first_open = self.tasks.page.name.is_none();
         self.tasks_ensure_inputs(cx);
+        if first_open {
+            // 首开 = 新建态（HTML clearForm：默认 Agent / 每天 09:00）
+            self.task_new_form(cx);
+        }
         cx.notify();
     }
 
@@ -233,14 +287,24 @@ impl Chat {
     /// 表单文本输入 / 下拉守卫懒创建（aux.market 同款）。
     pub(crate) fn tasks_ensure_inputs(&mut self, cx: &mut Context<Self>) {
         if self.tasks.page.name.is_none() {
-            // HTML name-input：14px 大字（h34 容器内）
-            self.tasks.page.name = Some(cx.new(|cx| TextInput::new(cx).text_size(14.)));
+            // HTML name-input：14px 大字、内件 flat（透明→悬停显底，chrome
+            // 由表头容器给——组件自带边框会出双层框）
+            self.tasks.page.name = Some(cx.new(|cx| {
+                TextInput::new(cx)
+                    .text_size(14.)
+                    .placeholder(crate::i18n::tr("task.name"))
+                    .flat()
+            }));
         }
         if self.tasks.page.desc.is_none() {
-            self.tasks.page.desc = Some(cx.new(|cx| TextInput::new(cx).multiline()));
-        }
-        if self.tasks.page.dd.is_none() {
-            self.tasks.page.dd = Some(cx.new(|_| DropdownState::new()));
+            // HTML cm-area：composer 容器提供 chrome（flat 不出双层框），
+            // min-height 120px ≈ 6 行（auto_grow 自算高）
+            self.tasks.page.desc = Some(cx.new(|cx| {
+                TextInput::new(cx)
+                    .placeholder(crate::i18n::tr("task.desc_ph"))
+                    .flat()
+                    .lines(6)
+            }));
         }
     }
 
@@ -277,7 +341,7 @@ impl Chat {
             let page = &mut self.tasks.page;
             page.sel = Some(row.def.id.clone());
             page.confirm_del = None;
-            page.open_dd = 0;
+            page.popup = None;
             page.kind_agent = matches!(row.spec.kind, TaskKind::Agent);
             page.unit_ix = units.iter().position(|u| *u == sch.unit).unwrap_or(2);
             page.interval_ix = INTERVALS
@@ -327,7 +391,7 @@ impl Chat {
         let page = &mut self.tasks.page;
         page.sel = None;
         page.confirm_del = None;
-        page.open_dd = 0;
+        page.popup = None;
         page.kind_agent = true;
         page.unit_ix = 2;
         page.interval_ix = 0;

@@ -45,6 +45,30 @@
 
 RESULT: fail=0。
 
+## 执行记录 2（2026-11-15 新建栏 bug 修，单实例 11 断言）
+
+用户截图报「新建栏全是 bug」：点工具 pill 把 ProjectPicker 模态也拉开了
+（点击冒泡到 composer 操作栏行级 handler），工具菜单浮在模态顶上。
+修：`trg_wrap` stop_propagation + 项目 pill 独立 handler + `menus_overlay`
+挪到 dialogs 之前 + TIME 拾取补 notify + FREQ 菜单补五档 + INTERVAL 菜单
+加档位切换 + name/desc 输入 flat 化对齐 HTML + 操作栏补 ext/MCP stat pill。
+
+```
+✓ 开页 content_view tasks；snapshot dialogs.tasks.popup 键新增（None）
+✓ 点工具 pill (821,465) → popup=8 且 dialog=null   # 截图 bug 回归断言
+✓ 点外 (1000,600) → popup=null                     # menu_layer 遮挡关
+✓ 点项目 pill (750,464) → dialog=project_picker 且 popup=null
+✓ dialog.close → 点调度 freq pill → popup=1
+✓ freq 菜单五档（每 1 分钟/每小时/每天✓/每周/每月，像素复核）
+✓ 点「每 1 分钟」→ unit 切 cmin，单钮「每 1 分」(82×28)
+✓ 点单钮 → popup=2（间隔清单 + 分组线 + 四档切换，像素复核）
+✓ 新建复位 → 点 09:00 pill → popup=6（tpick 双列锚定 pill 下方）
+✓ 点小时 05 → 按钮/摘要即时 05:00                  # notify 修
+✓ 全量 app+pi-link+pf-context 888 过 0 挂
+```
+
+RESULT: fail=0。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；

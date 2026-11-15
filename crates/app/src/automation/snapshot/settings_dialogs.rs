@@ -132,6 +132,9 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         json!({
             "tab": chat.tasks.page.tab,
             "sel": chat.tasks.page.sel,
+            // 页面锚定菜单槽位（None = 全关；工具/模型/思考 = 8/7/9，
+            // 调度行 1..6——tasks/view.rs popup_slot 同源，UI 测试断言用）
+            "popup": chat.tasks.page.popup,
             "defs": chat.tasks.defs.len(),
             "running": chat.tasks.running.len(),
             "runs": chat.tasks.runs.len(),

@@ -86,7 +86,7 @@ pub(super) fn render_project_picker(
                         c.dlg.dialog = None;
                         if task_form {
                             // 046 任务表单来源：只回填表单，不切工作区
-                            crate::dialogs::tasks::set_task_form_project(c, path.clone(), cx);
+                            crate::tasks::set_task_form_project(c, path.clone(), cx);
                         } else if fresh {
                             c.new_session_in(path.clone(), cx);
                         } else {
@@ -131,7 +131,7 @@ pub(super) fn render_project_picker(
                 // 菜单关闭归 UI 入口（系统目录选择器接管之前的收尾）
                 c.dlg.dialog = None;
                 if task_form {
-                    crate::dialogs::tasks::pick_task_project_folder(c, cx);
+                    crate::tasks::pick_task_project_folder(c, cx);
                 } else {
                     c.pick_project_folder(fresh, cx);
                 }
@@ -345,7 +345,7 @@ impl Chat {
         let sel = self.psp.project_sel.min(visible.len());
         if sel == 0 {
             if task_form {
-                crate::dialogs::tasks::pick_task_project_folder(self, cx);
+                crate::tasks::pick_task_project_folder(self, cx);
             } else {
                 self.pick_project_folder(fresh, cx);
             }
@@ -356,7 +356,7 @@ impl Chat {
         self.dlg.dialog = None;
         if task_form {
             // 046 任务表单来源：只回填表单，不切工作区
-            crate::dialogs::tasks::set_task_form_project(self, path, cx);
+            crate::tasks::set_task_form_project(self, path, cx);
         } else if fresh {
             self.new_session_in(path, cx);
         } else {

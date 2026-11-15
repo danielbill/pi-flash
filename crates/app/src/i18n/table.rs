@@ -920,6 +920,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.weekday_prefix", "周", "週", "every"),
     ("task.day_num", "号", "號", "day"),
     ("task.sum_cmin", "每 {n} 分钟", "每 {n} 分鐘", "Every {n} min"),
+    ("task.sum_cmin_prefix", "每", "每", "Every"),
     ("task.sum_hourly", "每小时的第 {m} 分", "每小時的第 {m} 分", "Hourly at :{m}"),
     ("task.sum_daily", "每天 {t}", "每天 {t}", "Daily at {t}"),
     ("task.sum_weekly", "每周{w} {t}", "每週{w} {t}", "Weekly on {w} {t}"),

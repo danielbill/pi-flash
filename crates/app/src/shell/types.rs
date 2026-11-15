@@ -285,6 +285,8 @@ pub(crate) struct PillBtns {
     pub ag_ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_skills: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    // （046 任务页触发钮走 `TaskPage::anchors`（TaskAnchors，页级 Rc 槽），
+    // 不占 PillBtns 槽——页签随页存活，与 composer/设置页互不覆盖）
 }
 
 impl PillBtns {
