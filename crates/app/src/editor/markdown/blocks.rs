@@ -302,15 +302,22 @@ pub(crate) fn render_block(
             // 对齐——多行 item 时圆点/勾选框必须钉在首行，垂直居中会漂到
             // 整条 item 中间；行盒 = 1.7×字号，文本 marker（"1."）行盒同高
             // 自然落首行
+            let spec = active_md_spec();
+            // 槽宽 em 相对（GitHub ol{padding-left:2em} / Obsidian 同制）：
+            // 24px 是 1.7em@14 的设计稿基准值，floor 保小字号不缩。定宽槽在
+            // 大字号下装不下多位 marker——文件字体 26 时 "10." 句点直接叠进
+            // 正文首字（用户实测）；em 制后圆点/勾选框/编号共用同一槽宽，
+            // 两类列表正文列恒一致，多位数等比放大永不撞正文
+            let slot_w = (spec.size * 1.7).max(24.);
             let slot = div()
-                .w(px(24.))
+                .w(px(slot_w))
                 .flex_shrink_0()
                 .flex()
                 .items_start()
                 .pl(px(6.))
                 // 字体大小设置.md「list mark = 设置值」；绝对差换算下
                 // 不随外层标题字号复利放大
-                .text_size(px(active_md_spec().size))
+                .text_size(px(spec.size))
                 .line_height(relative(1.7))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(crate::appearance::theme::mix_rgb(
@@ -358,7 +365,6 @@ pub(crate) fn render_block(
                 // 无序列表：画 0.45em 实心圆（Chrome list-style disc 尺寸），
                 // 首行行盒内垂直居中——"•" 字形在 14px 下只有 ~4px 且偏细
                 None if marker == "•" => {
-                    let spec = active_md_spec();
                     let dot = (0.45 * spec.size).round();
                     let first_line = 1.7 * spec.size;
                     slot.child(

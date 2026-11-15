@@ -136,11 +136,12 @@ fn collect_inline_peek(
                     url: None,
                 });
             }
-            // html=false 即用户气泡路径（render_user 唯一调用方）：段内软
-            // 换行保留 \n（pi-web parity：.markdown-user-message p 的
-            // white-space:pre-wrap——用户分次回车的多行按原文折行，而非
-            // CommonMark 默认折叠成空格）
-            Event::SoftBreak => text.push(if html { ' ' } else { '\n' }),
+            // 段内软换行一律保留 \n（回车换行在渲染期生效）。此前仅
+            // html=false（用户气泡）保留、文件预览折叠成空格——CommonMark
+            // 默认行为，但与聊天两条路径不一致，且用户笔记多来自 Obsidian
+            // （默认单换行渲染成折行），预览拼成一行被判为 bug（用户实测：
+            // `1、`这类非列表分隔符写的行块连成一行）。
+            Event::SoftBreak => text.push('\n'),
             Event::HardBreak => text.push('\n'),
             Event::Start(tag) => style_push(&mut styles, tag),
             Event::End(end) => style_pop(&mut styles, end),
