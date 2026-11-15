@@ -588,7 +588,7 @@ impl InputState {
     /// Default options:
     ///
     /// - line_number: true
-    /// - tab_size: 2
+    /// - tab_size: 4（zed 对齐，见下方 mode 构造注释）
     /// - hard_tabs: false
     /// - height: full
     ///
@@ -606,7 +606,12 @@ impl InputState {
         let language: SharedString = language.into();
         self.mode = InputMode::CodeEditor {
             rows: 2,
-            tab: TabSize::default(),
+            // pi-flash patch（对齐 zed）：tab_size 默认 4（zed
+            // settings/default.json:1658 全局默认，bash/sh 等多数语言无
+            // 覆盖）——组件库旧默认 2 会让 4 空格缩进文件的 indent guide
+            // 深度逐级翻倍（每级出两条 guide，用户实测 vs zed 4 条/2 条）。
+            // Tab 键插入宽与 tab 字符渲染宽同步随此值。
+            tab: TabSize { tab_size: 4, hard_tabs: false },
             language,
             highlighter: Rc::new(RefCell::new(None)),
             line_number: true,
