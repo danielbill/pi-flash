@@ -116,6 +116,9 @@ pub(crate) enum ContentView {
     PiNativeMarket,
     /// 090-4 PF 插件市场 tab（PanelTab::PfMarket；内置索引 + 台账）
     PfMarket,
+    /// 046 任务管理页（PanelTab::Tasks；psp 控制栏「任务」钮打开；
+    /// 页头横向【任务】【日志】双 tab，2026-11-15 拍板改内容区页签载体）
+    Tasks,
     /// 083 项目搜索 tab（PanelTab::Search；搜索面板 + 结果列表）
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
@@ -330,6 +333,8 @@ pub(crate) enum PanelTab {
     PiNativeMarket,
     /// 090-4 PF 插件市场（内置索引 + 台账；菜单-三横按钮打开）
     PfMarket,
+    /// 046 任务管理页（psp 控制栏「任务」钮打开；内容区页签载体）
+    Tasks,
     /// 083 项目搜索（单例 tab；Ctrl+L / 文件树「搜索文件」打开，Zed ProjectSearchView 同位）
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
@@ -361,6 +366,7 @@ pub(crate) enum TabKey {
     Changelog,
     PiNativeMarket,
     PfMarket,
+    Tasks,
     Search,
     SessionSearch,
     Plugin { pkg: String, page: String },
@@ -375,6 +381,7 @@ impl PanelTab {
             PanelTab::Changelog => TabKey::Changelog,
             PanelTab::PiNativeMarket => TabKey::PiNativeMarket,
             PanelTab::PfMarket => TabKey::PfMarket,
+            PanelTab::Tasks => TabKey::Tasks,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
             PanelTab::Plugin { pkg, page } => TabKey::Plugin {
@@ -407,6 +414,7 @@ impl PanelTab {
             PanelTab::Changelog => ContentView::Changelog,
             PanelTab::PiNativeMarket => ContentView::PiNativeMarket,
             PanelTab::PfMarket => ContentView::PfMarket,
+            PanelTab::Tasks => ContentView::Tasks,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
             PanelTab::Plugin { .. } => ContentView::Plugin,
@@ -423,6 +431,7 @@ impl PanelTab {
             PanelTab::Changelog => to == ContentView::Changelog,
             PanelTab::PiNativeMarket => to == ContentView::PiNativeMarket,
             PanelTab::PfMarket => to == ContentView::PfMarket,
+            PanelTab::Tasks => to == ContentView::Tasks,
             PanelTab::Search => to == ContentView::Search,
             PanelTab::SessionSearch => to == ContentView::SessionSearch,
             PanelTab::Plugin { .. } => to == ContentView::Plugin,

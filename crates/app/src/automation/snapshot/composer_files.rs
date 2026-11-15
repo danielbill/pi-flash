@@ -234,6 +234,7 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::PanelTab::Changelog => json!({"changelog": true}),
             crate::PanelTab::PiNativeMarket => json!({"pi_native_market": true}),
             crate::PanelTab::PfMarket => json!({"pf_market": true}),
+            crate::PanelTab::Tasks => json!({"tasks": true}),
             crate::PanelTab::Search => json!({"search": true}),
             crate::PanelTab::SessionSearch => json!({"session_search": true}),
             crate::PanelTab::Plugin { pkg, page } => {

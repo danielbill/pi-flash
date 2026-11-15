@@ -56,15 +56,14 @@ fn file_values() -> Option<Value> {
     crate::config::read_json(&path).ok()
 }
 
-/// 启动日志一行：KNOWN 全键状态（`subagents=off`）+ 未知键提示（typo 检测）。
+/// 启动日志一行：KNOWN 全键**生效**状态（`subagents=off`；env 覆盖计入，
+/// 与 enabled 同语义——2026-11-15 修：原版只看 dev-flags.json，env 开的旗标
+/// 在日志里显 off 误导排障）+ 未知键提示（typo 检测）。
 pub fn summary() -> String {
     let mut out = String::new();
     let file = file_values();
     for key in KNOWN {
-        let on = file
-            .as_ref()
-            .and_then(|v| v.get(*key).and_then(Value::as_bool))
-            .unwrap_or_else(|| default_for(key));
+        let on = enabled(key);
         if !out.is_empty() {
             out.push(' ');
         }

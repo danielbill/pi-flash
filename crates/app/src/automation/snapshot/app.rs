@@ -194,6 +194,7 @@ pub(super) fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>
                 crate::PanelTab::Changelog => json!({"kind": "changelog"}),
                 crate::PanelTab::PiNativeMarket => json!({"kind": "pi-native-market"}),
                 crate::PanelTab::PfMarket => json!({"kind": "pf-market"}),
+                crate::PanelTab::Tasks => json!({"kind": "tasks"}),
                 crate::PanelTab::Search => json!({"kind": "search"}),
                 crate::PanelTab::SessionSearch => json!({"kind": "session-search"}),
             })

@@ -80,6 +80,7 @@ pub(super) fn dispatch(
                     ContentView::Changelog => "changelog",
                     ContentView::PiNativeMarket => "pi-native-market",
                     ContentView::PfMarket => "pf-market",
+                    ContentView::Tasks => "tasks",
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
                     ContentView::Plugin => "plugin",

@@ -426,26 +426,6 @@ pub(crate) fn on_session_bound(
 }
 
 // ---------------------------------------------------------------------------
-// 立即运行（§1.5；S4 ⋯菜单接线）
-// ---------------------------------------------------------------------------
-
-impl Chat {
-    /// ⋯菜单「立即运行」：trigger = manual（不动周期）；运行中再触发被
-    /// in-flight 守卫挡下（菜单置灰双保险）。
-    #[allow(dead_code)] // 046-S4 菜单接线
-    pub(crate) fn task_run_now(&mut self, def_id: &str, cx: &mut gpui::Context<Self>) {
-        let Some(src) = scheduler::source_by_id("tasks") else {
-            return;
-        };
-        let job = scheduler::DueJob {
-            key: def_id.to_string(),
-            scheduled_at: scheduler::now_ms(),
-        };
-        scheduler::dispatch_manual(src, job, self, cx);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // 单测（脚本 runner 矩阵；agent 链走 S5 pif-ui 验收）
 // ---------------------------------------------------------------------------
 

@@ -109,6 +109,14 @@ pub(super) fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::
                 Some("puzzle"),
                 ContentView::PfMarket,
             ),
+            // 046 任务管理页（psp 控制栏「任务」钮打开）
+            crate::PanelTab::Tasks => (
+                tr("task.manager").into(),
+                None,
+                false,
+                Some("clock-4"),
+                ContentView::Tasks,
+            ),
             // PF 插件面板（beads 360）：标题 = 清单 title（随语言），图标 puzzle
             // 083 项目搜索（Zed 同级 tab：ProjectSearchView 就是 pane item）
             crate::PanelTab::Search => (

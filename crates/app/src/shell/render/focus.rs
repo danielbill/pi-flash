@@ -103,12 +103,11 @@ impl Chat {
             {
                 window.focus(&self.dlg.dialog_focus);
             }
-        } else if let Some(tp) = self.dlg.tasks.as_ref() {
-            // 046 任务大卡同款：表单输入持焦不回收（TaskPanel::focus_within
-            // 结构化自检），点导航/空处归还 dialog_focus
-            if !tp.read(cx).focus_within(window, cx) && !self.dlg.dialog_focus.is_focused(window) {
-                window.focus(&self.dlg.dialog_focus);
-            }
+        } else if self.layout.content_view == crate::ContentView::Tasks
+            && self.tasks_page_input_focused(window, cx)
+        {
+            // 046 任务页表单输入持焦不回收（名称/指令输入框），否则每帧
+            // 仲裁把焦点推回 composer（083/040-2 白名单同款分支）
         } else if matches!(
             self.layout.content_view,
             crate::ContentView::Search | crate::ContentView::SessionSearch

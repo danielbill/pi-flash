@@ -100,6 +100,7 @@ impl Chat {
             Some(PanelTab::Observer { .. }) => ContentView::Chat,
             Some(PanelTab::Changelog) => ContentView::Changelog,
             Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
+            Some(PanelTab::Tasks) => ContentView::Tasks,
             Some(PanelTab::PfMarket) => ContentView::PfMarket,
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,

@@ -26,27 +26,3 @@ pub(crate) fn checkbox(checked: bool) -> AnyElement {
         })
         .into_any_element()
 }
-
-/// 单选圆（§5.4）：14px 圆 + 6px 内点；选中 accent 描边/内点，未选中
-/// text_muted 描边。**只有圆**——标签/选中加粗归调用方（settings/general
-/// lang_row 同款语义上移 kit；046 表单任务类型二选一用）。
-pub(crate) fn radio(selected: bool) -> gpui::AnyElement {
-    let t = crate::appearance::theme::theme();
-    gpui::div()
-        .size(gpui::px(14.))
-        .rounded_full()
-        .border_1()
-        .border_color(gpui::rgb(if selected { t.accent } else { t.text_muted }))
-        .flex()
-        .items_center()
-        .justify_center()
-        .when(selected, |d| {
-            d.child(
-                gpui::div()
-                    .size(gpui::px(6.))
-                    .rounded_full()
-                    .bg(gpui::rgb(t.accent)),
-            )
-        })
-        .into_any_element()
-}

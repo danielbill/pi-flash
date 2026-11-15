@@ -90,6 +90,7 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::Changelog => "changelog",
         crate::ContentView::PiNativeMarket => "pi-native-market",
         crate::ContentView::PfMarket => "pf-market",
+        crate::ContentView::Tasks => "tasks",
         crate::ContentView::Search => "search",
         crate::ContentView::SessionSearch => "session_search",
         crate::ContentView::Plugin => "plugin",

@@ -9,7 +9,6 @@ pub(crate) mod ask_card;
 pub(crate) mod ext_ui;
 mod project_picker;
 mod provider_picker;
-pub(crate) mod tasks;
 
 use project_picker::render_project_picker;
 use provider_picker::render_provider_picker;

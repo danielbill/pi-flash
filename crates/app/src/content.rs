@@ -35,6 +35,8 @@ pub(crate) fn content_main(
         // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植）
         ContentView::PiNativeMarket => crate::market::pi_native_market::page(chat, weak, window),
         ContentView::PfMarket => crate::market::pf_market::page(chat, weak, window),
+        // 046 任务管理页（内容区页签；页头横向【任务】【日志】双 tab）
+        ContentView::Tasks => crate::tasks::view::page(chat, weak, window),
         // 083 项目搜索（Zed ProjectSearchView 同位：内容区 tab）
         ContentView::Search => crate::search::view(chat, weak, window, cx),
         // 会话查询（同版式，只查询）
@@ -178,6 +180,7 @@ pub(crate) fn term_view(
             crate::PanelTab::Changelog => div().into_any_element(),
             crate::PanelTab::PiNativeMarket => div().into_any_element(),
             crate::PanelTab::PfMarket => div().into_any_element(),
+            crate::PanelTab::Tasks => div().into_any_element(),
             crate::PanelTab::Search => div().into_any_element(),
             crate::PanelTab::SessionSearch => div().into_any_element(),
             // 插件预览页签不是终端，body 走 content.rs 的 ContentView 分支

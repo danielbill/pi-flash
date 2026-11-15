@@ -149,7 +149,6 @@ impl Chat {
                 pending_zoom: false,
             },
             dlg: DlgUi {
-                tasks: None,
                 dialog_focus,
                 dialog: None,
                 plan: crate::mode::PlanUi::new(cx),

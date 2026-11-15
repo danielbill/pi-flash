@@ -290,8 +290,6 @@ pub(crate) struct DlgUi {
     pub(crate) tree_deleting: Vec<PathBuf>,
     pub(crate) status_toast: Option<(String, std::time::Instant)>,
     pub(crate) settings: Option<gpui::Entity<settings::SettingsPanel>>,
-    /// 046 任务管理大卡（独立槽不占 Dialog 单槽：项目/模型选择浮层可叠其上）
-    pub(crate) tasks: Option<gpui::Entity<crate::dialogs::tasks::TaskPanel>>,
     /// 010 重设计 send 门：无项目态下用户敲下的文字在弹「打开项目」前
     /// 暂存于此，switch_project 选定目录后回填并自动发送（话不丢）
     pub(crate) pending_send: Option<String>,

@@ -62,6 +62,7 @@ impl Chat {
                 ContentView::Changelog
                     | ContentView::PiNativeMarket
                     | ContentView::PfMarket
+                    | ContentView::Tasks
                     | ContentView::Search
                     | ContentView::SessionSearch
                     | ContentView::Plugin
