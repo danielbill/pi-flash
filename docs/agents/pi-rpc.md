@@ -54,6 +54,16 @@
 - 模型目录更新至 models.dev v2，默认 OpenAI 模型 `gpt-5.5`→`gpt-6.1-sol`，纯图像模型不再作为聊天模型；GPT-6.1 Terra 新增（Codex 通道 500K 上下文）。registry.rs 测试夹具里的 "1.4.0" 是哑字符串，无需跟版本。
 - Windows/WSL 修复利好本仓用户：大小写路径差异导致技能重复加载、信任重复询问（#10488）；WSL 深目录图片粘贴/浏览器打开静默失败（#11592）。tool_search 排序支持中日泰等非 ASCII 查询（#11331）。
 
+## 1.5.2 升级复核（2026-11-15，npm tarball dist diff，跨 1.5.1/1.5.2）
+
+- **wire 层零变化**：`rpc-types.js`/`jsonl.js`/`rpc-client.js` 与 1.5.0 逐字节一致；`rpc-mode.js` 仅 1.5.1 关闭语义修复（#11599，见下）；`agent-session.js` 事件字符串集仅 +`"thinking_level_change"`——那是 **transcript 分支条目类型**（`_recordThinkingLevel` #11451：切分支/选模型时把 clamp 后的思考档记入 transcript，resume 恢复记录值），不是 wire 事件；`thinking_level_changed` 事件原样，PF typed 臂照旧。`AgentSessionEvent` 联合类型无新事件。protocol.rs 未动。
+- 内置工具名仍 8 个；`get_commands` 实现在 rpc-mode 中未被触碰，catalog.rs 不用动；`dist/index.js` 逐字节一致（`readStoredCredential` 导出不变）；`core/auth-storage.js` 仍导出 `ReadOnlyAuthStorage` 且构造默认 authPath 同源（改的只是 lockfile realpath，#11655 symlink 共锁）；`model-runtime.js` 只新增 `settleCredentialWrites()`，`create` 签名不变（registry dump 兼容）；`formatDimensionNote` 未变（image-resize.js 只有 worker terminate 时序修复 #10695，PF 剥除照旧）；session-manager.js 零差异。
+- **rpc-mode.js 关闭语义（1.5.1 #11599，PF 停进程路径相关）**：空闲时扩展 `ctx.shutdown()` 立即退出（此前挂着等下一命令）；扩展命令请求的 shutdown 等 prompt 响应写出后才退；shutdown 清理期间 stdin EOF 或单个信号不再打断（第二个信号才强杀）。PF 关 stdin 停 pi 的常规路径不变；graceful 清理（MCP token 刷新等）更稳。配套 #11692：退出时等在途 OAuth 令牌轮换保存完——「RPC client 启动后即停 pi 丢 refresh token」修复，PF 频繁 spawn/stop 直接受益。
+- **`cacheWarming` 默认 `"streaming"→"idle"`（1.5.1）与 PF 无关**：CacheWarmer 只在 sdk.js 进程内 SDK 路径注入（`createAgentSession`），RPC 侧车路径（main.js → createAgentSessionRuntime → agent-session-services）不注入——PF 会话闲置不会后台保温发请求。
+- 1.5.1 两处破坏性（PF 均无感）：grep context 行改由 rg 提供、不再自读匹配文件（PF 不覆写 GrepOperations）；OpenAI 兼容不再发 `"tools": []`，新 compat 键 `requiresToolsWithToolHistory` 供需要的老网关（models.json 只读透传）。
+- 行为变化（不破 wire，app 可见）：steer/followUp 排队消息的图片现在会缩放归一（`_normalizeQueuedMessageImages` #11738，与空闲 prompt 一致）；bash 超时错误附带 shell 退出码；find/grep/ls `limit<1` 收敛为 1；find Windows 路径模式跨 fd 版本一致（`src\**\*.ts` 可用，利好本仓 Windows 用户）；read 工具流式读大文件（内存利好）；Anthropic 官方端点默认 message threads（只发增量消息，上游请求形态变化，PF 透明）。
+- pi 侧新键（PF 只读透传，无需动）：`compat.promptCacheKeyMode`/`requiresNonNullAssistantContent`/`supportsMessageThreads`、`qwen-token-plan-individual-cn` provider、Copilot classifier、模型目录默认值更新（anthropic 默认 `claude-opus-5-5` 等）。pi-link 298 测试全绿；`PI_VENDOR_VERSION`（lib.rs）已同步 1.5.2。
+
 ## transcript 重放
 
 - 系统提示词与工具声明在 transcript 的 `role:"system"` 消息里（content 追加 + sections 补丁 + toolsAdded/Removed），重放对齐 pi-ai `utils/transcript.js`。
