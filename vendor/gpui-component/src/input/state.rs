@@ -356,6 +356,10 @@ pub struct InputState {
     /// pi-flash patch（对齐 zed）：gutter hover 行（缓冲行号）——折叠箭头
     /// hover 显示用；None = 鼠标不在 gutter。
     pub(super) gutter_hover_row: Option<usize>,
+    /// k34j（stock markdown 章节折叠）：fence 感知章节表缓存，键 = fold
+    /// 快照版本（编辑后失效重扫，每帧 phase 一刷新）。仅 stock md
+    /// （无装饰 + language=markdown）使用；wysiwyg 态走 provider 声明表。
+    pub(super) md_sections: Option<(usize, std::rc::Rc<Vec<super::fold_map::MdSectionFold>>)>,
     /// The marked range is the temporary insert text on IME typing.
     pub(super) ime_marked_range: Option<Selection>,
     pub(super) last_layout: Option<LastLayout>,
@@ -517,6 +521,7 @@ impl InputState {
                 NonZeroU32::new(2).unwrap(),
             ),
             gutter_hover_row: None,
+            md_sections: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
             selecting: false,
@@ -1868,9 +1873,16 @@ impl InputState {
                 let declared = dec_sections
                     .and_then(|sections| sections.iter().find(|s| s.row == row as u32))
                     .map(|s| (s.range.clone(), s.collapsed_text.clone()));
+                // k34j：stock markdown 走章节表（md_foldable_row；缓存由
+                // phase 一每帧刷新，此处只读）；非 md 维持缩进启发式
                 let foldable = folded
                     || declared.is_some()
-                    || (dec_sections.is_none() && self.text.starts_indent(row as u32));
+                    || (dec_sections.is_none()
+                        && if self.md_stock_editor() {
+                            self.md_foldable_row(row as u32)
+                        } else {
+                            self.text.starts_indent(row as u32)
+                        });
                 if foldable {
                     self.selecting = false;
                     if folded {

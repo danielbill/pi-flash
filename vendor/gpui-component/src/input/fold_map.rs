@@ -2047,11 +2047,164 @@ fn is_line_blank(buffer: &Rope, row: u32) -> bool {
     .all(|c| c.is_whitespace())
 }
 
+// ---------- markdown 章节折叠（k34j 源码态 crease 规则） ----------
+
+/// markdown 章节折叠条目：块首标题行 → crease 区间（标题行尾 → 章节最后
+/// 非空行行尾，**不含**其换行——占位符后保留行断，对齐 zed crease 语义）。
+#[derive(Clone, Debug)]
+pub(super) struct MdSectionFold {
+    pub row: u32,
+    pub crease: Range<usize>,
+}
+
+/// fence 感知 markdown 章节扫描（k34j）：ATX 标题 `#{1,6}` + 空格/行尾
+///（缩进 ≤3 空格），``` / ~~~ 围栏内不认；`######` 进表闭合上级章节但
+/// 自身不折叠（用户定夺：1..=5 级折叠）。章节端 = 下一同级/更高级标题
+///（级别 ≤ 本级）前最后非空行行尾；标题与下一标题间纯空行段不产。
+/// 与 app 侧 wysiwyg `section_ranges` 同语义（024 §8）——stock 态 md 无
+/// 装饰 provider，crease 规则落 vendor 折叠层（FOLD_BRACKET_ENDS 各语言
+/// 折叠数据同位；「不出现第三处折叠实现」= 不建新引擎，语言规则进既有
+/// crease 层）。
+pub(super) fn md_section_scan(text: &Rope) -> Vec<MdSectionFold> {
+    let rows = text.lines_len();
+    let line_of = |row: usize| -> String {
+        let start = text.point_to_offset(tree_sitter::Point::new(row, 0));
+        text_slice(text, start..start + text.line_len(row))
+    };
+    let line_end = |row: usize| -> usize {
+        text.point_to_offset(tree_sitter::Point::new(row, 0)) + text.line_len(row)
+    };
+
+    // 标题表（fence 外，1..=6 全量——###### 闭合上级但不折叠）
+    let mut headings: Vec<(u32, u8)> = Vec::new();
+    let mut in_fence: Option<u8> = None;
+    for row in 0..rows {
+        let line = line_of(row);
+        let line = line.trim_end_matches('\r');
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        let rest = &line[indent..];
+
+        // 围栏开关（``` / ~~~，缩进 ≤3，run ≥3，同字符闭合）
+        if indent <= 3 && rest.len() >= 3 {
+            let c0 = rest.as_bytes()[0];
+            if c0 == b'`' || c0 == b'~' {
+                let run = rest.bytes().take_while(|&b| b == c0).count();
+                if run >= 3 {
+                    match in_fence {
+                        Some(fc) if fc == c0 => in_fence = None,
+                        None => in_fence = Some(c0),
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
+        }
+
+        if in_fence.is_none() && indent <= 3 {
+            let hashes = rest.bytes().take_while(|&b| b == b'#').count();
+            if (1..=6).contains(&hashes) {
+                let after = &rest[hashes..];
+                if after.is_empty() || after.starts_with(' ') || after.starts_with('\t') {
+                    headings.push((row as u32, hashes as u8));
+                }
+            }
+        }
+    }
+
+    // 章节区间（闭区间端 = 下一同级/更高级标题前最后非空行行尾）
+    let is_blank = |row: usize| -> bool { line_of(row).chars().all(|c| c.is_whitespace()) };
+    let mut out = Vec::new();
+    for (ix, &(row, level)) in headings.iter().enumerate() {
+        if level > 5 {
+            continue;
+        }
+        let start = line_end(row as usize);
+        let closing = headings[ix + 1..]
+            .iter()
+            .find(|(_, l)| *l <= level)
+            .map(|&(r, _)| r as usize);
+        let mut end = start;
+        let mut r = closing
+            .map(|c| c - 1)
+            .unwrap_or(rows.saturating_sub(1));
+        while r > row as usize {
+            if !is_blank(r) {
+                end = line_end(r);
+                break;
+            }
+            r -= 1;
+        }
+        if end > start {
+            out.push(MdSectionFold {
+                row,
+                crease: start..end,
+            });
+        }
+    }
+    out
+}
+
 // ---------- InputState 折叠入口（zed editor fold_at/unfold_at 移植） ----------
 
 impl InputState {
+    /// stock markdown 判定（k34j）：普通编辑态（无装饰 provider）+ code
+    /// editor + language=markdown。wysiwyg 态（有装饰）走 provider 声明表。
+    pub(super) fn md_stock_editor(&self) -> bool {
+        self.decorations.is_none()
+            && matches!(
+                &self.mode,
+                InputMode::CodeEditor { language, .. } if language.as_ref() == "markdown"
+            )
+    }
+
+    /// 每帧刷新 markdown 章节表（element 相位一调用）：非 stock md O(1)
+    /// 短路（顺带清残留缓存）；版本未变 O(1)；编辑后 O(doc) 重扫。
+    pub(super) fn refresh_md_sections(&mut self) {
+        if !self.md_stock_editor() {
+            self.md_sections = None;
+            return;
+        }
+        let version = self.fold_snapshot.version;
+        if self
+            .md_sections
+            .as_ref()
+            .is_some_and(|(v, _)| *v == version)
+        {
+            return;
+        }
+        let table = std::rc::Rc::new(md_section_scan(&self.text));
+        self.md_sections = Some((version, table));
+    }
+
+    /// 该行是否为 markdown 章节块首（箭头 foldable 判定；读每帧刷新的
+    /// 缓存，非 stock md 恒 false）。
+    pub(super) fn md_foldable_row(&self, buffer_row: u32) -> bool {
+        self.md_sections
+            .as_ref()
+            .is_some_and(|(_, t)| t.iter().any(|s| s.row == buffer_row))
+    }
+
+    /// 该行的章节 crease（点击折叠用；缓存过期就地重扫保新鲜）。
+    pub(super) fn md_crease_for_row(&mut self, buffer_row: u32) -> Option<Range<usize>> {
+        self.refresh_md_sections();
+        self.md_sections
+            .as_ref()
+            .and_then(|(_, t)| t.iter().find(|s| s.row == buffer_row))
+            .map(|s| s.crease.clone())
+    }
+
     /// zed fold_at（fold.rs:424 移植）：折叠 buffer_row 所在 crease。
     pub(super) fn fold_map_fold_at(&mut self, buffer_row: u32, cx: &mut Context<Self>) {
+        // k34j：stock markdown——章节 crease 优先（fence 感知）；「仅此一
+        // 项」：md 不走缩进启发式（顶格标题 starts_indent 永不触发，缩进
+        // 折叠对 md 语义也不成立），表外行不可折
+        if self.md_stock_editor() {
+            let Some(crease) = self.md_crease_for_row(buffer_row) else {
+                return;
+            };
+            self.apply_fold(crease, FoldPlaceholder::default(), cx);
+            return;
+        }
         // closing_bracket_indent_len 的语言表入口（zed language_scope_at
         // 的 PF 对应物 = CodeEditor mode 的 language 名）
         let language = match &self.mode {
@@ -2063,6 +2216,16 @@ impl InputState {
         else {
             return;
         };
+        self.apply_fold(range, placeholder, cx);
+    }
+
+    /// 折叠单段入链（fold_map_fold_at / fold_map_fold_range 公用尾巴）。
+    fn apply_fold(
+        &mut self,
+        range: Range<usize>,
+        placeholder: FoldPlaceholder,
+        cx: &mut Context<Self>,
+    ) {
         let version = self.fold_snapshot.version;
         let inlay_snapshot = InlaySnapshot {
             buffer: self.text.clone(),
@@ -2089,22 +2252,14 @@ impl InputState {
         collapsed_text: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let version = self.fold_snapshot.version;
-        let inlay_snapshot = InlaySnapshot {
-            buffer: self.text.clone(),
-            version,
-        };
-        let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
-        let (_snap, fold_edits) = writer.fold([(
+        self.apply_fold(
             range,
             FoldPlaceholder {
                 collapsed_text: Some(collapsed_text),
                 ..Default::default()
             },
-        )]);
-        self.fold_snapshot = self.fold_map.snapshot.clone();
-        self.sync_chain_fold_edits(fold_edits, cx);
-        self.fold_clip_selections();
+            cx,
+        );
     }
 
     /// zed unfold_at（fold.rs 移植）：展开与 buffer_row 相交的折叠。
@@ -2668,5 +2823,40 @@ mod fold_tests {
         assert_eq!(sections[0].collapsed_text.as_str(), "⋯");
         // is_deco_folded：章节段也是 deco 来源（摘装饰可整体清）
         assert!(snap.is_deco_folded());
+    }
+
+    /// k34j（stock markdown）：md_section_scan——crease 端不含章节末行换行
+    ///（占位符后保留行断）；###### 进表闭合上级但自身不折叠；fence 内标题
+    /// 不认；相邻/纯空行章节不产。
+    #[test]
+    fn test_md_section_scan() {
+        // 基本区间
+        let rope = Rope::from("## A\npara\n## B\nz");
+        let s = md_section_scan(&rope);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].row, 0);
+        assert_eq!(s[0].crease, 4..9, "\"\\npara\"");
+        assert_eq!(s[1].crease, 14..16, "\"\\nz\"");
+    }
+
+    #[test]
+    fn test_md_section_scan_fence_and_level_cap() {
+        let rope = Rope::from("# H\n```sh\n## in-fence\necho\n```\n###### sub\ntail\n");
+        let s = md_section_scan(&rope);
+        // fence 内 ## 不认；###### 进表闭合但 level>5 不折叠 → 仅 # H 一段
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].row, 0);
+        assert_eq!(s[0].crease, 3..46, "到 tail 行尾（不含换行）");
+    }
+
+    #[test]
+    fn test_md_section_scan_nested_and_adjacent_skip() {
+        let rope = Rope::from("## A\n### B\ntext\n## C\n\n");
+        let s = md_section_scan(&rope);
+        // A 吞 B（### 闭合于 ##）；C 尾随空行段不产；B ⊂ A
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert_eq!(s[0].crease, 4..15);
+        assert_eq!(s[1].row, 1);
+        assert_eq!(s[1].crease, 10..15);
     }
 }

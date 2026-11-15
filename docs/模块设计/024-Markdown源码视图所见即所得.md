@@ -138,37 +138,26 @@ crates/app/src/editor/
 
 ## 8. 章节折叠（k34j，P2 已完成）
 
-**需求（用户定夺）**：md 标题小节可折叠，**仅此一项**（无 sticky headers、无右键菜单项、无键位）；级别 **1..=5**，`######` 起不再折叠（样式/字号/prefix 隐藏不受影响，scan_headings 仍认 1..=6）。仅 Live Preview（wysiwyg）态；源码态 crease 规则未做（后续可选项）。
+**需求（用户定夺）**：md 标题小节可折叠，**仅此一项**（无 sticky headers、无右键菜单项、无键位）；级别 **1..=5**，`######` 起不再折叠（样式/字号/prefix 隐藏不受影响，scan_headings 仍认 1..=6）。
 
-**架构**：md 语义全在 app 侧，机制全复用 vendor fold 链，无第三处折叠实现——
+**主战场 = 正常编辑模式（stock 源码态）**（2026-11-15 用户定夺：WYSIWYG 因实现难度搁置，折叠必须在普通编辑模式可用）——vendor 折叠层 markdown crease 规则：
 
 ```
-app parse.rs scan_headings ── 标题级别表 HeadingLine（fence 感知，1..=6 全量）
-app fold.rs section_ranges ── 章节区间（仅 ≤5 级）：标题行尾 → 章节最后
-                              非空行行尾（不含其换行——占位符后保留行断，
-                              对齐 zed crease；纯空行段不产）；闭区间端 =
-                              下一同级/更高级标题（表内已滤 fence）
-app wysiwyg/mod.rs provider ─ 每帧声明全部章节（section_decl）+ 按快照
-                              已折行取生效集（section_folds）做 vis 数学
-vendor decorations.rs        ─ SectionFold 契约 + 统一映射（行内零宽 +
-                              章节占位宽）+ decorate 回读 folded_sections
-vendor fold_map.rs           ─ 折叠态持有：章节段 = Some("⋯") Transform；
-                              rebuild 归并占位文本非空优先；fold_map_fold_range
-vendor element.rs            ─ 相位一对账（行内段比对 + 生效集比对）+
-                              箭头门旁路（deco 态 foldable 走声明表）
-vendor state.rs              ─ 箭头点击路由：折 → 声明区间 fold，展开 →
-                              unfold_at；占位符 "⋯" 点击 unfold（既有机制）
+vendor fold_map.rs md_section_scan ─ fence 感知章节扫描（ATX `#{1,6}`+
+                                     缩进≤3、```/~~~ 同字符闭合；###### 进表
+                                     闭合上级但自身不折）；crease = 标题行尾 →
+                                     章节最后非空行行尾（不含换行——占位符后
+                                     保留行断，对齐 zed crease）；纯空行段不产
+InputState.md_sections 缓存       ─ 键 = fold 快照版本，phase 一每帧刷新
+                                     （编辑后 O(doc) 重扫一次，命中 O(1)）
+fold_map_fold_at markdown 分支    ─ 按缓存 crease 折叠（FoldPlaceholder::
+                                     default = "⋯"，用户态语义——非 deco，
+                                     摘装饰/对账不清）；「仅此一项」：md 不走
+                                     缩进启发式
+element.rs 箭头/hitbox、state.rs 点击 ─ stock md foldable 走章节表
 ```
 
-**折叠态归属（与任务落位的偏差，实现期定案）**：折叠状态存 **vendor fold 快照**（非 provider 实体）——provider 是纯函数无法感知 vendor 侧 toggle，且快照 anchor 随编辑平移、行身份跨编辑正确（标题删除 → 对账撤折；级别改动 → 声明新区间重折）。provider 保持无状态。
+**wysiwyg 态（模块搁置，代码休眠）**：Live Preview 开关（默认关）开启时 provider 声明表路径接管——契约小版本保留（`SectionFold`、`Decorations::section_folds/section_decl`、`decorate` 回读 `folded_sections`、统一映射 `map_*_with`、`rebuild` 带占位文本、`deco_folds` 拆分、`is_deco_folded=Some(_)`、`fold_map_fold_range`、`fold_mode` 门旁路）。折叠态存 vendor fold 快照（anchor 随编辑平移；provider 保持纯函数）。
 
-**契约小版本（vendor，升级需重放）**：
-- `Decorations` + `section_folds`（生效集：映射/rebuild/显示）+ `section_decl`（声明表：箭头 foldable + 点击区间来源）
-- `DecorationProvider::decorate` + `folded_sections` 参数（快照 → provider 回读）
-- `map_doc_to_vis_with` / `map_vis_to_doc_with` 双指针归并统一映射；`next_atomic` 章节段原子
-- `FoldSnapshot::deco_folds()`（Some("")/Some(非空) 拆分）、`is_deco_folded` 扩为 `Some(_)`（deco 来源整体清，手动 None 不动）
-- `rebuild_fold_snapshot_from_ranges(folds, sections)`、`InputState::fold_map_fold_range`
-- `fold_allowed` 放行 deco 态带章节声明（宿主观测 API）
-
-**对账不变式（防每帧抖动）**：被生效章节吞掉的行内 fold 不产出（provider prune）；dec.folds/section_folds 与快照逐项比对，仅失配时全量重建；生效集与 rebuild 输入同帧同源（无一帧样式漂移）。
+**真机验收（pif-ui，2026-11-15）**：隔离实例 stock md——点行 0 标题箭头位 → `editor_folds.ranges=[[11,100]]/hidden=8`；再点 → 展开；`######` 行点击不折；`## 子节` 折叠吞 `######` 小节（hidden=3）；截图实证折叠行尾 "⋯" + gutter 箭头两态。
 | 每帧全文解析/拷贝开销 | 典型笔记 <1ms；>1MB 再窗口化（P2 视实测） |

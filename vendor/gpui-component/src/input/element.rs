@@ -807,6 +807,10 @@ impl Element for TextElement {
                 st.rebuild_fold_snapshot_from_ranges(folds, sections, scx)
             });
         }
+        // k34j（stock markdown 章节折叠）：章节表每帧刷新（版本键控——
+        // 非 stock md / deco 态 O(1) 短路，编辑后 O(doc) 重扫一次）
+        self.state
+            .update(cx, |st, _scx| st.refresh_md_sections());
         let state = self.state.read(cx);
 
         // ---------- 可视区间（显示行恒等高，闭式解；Zed PositionMap 同款） ----------
@@ -1201,10 +1205,18 @@ impl Element for TextElement {
                     }
                     let buf_row = row.buffer_row as u32;
                     let folded = state.fold_starts_at_row(buf_row);
+                    // k34j：stock markdown 可折叠判定走章节表（顶格标题
+                    // starts_indent 永不触发；「仅此一项」——md 不做缩进折叠）
                     let foldable = folded
                         || match dec_sections {
                             Some(sections) => sections.iter().any(|s| s.row == buf_row),
-                            None => state.text.starts_indent(buf_row),
+                            None => {
+                                if state.md_stock_editor() {
+                                    state.md_foldable_row(buf_row)
+                                } else {
+                                    state.text.starts_indent(buf_row)
+                                }
+                            }
                         };
                     if !foldable {
                         continue;
@@ -1497,10 +1509,17 @@ impl Element for TextElement {
                         }
                         let buf_row = row.buffer_row as u32;
                         let folded = fs.fold_starts_at_row(buf_row);
+                        // k34j：stock markdown 可折叠判定走章节表（同 hitbox 块）
                         let foldable = folded
                             || match dec_sections {
                                 Some(sections) => sections.iter().any(|s| s.row == buf_row),
-                                None => fs.text.starts_indent(buf_row),
+                                None => {
+                                    if fs.md_stock_editor() {
+                                        fs.md_foldable_row(buf_row)
+                                    } else {
+                                        fs.text.starts_indent(buf_row)
+                                    }
+                                }
                             };
                         let show = folded
                             || (foldable
