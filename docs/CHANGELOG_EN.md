@@ -2,6 +2,33 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.5.2] - 2026-11-15
+
+Highlights of this release:
+1. Editor code folding: indent-based block folding + Markdown heading folding, gutter arrows + indent guides, folding composes freely with soft wrap
+2. Memory-reduction project (047): all unbounded memory paths capped, measured peak working set -22%
+3. Bundled pi 1.5.0 → 1.5.2
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and update
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively download the zip portable build, extract it and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **Block code folding**: the code editor folds by indented blocks — hovering the gutter shows fold arrows, a folded region collapses to one line showing the omitted line count, and indent guides expand and collapse with the folds; the Markdown editor folds 1–5 level heading sections via Live Preview arrows. (abf9bf17, 6b4dc84f, e16a96f4, d1c7bb0a)
+- **Folding × soft wrap, freely combinable**: folding / soft wrap / hard tabs all go through the Zed-semantics transform chain (TabMap/WrapMap/decoration chain), so any combination works without mutual exclusion or misalignment; hard-tab-indented lines restore their display; the code editor's default tab width aligns with Zed (2→4). (2adfd361, 6808ea6d, 5d3a13fb, 74917ca6, e63bac65)
+- **Session rename takes effect immediately**: renames persist instantly via the PF ledger; renaming a not-yet-loaded session no longer fails. (44f5bb70, 66d9f00f)
+
+### Bug fixes
+- A round of folded-state fixes: whole screen grayed out after folding, Markdown scrolling crash, folds swallowing closing keywords, gutter fold arrows not sticking on click, selection/cursor/search-hit misplacement in the folded state, and scroll highlight misplacement plus CJK line crashes. (1f54bca0, 66351a56, ae19edeb, 4c216c67, e9b9338a)
+
+### Improvements
+- **Memory-reduction project (047)**: session message reading switched to a two-pass leaf-chain method (memory O(full history) → O(leaf chain)); global search hit/excerpt lines truncated at 4KB; message index capped at 50k entries with a full-library prune on first run; extension/context operation queues get a soft cap that discards the oldest; file tabs capped at 64 with LRU eviction, terminal tabs capped at 16; node sidecar V8 heap cap (`PI_FLASH_NODE_HEAP_MB`); measured peak working set -22%.
+- **Bundled pi 1.5.0 → 1.5.2**: stopping right after RPC startup no longer loses rotated OAuth tokens; find Windows path pattern fix. (4d82a77b)
 ## [0.5.1] - 2026-11-12
 
 Highlights of this release:
