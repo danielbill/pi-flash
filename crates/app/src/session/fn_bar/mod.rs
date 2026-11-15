@@ -375,6 +375,7 @@ pub(crate) fn session_list(
                                 render_assistant_turn(
                                     &turn_msgs,
                                     &turn_ixs,
+                                    Some(rt_view.cwd.as_path()),
                                     ix,
                                     &weak,
                                     &rt_view.collapsed,

@@ -15,6 +15,9 @@ pub(crate) fn render_assistant_turn(
     turn: &[&Msg],
     // 轮内各消息的全局索引（thinking/copy key 用）
     turn_ixs: &[usize],
+    // 本会话项目目录（轮末 written files chips 相对路径解析基准；
+    // SessionRuntime.cwd，pi-flash-8db3——进程 cwd 是安装目录，禁用）
+    turn_cwd: Option<&std::path::Path>,
     start_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
     collapsed: &HashMap<(usize, usize), bool>,
@@ -285,7 +288,7 @@ pub(crate) fn render_assistant_turn(
         ));
     }
     // c24: 轮内写文件 chips（pi-web TurnWrittenFiles parity，见 written_files_chips）
-    let written = turn_written_files(turn);
+    let written = turn_written_files(turn, turn_cwd);
     if let Some(chips) = written_files_chips(start_ix, weak, &written, t) {
         col = col.child(chips);
     }

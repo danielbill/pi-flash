@@ -4,6 +4,22 @@
 > 与 `docs/agents/*.md`。`待复验` 条目 = 当前待跑的手工清单。2026-11-11 全文压缩：过程
 > 叙事与返工史删去，需要时查 git 历史。
 
+## 待复验（2026-11-15 修复）——轮末文件 chips 点击「读取失败 D:\softwares\...\文章/7 前沿论文\x.md」：相对路径接到安装目录 + 正反斜杠混写
+
+- 根因：`turn_written_files`（messages/diff_view.rs）把 write/edit/apply_patch 工具参数
+  里的相对路径 join 到 `std::env::current_dir()`——GUI 进程 cwd 是启动目录（安装包快捷
+  方式 = `payload` 安装目录），不是会话项目目录；`Path::join` 又保留右参数原样正斜杠，
+  `安装目录\文章/7 前沿论文\x.md` 混写形态直接进了 chips 存储、tab 身份与状态条
+  （beads pi-flash-8db3）。
+- 修法：`turn_written_files` 改收渲染层传入的 `SessionRuntime.cwd`（本会话项目目录，
+  跨项目开历史会话也归位；`render_assistant_turn` 加 `turn_cwd` 参从 fn_bar 调用点下传）；
+  解析结果与 `open_file_tab` 入口统一过 `workspace::normalize_seps`（Windows `/`→`\`，
+  POSIX 原样——`\` 是合法文件名字符）。同类潜伏 bug：`plugin_ctx_json` 的 ctx.cwd 也用
+  进程 cwd（契约 = 当前项目目录）→ beads pi-flash-fepy，090-4 闭环内修。
+- 验证：app 524（+5 新单测：会话 cwd join 归一 / 绝对正斜杠归一 / 无 cwd 跳过 / 分隔符
+  变体去重 / normalize_seps 分平台）+ pi-link 298 + pf-context 59 全绿。真机复验 = 打开
+  历史会话点轮末文件 chip → 正常开进文件 tab，状态条不再出现安装目录前缀。
+
 ## 已验证（2026-11-10）——新会话手选模型，等待首轮响应期间胶囊跳回默认模型
 
 - 根因：spawn 带 `--model` 用 `take()` 当下清掉 `pending_model`；pi 冷启动 1-3s 期间首个

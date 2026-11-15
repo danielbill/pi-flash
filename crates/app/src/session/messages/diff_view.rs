@@ -123,22 +123,31 @@ fn apply_patch_written_paths(args: &str, details: Option<&serde_json::Value>) ->
 }
 
 /// pi-web extractTurnWrittenFiles parity：本轮实际写过的文件（工具调用
-/// 为准，去重保序，相对路径按 cwd 解析）。
-pub(super) fn turn_written_files(turn: &[&Msg]) -> Vec<String> {
+/// 为准，去重保序，相对路径按 cwd 解析）。cwd = 本会话项目目录，渲染层
+/// 传 [`SessionRuntime.cwd`](crate::session::runtime::SessionRuntime::cwd)
+/// ——**不能**用 `std::env::current_dir()`：GUI 进程 cwd 是启动目录（安装
+/// 包快捷方式 = 安装目录），模型给的相对路径会被接到安装目录去，chips
+/// 点开「读取失败 D:\softwares\...\文章/7 前沿论文\x.md」（2026-11-15 用户
+/// 报障，beads pi-flash-8db3）。
+pub(super) fn turn_written_files(turn: &[&Msg], cwd: Option<&std::path::Path>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let cwd = std::env::current_dir().ok();
     let push =
         |raw: String, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>| {
             let path = std::path::Path::new(&raw);
             let resolved = if path.is_absolute() {
                 raw.clone()
             } else {
-                match &cwd {
+                match cwd {
                     Some(c) => c.join(raw).to_string_lossy().to_string(),
                     None => return,
                 }
             };
+            // 分隔符标准化（Windows `/`→`\`）：模型/插件传参常带正斜杠，
+            // join 后混写（`...\文章/7 前沿论文\x.md`）——chips 存储与
+            // 去重统一吃归一形态（open_file_tab 入口同样归一，两处永不
+            // 各说各话）
+            let resolved = crate::services::workspace::normalize_seps(&resolved);
             if seen.insert(resolved.clone()) {
                 out.push(resolved);
             }
@@ -382,4 +391,98 @@ pub(crate) fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement 
                 ))
         }))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod written_files_tests {
+    use super::*;
+
+    fn write_call(name: &str, path_arg: &str) -> Msg {
+        Msg {
+            role: Role::Assistant,
+            blocks: vec![Block::ToolCall {
+                content_index: 0,
+                id: "t1".into(),
+                name: name.into(),
+                args: serde_json::json!({ "file_path": path_arg }).to_string(),
+                result: "ok".into(),
+                is_error: false,
+                images: Vec::new(),
+                duration_s: None,
+                details: None,
+                args_partial: false,
+                result_arrived: true,
+            }],
+            usage: None,
+            entry_id: None,
+            ts: None,
+            end_ts: None,
+            stop_reason: None,
+            error_message: None,
+            custom_type: None,
+            custom_display: true,
+            details: None,
+            model: None,
+            bash: None,
+        }
+    }
+
+    /// pi-flash-8db3：相对路径必须接到**会话项目 cwd**（渲染层传入），
+    /// 且 join 后分隔符归一（正斜杠入参不产生 `a\b/c` 混写）。
+    #[test]
+    fn relative_join_uses_session_cwd_and_normalizes() {
+        let (cwd, expected) = if cfg!(windows) {
+            (
+                std::path::PathBuf::from(r"D:\proj"),
+                r"D:\proj\文章\7 前沿论文\x.md".to_string(),
+            )
+        } else {
+            (
+                std::path::PathBuf::from("/home/u/proj"),
+                "/home/u/proj/文章/7 前沿论文/x.md".to_string(),
+            )
+        };
+        let m = write_call("write", "文章/7 前沿论文/x.md");
+        assert_eq!(turn_written_files(&[&m], Some(&cwd)), vec![expected]);
+    }
+
+    /// 绝对路径正斜杠形态（模型常发 `D:/x/y.md`）同样归一。
+    #[test]
+    fn absolute_forward_slash_form_normalized() {
+        let (raw, expected) = if cfg!(windows) {
+            ("D:/proj/a b.md", r"D:\proj\a b.md".to_string())
+        } else {
+            ("/home/u/proj/a b.md", "/home/u/proj/a b.md".to_string())
+        };
+        let cwd = std::path::PathBuf::from(if cfg!(windows) {
+            r"D:\proj"
+        } else {
+            "/home/u/proj"
+        });
+        let m = write_call("edit", raw);
+        assert_eq!(turn_written_files(&[&m], Some(&cwd)), vec![expected]);
+    }
+
+    /// 无项目态（cwd 缺席）：相对路径无从解析 → 不产出假绝对路径。
+    #[test]
+    fn no_cwd_skips_relative_paths() {
+        let m = write_call("write", "a/b.md");
+        assert!(turn_written_files(&[&m], None).is_empty());
+    }
+
+    /// 去重按归一形态：同文件的反斜杠/正斜杠两种写法只留一条
+    /// （POSIX 上 `\` 是合法文件名，两写法本就是不同文件，不适用）。
+    #[test]
+    fn dedup_treats_separator_variants_as_one_file() {
+        if !cfg!(windows) {
+            return;
+        }
+        let cwd = std::path::PathBuf::from(r"D:\proj");
+        let m1 = write_call("write", r"D:\proj\a.md");
+        let m2 = write_call("write", "D:/proj/a.md");
+        assert_eq!(
+            turn_written_files(&[&m1, &m2], Some(&cwd)),
+            vec![r"D:\proj\a.md".to_string()]
+        );
+    }
 }

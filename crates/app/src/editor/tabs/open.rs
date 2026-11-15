@@ -34,6 +34,13 @@ impl Chat {
     pub(crate) fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         // 消息文本/远程插件可能传来相对路径：统一按 cwd 绝对化（已开复用
         // 的 same_path 比较与磁盘读取都基于绝对形态）
+        // 分隔符先归一（2026-11-15 报障，pi-flash-8db3）：chips/markdown/
+        // 插件常传来 `文章/7 前沿论文\x.md`、`D:/x/y.md` 这类形态，相对
+        // join 与绝对直传都会把混写带进 tab 身份、状态条与资源管理器
+        // ——统一到平台分隔符再走
+        let path = std::path::PathBuf::from(crate::services::workspace::normalize_seps(
+            &path.to_string_lossy(),
+        ));
         let path = if path.is_absolute() {
             path
         } else {

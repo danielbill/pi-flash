@@ -21,7 +21,10 @@ mod store;
 mod ws_state;
 
 pub use app_settings::*;
-pub use store::{TABS_SAVE_CAP, file_sig, is_under, project_name, same_path, same_ws, same_ws_key};
+pub use store::{
+    TABS_SAVE_CAP, file_sig, is_under, normalize_seps, project_name, same_path, same_ws,
+    same_ws_key,
+};
 pub use ws_state::*;
 
 #[allow(unused_imports)] // load_map_from 仅 tests 用（cfg(test) 不可见会误报）

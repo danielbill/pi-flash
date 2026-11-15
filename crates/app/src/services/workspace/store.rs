@@ -141,6 +141,19 @@ pub fn project_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
+/// 路径字符串分隔符标准化：Windows 把 `/` 统一成 `\`（ws_key 同款判定）。
+/// 消息 chips/markdown 链接/插件传来的路径常是正斜杠形态，Path::join 又
+/// 保留右参数原样——不归一就会产出 `D:\a\文章/7 前沿论文\x.md` 这类混写
+/// （2026-11-15 用户报障），进 tab 身份、状态条、资源管理器都难看且难排障。
+/// 非 Windows 原样返回：`\` 在 POSIX 是合法文件名字符，不可替换。
+pub fn normalize_seps(p: &str) -> String {
+    if cfg!(windows) {
+        p.replace('/', "\\")
+    } else {
+        p.to_string()
+    }
+}
+
 /// `path` 是否在 `root` 之下（含 root 本身）：与 same_path 同一套字符串级
 /// 规范化（分隔符统一为 `\`、去尾分隔符、大小写折叠），所以 Windows 上
 /// `d:/a\b` 与 `D:\A` 的层级关系判得对。023 用它决定「这个目录是否已被
@@ -219,5 +232,27 @@ mod tests {
             Path::new("D:\\my_obsidian\\vault"),
             Path::new("D:\\ai_workspace")
         ));
+    }
+    /// pi-flash-8db3：Windows 上正斜杠混写形态统一成 `\`；POSIX 原样
+    /// 返回（`\` 是合法文件名字符）。
+    #[test]
+    fn normalize_seps_unifies_mixed_separators() {
+        if cfg!(windows) {
+            assert_eq!(
+                normalize_seps("文章/7 前沿论文/x.md"),
+                r"文章\7 前沿论文\x.md"
+            );
+            assert_eq!(normalize_seps(r"D:\proj/a b.md"), r"D:\proj\a b.md");
+            assert_eq!(normalize_seps("D:/proj"), r"D:\proj");
+            // UNC 与纯反斜杠形态不受影响
+            assert_eq!(normalize_seps(r"\\srv\share\a.md"), r"\\srv\share\a.md");
+        } else {
+            assert_eq!(
+                normalize_seps("文章/7 前沿论文/x.md"),
+                "文章/7 前沿论文/x.md"
+            );
+            assert_eq!(normalize_seps(r"D:\proj\a.md"), r"D:\proj\a.md");
+        }
+        assert_eq!(normalize_seps(""), "");
     }
 }
