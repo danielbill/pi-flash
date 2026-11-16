@@ -289,18 +289,12 @@ impl Chat {
     /// 表单文本输入 / 下拉守卫懒创建（aux.market 同款）。
     pub(crate) fn tasks_ensure_inputs(&mut self, cx: &mut Context<Self>) {
         if self.tasks.page.name.is_none() {
-            // HTML name-input：14px 大字、内件 flat（透明→悬停显底，chrome
-            // 由表头容器给——组件自带边框会出双层框）
-            self.tasks.page.name = Some(cx.new(|cx| {
-                TextInput::new(cx)
-                    .text_size(14.)
-                    .placeholder(crate::i18n::tr("task.name"))
-                    .flat()
-            }));
+            // subagent 表单头同款默认输入（2026-11-16 拍板；label 已带
+            // 「任务名称」，不出占位符）
+            self.tasks.page.name = Some(cx.new(|cx| TextInput::new(cx)));
         }
         if self.tasks.page.desc.is_none() {
-            // HTML cm-area：composer 容器提供 chrome（flat 不出双层框），
-            // min-height 120px ≈ 6 行（auto_grow 自算高）
+            // 指令 composer 容器提供 chrome（flat 不出双层框），6 行 auto_grow
             self.tasks.page.desc = Some(cx.new(|cx| {
                 TextInput::new(cx)
                     .placeholder(crate::i18n::tr("task.desc_ph"))

@@ -17,7 +17,7 @@ use crate::ui::tokens::{btn, radius, space};
 pub(crate) fn form_head(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
-    t: &'static Theme,
+    _t: &'static Theme,
 ) -> AnyElement {
     let editing = chat.tasks.page.sel.is_some();
     let name = chat
@@ -26,23 +26,16 @@ pub(crate) fn form_head(
         .name
         .clone()
         .expect("page open ensures inputs");
+    // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 w250 +
+    // 弹性段 + 动作钮（运行中「立即运行」置灰；删除走确认浮层）
     div()
         .flex()
         .items_center()
         .gap(px(8.))
-        .mb(px(2.))
-        // HTML name-input 形制：内件 flat，容器 34px 行给 hover 底
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .h(px(34.))
-                .flex()
-                .items_center()
-                .rounded(px(6.))
-                .hover(|h| h.bg(rgb(t.bg_panel)))
-                .child(name),
-        )
+        .flex_shrink_0()
+        .child(field_label("task.name"))
+        .child(div().w(px(250.)).flex_shrink_0().child(name))
+        .child(div().flex_1())
         .when(editing, |d| {
             let running = chat
                 .tasks
@@ -62,40 +55,43 @@ pub(crate) fn form_head(
             let weak_toggle = weak.clone();
             let weak_del = weak.clone();
             let sel_del = chat.tasks.page.sel.clone();
-            d.child(ghost_btn(
-                "task-ghost-run",
+            d.child(config_button(
+                "task-head-run",
+                &weak_run,
                 tr("task.run_now"),
-                false,
+                Btn::Secondary,
+                true,
                 running,
-                weak_run,
                 move |c, cx| {
                     if let Some(id) = &sel_run {
                         c.task_run_now(id, cx);
                     }
                 },
             ))
-            .child(ghost_btn(
-                "task-ghost-toggle",
+            .child(config_button(
+                "task-head-toggle",
+                &weak_toggle,
                 if enabled {
                     tr("task.disable")
                 } else {
                     tr("task.enable")
                 },
+                Btn::Secondary,
+                true,
                 false,
-                false,
-                weak_toggle,
                 move |c, cx| {
                     if sel_toggle.is_some() {
                         c.task_toggle_from_page(cx);
                     }
                 },
             ))
-            .child(ghost_btn(
-                "task-ghost-del",
+            .child(config_button(
+                "task-head-del",
+                &weak_del,
                 tr("task.remove"),
+                Btn::Danger,
                 true,
                 false,
-                weak_del,
                 move |c, cx| {
                     if let Some(id) = &sel_del {
                         let title = c
@@ -115,7 +111,7 @@ pub(crate) fn form_head(
             "task-save",
             weak,
             tr("task.save"),
-            Btn::Secondary,
+            Btn::Primary,
             true,
             false,
             |c, cx| c.task_save_form(cx),
@@ -123,58 +119,41 @@ pub(crate) fn form_head(
         .into_any_element()
 }
 
-/// ghost 动作钮（HTML ghost-btn：px8 py3 rounded 6 f12；danger 变体）。
-fn ghost_btn(
-    id: &'static str,
-    label: &str,
-    danger: bool,
-    disabled: bool,
-    weak: gpui::WeakEntity<Chat>,
-    on_click: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
-) -> AnyElement {
+/// 行标签（subagent 表单同款：w96 固定左列 + 12px）。
+fn field_label(label: &'static str) -> AnyElement {
     let t = theme();
     div()
-        .id(id)
-        .px(px(btn::SM_PX))
-        // ui-raw: ok 表单行内 ghost 钮 py3（HTML 拍板值，非 2px 网格；§10.8 登记）
-        .py(px(3.))
-        .rounded(px(radius::CTRL))
+        .w(px(96.))
+        .flex_shrink_0()
         .text_size(ui_size(12.))
-        .text_color(rgb(if danger { t.danger } else { t.text_dim }))
-        .cursor_pointer()
-        .when(disabled, |d| d.opacity(0.5).cursor_default())
-        .when(!disabled, |d| {
-            d.hover(|h| {
-                h.bg(rgb(if danger { t.danger_hover } else { t.bg_hover }))
-                    .text_color(rgb(if danger { t.danger } else { t.text }))
-            })
-        })
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            if disabled {
-                return;
-            }
-            let _ = weak.update(cx, |c, cx| on_click(c, cx));
-        })
-        .child(SharedString::from(label.to_string()))
+        .text_color(rgb(t.text))
+        .child(tr(label).to_string())
         .into_any_element()
 }
 
-/// field 形制：label（fl2 11.5 text_dim）上 + 控件行（gap 8 wrap）下。
-pub(crate) fn field(label: &'static str, control: AnyElement) -> AnyElement {
+/// field 行（subagent `agent_row` 同款，2026-11-16 拍板从上下改左右）：
+/// label w96 左 + 控件 flex_1 右；`top_align` = 多行控件 label 上沿对齐。
+pub(crate) fn field(label: &'static str, control: AnyElement, top_align: bool) -> AnyElement {
     let t = theme();
     div()
-        .mt(px(14.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .flex_shrink_0()
         .child(
             div()
-                .text_size(ui_size(11.5))
-                .text_color(rgb(t.text_dim))
-                .mb(px(5.))
+                .w(px(96.))
+                .flex_shrink_0()
+                .text_size(ui_size(12.))
+                .text_color(rgb(t.text))
+                .when(top_align, |d| d.items_start().pt(px(8.)))
                 .child(tr(label).to_string()),
         )
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
-                .flex_wrap()
                 .items_center()
                 .gap(px(8.))
                 .child(control),
@@ -505,7 +484,7 @@ pub(crate) fn kind_block(
     if chat.tasks.page.kind_agent {
         vec![agent_block(chat, weak, t, cx)]
     } else {
-        vec![script_block(chat, weak, t)]
+        script_block(chat, weak, t)
     }
 }
 
@@ -584,7 +563,6 @@ fn agent_block(
         "task.instr",
         div()
             .w_full()
-            .max_w(px(620.))
             .border_1()
             .border_color(rgb(t.border))
             .rounded(px(radius::MODAL))
@@ -657,30 +635,37 @@ fn agent_block(
                     )),
             )
             .into_any_element(),
+        true,
     )
 }
 
-/// 脚本文件 field：sel-btn + 浏览… + note。
-fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
+/// 脚本块（field 行 + 说明行）：sel-btn + 浏览…，note 带扩展名校验错误。
+fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> Vec<AnyElement> {
     let page = &chat.tasks.page;
     let label = page
         .script_path
         .as_ref()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| tr("task.script_ph").to_string());
-    div()
-        .mt(px(14.))
-        .child(
-            div()
-                .text_size(ui_size(11.5))
-                .text_color(rgb(t.text_dim))
-                .mb(px(5.))
-                .child(tr("task.script").to_string()),
-        )
-        .child(
+    let note = div()
+        .text_size(ui_size(11.5))
+        .text_color(rgb(t.text_faint))
+        .child(div().child(tr("task.script_note").to_string()).when_some(
+            page.script_err.clone(),
+            |d, e| {
+                d.child(
+                    div()
+                        .mt(px(4.))
+                        .text_color(rgb(t.danger))
+                        .child(SharedString::from(e)),
+                )
+            },
+        ));
+    vec![
+        field(
+            "task.script",
             div()
                 .flex()
-                .flex_wrap()
                 .items_center()
                 .gap(px(8.))
                 .child(sel_btn("task-sel-script", label, Some(340.), false, t))
@@ -692,26 +677,12 @@ fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
                     true,
                     false,
                     |c, cx| c.pick_task_script_file(cx),
-                )),
-        )
-        .child(
-            div()
-                .mt(px(6.))
-                .text_size(ui_size(11.5))
-                .text_color(rgb(t.text_faint))
-                .child(div().child(tr("task.script_note").to_string()).when_some(
-                    page.script_err.clone(),
-                    |d, e| {
-                        d.child(
-                            div()
-                                .mt(px(4.))
-                                .text_color(rgb(t.danger))
-                                .child(SharedString::from(e)),
-                        )
-                    },
-                )),
-        )
-        .into_any_element()
+                ))
+                .into_any_element(),
+            false,
+        ),
+        note.into_any_element(),
+    ]
 }
 
 // ---------------------------------------------------------------------------

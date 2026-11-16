@@ -1,11 +1,11 @@
-//! 046 任务管理页（2026-11-15 拍板：内容区页签；UI 事实源 =
-//! `docs/UI设计/任务管理-原型.html` + 用户截图改版）。
+//! 046 任务管理页（2026-11-16 用户五条拍板，不再参考设计 HTML）：
 //!
-//! 页头横向【任务】【日志】双 tab（tk-tab 顶部圆角融底卡）+ 右【＋新建】；
-//! 任务 tab = set-split 两栏（左列表 w350 + 右表单 field 形制）；
-//! 日志 tab 行 = 截图拍板版：类型图标 + 任务名（有会话→下划线可点开话；
-//! 停用/跳过→灰名无点）+ 结果点/spinner + 右对齐 mono 时间；完成点 = 绿
-//! （UNREAD）。数据面读 `chat.tasks`（泵/CRUD 刷新，不自建轮询）。
+//! ① 列表/详情 = 40%/60% 分栏（列表最小宽 400）；② 页头二级 tab = PF 插件
+//! 市场简易 tab（MONO 大字 + `|` 分隔，弃融底卡避免与一级页签栏撞样式）；
+//! ③ 详情 label/控件左右排（subagent 表单同款 w96/w250）；④ 任务列表默认
+//! 分两组：上【脚本任务】下【Agent 任务】（subagent list 同款结构样式）；
+//! ⑤ 空列表提示「暂无任务」。数据面读 `chat.tasks`（泵/CRUD 刷新，不自建
+//! 轮询）。
 
 use std::path::PathBuf;
 
@@ -19,13 +19,15 @@ use crate::appearance::theme::{self, Theme, theme};
 use crate::appearance::ui_size;
 use crate::editor::markdown::MONO_FAMILY;
 use crate::i18n::{tf, tr};
+use crate::market::pf_market::MONO;
+use crate::market::pi_native_market::design::px18;
 use crate::services::format::fmt_msg_time;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::tasks::{DefRow, PAGE_TAB_LOG, PAGE_TAB_TASKS};
-use crate::ui::kit::{Btn, config_button, status_dot};
+use crate::ui::kit::{Btn, config_button, group_header, sidebar_item, status_dot};
 use crate::ui::overlay;
+use crate::ui::spark_spinner;
 use crate::ui::tooltip::WithTip;
-use crate::ui::{icon, spark_spinner};
 
 // ---------------------------------------------------------------------------
 // 页装配
@@ -41,11 +43,7 @@ pub(crate) fn page(
     let t = theme();
     let page = &chat.tasks.page;
 
-    // 页头：左【任务】【日志】横向表头 + 右【＋新建】
-    let tabs: [(u8, &'static str); 2] = [
-        (PAGE_TAB_TASKS, "task.tab_main"),
-        (PAGE_TAB_LOG, "task.tab_log"),
-    ];
+    // 页头：左【任务 | 日志】简易 tab + 右【＋新建】
     let weak_tab = weak.clone();
     let head = div()
         .flex_none()
@@ -54,54 +52,10 @@ pub(crate) fn page(
         .border_b_1()
         .border_color(rgba(theme::border_alpha(t, 0x45)))
         .flex()
-        .items_end()
+        .items_center()
         .px(px(12.))
         .pl(px(16.))
-        .child(
-            div()
-                .h_full()
-                .flex()
-                .gap(px(4.))
-                .items_end()
-                .children(tabs.iter().map(|&(ix, key)| {
-                    let on = page.tab == ix;
-                    let weak = weak_tab.clone();
-                    div()
-                        // ui-raw: ok HTML tk-tab 页头表头逐值复刻（h34/顶圆角9/mb−1 融底；§10.8 登记）
-                        .id(SharedString::from(format!("task-page-tab-{ix}")))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .h(px(34.))
-                        .px(px(16.))
-                        .rounded_t(px(9.))
-                        .mb(px(-1.))
-                        .border_1()
-                        .border_b_0()
-                        .border_color(if on {
-                            rgba(theme::border_alpha(t, 0x55))
-                        } else {
-                            rgba(0x00000000)
-                        })
-                        .when(on, |d| {
-                            d.bg(rgb(t.bg))
-                                .text_color(rgb(t.text))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                        })
-                        .when(!on, |d| {
-                            d.text_color(rgb(t.text_muted))
-                                .hover(|h| h.text_color(rgb(t.text)))
-                        })
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = weak.update(cx, |c, cx| {
-                                c.tasks.page.tab = ix;
-                                c.tasks.page.popup = None;
-                                cx.notify();
-                            });
-                        })
-                        .child(tr(key).to_string())
-                })),
-        )
+        .child(pipe_tabs(page.tab, &weak_tab, t))
         .child(
             div()
                 .ml_auto()
@@ -134,6 +88,47 @@ pub(crate) fn page(
         .child(head)
         .child(body)
         .into_any_element()
+}
+
+/// 页头二级 tab（PF 插件市场 `tab_row` 简易形制，2026-11-16 用户拍板）：
+/// MONO 大字基线排 + `|` 分隔；活动全亮、非活动 text_dim hover 回亮。
+fn pipe_tabs(cur: u8, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
+    let tabs: [(u8, &'static str); 2] = [
+        (PAGE_TAB_TASKS, "task.tab_main"),
+        (PAGE_TAB_LOG, "task.tab_log"),
+    ];
+    let mut row = div().flex().items_baseline().gap(px(10.));
+    for &(ix, key) in &tabs {
+        if ix != PAGE_TAB_TASKS {
+            row = row.child(
+                div()
+                    .font_family(MONO)
+                    .text_size(px(px18::TITLE_FS))
+                    .text_color(rgb(t.text_faint))
+                    .child("|"),
+            );
+        }
+        let active = cur == ix;
+        let weak = weak.clone();
+        row = row.child(
+            div()
+                .id(SharedString::from(format!("task-page-tab-{ix}")))
+                .font_family(MONO)
+                .text_size(px(px18::TITLE_FS))
+                .cursor_pointer()
+                .text_color(rgb(if active { t.text } else { t.text_dim }))
+                .when(!active, |d| d.hover(|h| h.text_color(rgb(t.text))))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.tasks.page.tab = ix;
+                        c.tasks.page.popup = None;
+                        cx.notify();
+                    });
+                })
+                .child(tr(key).to_string()),
+        );
+    }
+    row.into_any_element()
 }
 
 // ---------------------------------------------------------------------------
@@ -186,12 +181,12 @@ fn run_tip(r: &TaskRun) -> String {
     tip
 }
 
-/// 行装配（两 tab 共用）：图标 + 名（可点下划线开话）+ 结果槽 + mono 时间。
-/// `select` = Some(def_id) 时行点击 = 详情回填（任务列表行）。
+/// 行装配（两 tab 共用，subagent list 同款 30px sidebar_item）：结果槽 +
+/// 名（可点下划线开话；停用/跳过灰名）+ 右缘 mono 时间。`select` =
+/// Some(def_id) 时行点击 = 详情回填（任务列表行）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
-    icon_name: &'static str,
     title: String,
     gray: bool,
     link: Option<PathBuf>,
@@ -203,17 +198,16 @@ fn task_row(
     select: Option<String>,
     t: &'static Theme,
 ) -> AnyElement {
-    let t2 = theme();
-    let _ = t2;
     let dot_id = SharedString::from(format!("{row_id}-dot"));
-    let name_color = if gray { t.text_faint } else { t.text };
+    // 颜色继承 sidebar_item（active text / 非活动 text_muted，subagent 行同款）；
+    // 仅停用/跳过灰名覆盖
     let mut name_el = div()
         .id(SharedString::from(format!("{row_id}-name")))
         .flex_1()
         .min_w_0()
         .truncate()
-        .text_size(ui_size(12.5))
-        .text_color(rgb(name_color))
+        .text_size(ui_size(12.))
+        .when(gray, |d| d.text_color(rgb(t.text_faint)))
         .child(SharedString::from(title));
     if let Some(sp) = link.clone() {
         let weak_link = weak.clone();
@@ -230,28 +224,16 @@ fn task_row(
             });
     }
     let weak_row = weak.clone();
-    div()
-        // ui-raw: ok 任务/日志列表行 HTML 拍板几何（gap9/py9 非 2px 网格；§10.8 登记）
-        .id(row_id)
-        .flex()
-        .items_center()
-        .gap(px(9.))
-        .px(px(10.))
-        .py(px(9.))
-        .rounded(px(8.))
-        .cursor_pointer()
-        .when(selected, |d| d.bg(rgb(t.bg_selected)))
-        .when(!selected, |d| d.hover(|h| h.bg(rgb(t.bg_hover))))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            if let Some(def_id) = &select {
-                cx.stop_propagation();
+    sidebar_item(row_id, selected)
+        // subagent 列表同款：列表区与详情区同底，只留分组头与右分隔线
+        .bg(rgb(t.bg))
+        .when_some(select, |d, def_id| {
+            d.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let _ = weak_row.update(cx, |c, cx| {
-                    c.task_select(def_id, cx);
+                    c.task_select(&def_id, cx);
                 });
-            }
+            })
         })
-        .child(icon(icon_name, 15., t.text_dim))
-        .child(name_el)
         .child(
             div()
                 .id(dot_id)
@@ -262,10 +244,13 @@ fn task_row(
                 .when_some(slot, |d, s| d.child(s))
                 .when_some(tip, |d, tip| d.with_tip_text(tip)),
         )
+        .child(name_el)
         .child(
             div()
                 .flex_none()
                 .font_family(MONO_FAMILY)
+                // 活动行 SEMIBOLD 不下渗进时间戳
+                .font_weight(gpui::FontWeight::NORMAL)
                 .text_size(ui_size(11.))
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(stamp)),
@@ -283,80 +268,98 @@ fn tasks_body(
     t: &'static Theme,
     cx: &gpui::Context<Chat>,
 ) -> AnyElement {
-    let page = &chat.tasks.page;
-    let sel = page.sel.clone();
+    let sel = chat.tasks.page.sel.clone();
 
-    // 左列表（点击 = 详情回填；agent 名下划线 = 打开会话）
-    let rows: Vec<AnyElement> = chat
-        .tasks
-        .defs
-        .iter()
-        .map(|DefRow { def, spec }| {
-            let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
-            let running = chat.tasks.running.iter().any(|k| *k == def.id);
-            let (slot, tip) = if running {
-                (Some(spark_spinner(12., t.accent)), None)
-            } else {
-                match last {
-                    Some(r) => (run_slot(r, t), Some(run_tip(r))),
-                    None => (None, None),
-                }
-            };
-            let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
-            let link = last.and_then(|r| r.session_path.clone()).map(PathBuf::from);
-            let id = def.id.clone();
-            task_row(
-                SharedString::from(format!("task-sp-{id}")),
-                if matches!(spec.kind, TaskKind::Agent) {
-                    "bot"
-                } else {
-                    "file"
-                },
-                def.title.clone(),
-                !def.enabled,
-                link,
-                slot,
-                tip,
-                stamp,
-                sel.as_deref() == Some(id.as_str()),
-                weak,
-                Some(id.clone()),
-                t,
-            )
-        })
-        .collect();
-
-    let list = div()
+    // 左列表（40% 最小宽 400，2026-11-16 拍板）：上【脚本任务】下
+    // 【Agent 任务】两组（subagent list 同款：group_header + 30px 行）；
+    // 空库整列「暂无任务」。
+    let mut list = div()
         .id("task-sp-list")
-        .w(px(350.))
+        .w(gpui::relative(0.4))
+        .min_w(px(400.))
         .flex_none()
         .border_r_1()
         .border_color(rgba(theme::border_alpha(t, 0x45)))
-        .pt(px(10.))
-        .px(px(10.))
-        .pb(px(14.))
-        .pl(px(4.))
         .overflow_y_scroll()
+        .px(px(6.))
+        .pt(px(8.))
         .flex()
-        .flex_col()
-        .gap(px(1.))
-        .children(rows);
+        .flex_col();
+    if chat.tasks.defs.is_empty() {
+        list = list.child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(ui_size(12.))
+                .text_color(rgb(t.text_faint))
+                .child(tr("task.empty").to_string()),
+        );
+    } else {
+        for (agent, group_key) in [(false, "task.group_script"), (true, "task.group_agent")] {
+            let defs: Vec<&DefRow> = chat
+                .tasks
+                .defs
+                .iter()
+                .filter(|d| matches!(d.spec.kind, TaskKind::Agent) == agent)
+                .collect();
+            list = list.child(group_header(
+                &format!("{} {}", tr(group_key), defs.len()),
+                None,
+            ));
+            for DefRow { def, .. } in defs {
+                let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
+                let running = chat.tasks.running.iter().any(|k| *k == def.id);
+                let (slot, tip) = if running {
+                    (Some(spark_spinner(12., t.accent)), None)
+                } else {
+                    match last {
+                        Some(r) => (run_slot(r, t), Some(run_tip(r))),
+                        None => (None, None),
+                    }
+                };
+                let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
+                let link = last.and_then(|r| r.session_path.clone()).map(PathBuf::from);
+                let id = def.id.clone();
+                list = list.child(task_row(
+                    SharedString::from(format!("task-sp-{id}")),
+                    def.title.clone(),
+                    !def.enabled,
+                    link,
+                    slot,
+                    tip,
+                    stamp,
+                    sel.as_deref() == Some(id.as_str()),
+                    weak,
+                    Some(id.clone()),
+                    t,
+                ));
+            }
+        }
+    }
 
+    // 右详情（60%）：subagent 表单同构（label w96 左 + 控件右）
     let detail = div()
         .id("task-sp-detail")
         .flex_1()
         .min_w_0()
         .overflow_y_scroll()
-        .pt(px(14.))
-        .px(px(20.))
-        .pb(px(16.))
-        .pl(px(15.))
+        .p(px(15.))
         .flex()
         .flex_col()
         .child(form_head(chat, weak, t))
-        .child(field("task.type", type_seg(chat, weak, t)))
-        .child(field("task.sched", sched_row(chat, weak, t)))
-        .children(kind_block(chat, weak, t, cx));
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .mt(px(12.))
+                .flex_1()
+                .child(field("task.type", type_seg(chat, weak, t), false))
+                .child(field("task.sched", sched_row(chat, weak, t), false))
+                .children(kind_block(chat, weak, t, cx)),
+        );
 
     div()
         .flex_1()
@@ -367,25 +370,20 @@ fn tasks_body(
         .into_any_element()
 }
 
-/// 表单头：名称大字输入 + 右上动作（编辑态 ghost 组 + 保存）。
+/// 日志 tab：运行记录行（与任务列表行同语言）。
 fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
     let rows: Vec<AnyElement> = chat
         .tasks
         .runs
         .iter()
         .map(|r| {
-            let (icon_name, gray_task) = match chat.tasks.defs.iter().find(|d| d.def.id == r.def_id)
-            {
-                Some(DefRow { def, spec }) => (
-                    if matches!(spec.kind, TaskKind::Agent) {
-                        "bot"
-                    } else {
-                        "file"
-                    },
-                    !def.enabled,
-                ),
-                None => ("file", false),
-            };
+            let gray_task = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| d.def.id == r.def_id)
+                .map(|d| !d.def.enabled)
+                .unwrap_or(false);
             let skipped = r.outcome == Outcome::Skipped;
             let gray = gray_task || skipped;
             let link = r.session_path.clone().map(PathBuf::from);
@@ -401,7 +399,7 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                 .map(|d| d.def.title.clone())
                 .unwrap_or_else(|| r.def_id.clone());
             task_row(
-                id, icon_name, title, gray, link, slot, tip, stamp, false, weak, None, t,
+                id, title, gray, link, slot, tip, stamp, false, weak, None, t,
             )
         })
         .collect();

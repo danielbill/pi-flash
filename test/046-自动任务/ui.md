@@ -69,6 +69,28 @@ RESULT: fail=0。
 
 RESULT: fail=0。
 
+## 执行记录 3（2026-11-16 五条拍板改版，不再参考 HTML）
+
+用户拍板：①列表/详情 = 40%/60%（列表最小宽 400）；②页头二级 tab = PF
+插件市场简易 tab（MONO + `|` 分隔）；③详情 label/控件左右排（subagent
+表单 w96/w250 同款，保存 = Primary）；④列表分两组：上【脚本任务】下
+【Agent 任务】（subagent list 同款 group_header + 30px sidebar_item 行，
+行 = 结果槽 + 名（下划线开话/停用灰）+ 右缘 mono 时间）；⑤空列表 =
+「暂无任务」。
+
+```
+✓ 空库开页：左列居中「暂无任务」，40/60 分栏（分栏线 = 内容区 40%）
+✓ 管道 tab「任务 | 日志」形制（弃融底卡）
+✓ 新建表单：名称 w96/w250 + seg/调度/指令 label 左右式，保存 Primary
+✓ 保存校验链：prompt 空拒 / project 空拒（toast）/ script path 空拒（toast）
+✓ 项目 pill → ProjectPicker（task_form 路由回填，不切工作区）
+✓ 建任务成功：defs=1 sel 回填，组头【脚本任务 0】/【Agent 任务 1】
+✓ 行点击选中：bg_selected + semibold，表单回填（名称/指令/项目 pill 20观宏知微）
+✓ 三仓测试全绿 + check_arch/ui-raw 守卫 OK
+```
+
+RESULT: fail=0。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；
