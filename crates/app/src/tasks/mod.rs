@@ -8,6 +8,8 @@
 //! log 约定 `[tasks]`：创建/编辑/启停/删除、skip、结算、prune、recover；
 //! 错误（会话创建失败/脚本起进程失败/DB 写失败）error 级带 task id（046-0）。
 
+pub(crate) mod form;
+pub(crate) mod popup;
 pub(crate) mod run;
 pub(crate) mod sched;
 pub(crate) mod store;

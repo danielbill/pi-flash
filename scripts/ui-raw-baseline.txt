@@ -68,3 +68,8 @@ crates/app/src/titlebar.rs 2
 crates/app/src/titlebar/tab_item.rs 2
 crates/app/src/top_panels/system_prompt.rs 1
 crates/app/src/top_panels/tools.rs 1
+# 046 任务页拆分（view.rs → view/form/popup 三件）登记：三文件均 0 命中，
+# 仅带 §10.8 已登记的 ui-raw: ok 豁免；手工补档（非 --update-baseline）。
+crates/app/src/tasks/view.rs 0
+crates/app/src/tasks/form.rs 0
+crates/app/src/tasks/popup.rs 0

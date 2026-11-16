@@ -487,6 +487,10 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `status_bar.rs` 插件 tab（`plugin-tab-*`） | 46px 宽连体卡（w 46 / mt −4 / 底圆角 9） | 与「项目」tab 同形继承（020-1 tab 卡形制）；尺寸待 tab 体系 token 化时一并收编（beads 360） |
 | `status_bar.rs` 项目 tab（`project-tab`） | 同上 46px 连体卡 | 020-1 纯指示位升级为可点 tab（回 DockPanel::Default），与插件 tab 同形同源（beads 360） |
 | `remote_control/panel.rs` 操作栏图标钮 / 刷新钮 / 二维码弹窗 header / 码框内边框钮 | 图标钮 24×24 r6 / 刷新钮 px 8 gap 6 / header h 36 pl 12 / 边框钮 h 28 | 002-微信通信设计稿钉死形制（白底蓝字蓝边固定色不跟主题；060 发版隐藏模块） |
+| `tasks/view.rs` 页头 tab（`task-page-tab-*`） | h 34 / px 16 / 顶圆角 9 / mb −1 | 046 HTML `tk-tab` 表头逐值复刻（顶部圆角融底卡，用户截图拍板） |
+| `tasks/view.rs::task_row` | gap 9 / px 10 / py 9 / rounded 8 | 046 任务/日志列表行 HTML 拍板几何（9 非 2px 网格，截图拍板） |
+| `tasks/form.rs::ghost_btn` | px 8 / py 3 / rounded 6 | 046 表单行内 ghost 文字钮（py 3 非 2px 网格，HTML 拍板；px/圆角已 token 化） |
+| `tasks/popup.rs` time_pick 时/分行 | h 36 | 046 HTML `tpick` 双列拾取行逐值复刻（点选不关卡连续调时刻） |
 
 ---
 

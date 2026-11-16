@@ -1,0 +1,719 @@
+//! 046 任务表单区（form.rs）：从 view.rs 拆出（行数红线 §1）。
+//! 名称输入 + 类型 seg + 调度行 + 指令/脚本块 + freq/interval/time 弹层菜单。
+
+use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
+
+use crate::Chat;
+use crate::appearance::theme::{Theme, theme};
+use crate::appearance::ui_size;
+use crate::i18n::{tf, tr};
+use crate::tasks::INTERVALS;
+use crate::tasks::popup::time_pick;
+use crate::tasks::popup_slot;
+use crate::ui::icon;
+use crate::ui::kit::{Btn, config_button};
+use crate::ui::tokens::{btn, radius, space};
+
+pub(crate) fn form_head(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> AnyElement {
+    let editing = chat.tasks.page.sel.is_some();
+    let name = chat
+        .tasks
+        .page
+        .name
+        .clone()
+        .expect("page open ensures inputs");
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .mb(px(2.))
+        // HTML name-input 形制：内件 flat，容器 34px 行给 hover 底
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .h(px(34.))
+                .flex()
+                .items_center()
+                .rounded(px(6.))
+                .hover(|h| h.bg(rgb(t.bg_panel)))
+                .child(name),
+        )
+        .when(editing, |d| {
+            let running = chat
+                .tasks
+                .running
+                .iter()
+                .any(|k| Some(k.as_str()) == chat.tasks.page.sel.as_deref());
+            let enabled = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| Some(d.def.id.as_str()) == chat.tasks.page.sel.as_deref())
+                .map(|d| d.def.enabled)
+                .unwrap_or(true);
+            let sel_run = chat.tasks.page.sel.clone();
+            let sel_toggle = chat.tasks.page.sel.clone();
+            let weak_run = weak.clone();
+            let weak_toggle = weak.clone();
+            let weak_del = weak.clone();
+            let sel_del = chat.tasks.page.sel.clone();
+            d.child(ghost_btn(
+                "task-ghost-run",
+                tr("task.run_now"),
+                false,
+                running,
+                weak_run,
+                move |c, cx| {
+                    if let Some(id) = &sel_run {
+                        c.task_run_now(id, cx);
+                    }
+                },
+            ))
+            .child(ghost_btn(
+                "task-ghost-toggle",
+                if enabled {
+                    tr("task.disable")
+                } else {
+                    tr("task.enable")
+                },
+                false,
+                false,
+                weak_toggle,
+                move |c, cx| {
+                    if sel_toggle.is_some() {
+                        c.task_toggle_from_page(cx);
+                    }
+                },
+            ))
+            .child(ghost_btn(
+                "task-ghost-del",
+                tr("task.remove"),
+                true,
+                false,
+                weak_del,
+                move |c, cx| {
+                    if let Some(id) = &sel_del {
+                        let title = c
+                            .tasks
+                            .defs
+                            .iter()
+                            .find(|d| d.def.id == *id)
+                            .map(|d| d.def.title.clone())
+                            .unwrap_or_default();
+                        c.tasks.page.confirm_del = Some((id.clone(), title));
+                        cx.notify();
+                    }
+                },
+            ))
+        })
+        .child(config_button(
+            "task-save",
+            weak,
+            tr("task.save"),
+            Btn::Secondary,
+            true,
+            false,
+            |c, cx| c.task_save_form(cx),
+        ))
+        .into_any_element()
+}
+
+/// ghost 动作钮（HTML ghost-btn：px8 py3 rounded 6 f12；danger 变体）。
+fn ghost_btn(
+    id: &'static str,
+    label: &str,
+    danger: bool,
+    disabled: bool,
+    weak: gpui::WeakEntity<Chat>,
+    on_click: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
+) -> AnyElement {
+    let t = theme();
+    div()
+        .id(id)
+        .px(px(btn::SM_PX))
+        // ui-raw: ok 表单行内 ghost 钮 py3（HTML 拍板值，非 2px 网格；§10.8 登记）
+        .py(px(3.))
+        .rounded(px(radius::CTRL))
+        .text_size(ui_size(12.))
+        .text_color(rgb(if danger { t.danger } else { t.text_dim }))
+        .cursor_pointer()
+        .when(disabled, |d| d.opacity(0.5).cursor_default())
+        .when(!disabled, |d| {
+            d.hover(|h| {
+                h.bg(rgb(if danger { t.danger_hover } else { t.bg_hover }))
+                    .text_color(rgb(if danger { t.danger } else { t.text }))
+            })
+        })
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            if disabled {
+                return;
+            }
+            let _ = weak.update(cx, |c, cx| on_click(c, cx));
+        })
+        .child(SharedString::from(label.to_string()))
+        .into_any_element()
+}
+
+/// field 形制：label（fl2 11.5 text_dim）上 + 控件行（gap 8 wrap）下。
+pub(crate) fn field(label: &'static str, control: AnyElement) -> AnyElement {
+    let t = theme();
+    div()
+        .mt(px(14.))
+        .child(
+            div()
+                .text_size(ui_size(11.5))
+                .text_color(rgb(t.text_dim))
+                .mb(px(5.))
+                .child(tr(label).to_string()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(control),
+        )
+        .into_any_element()
+}
+
+/// 任务类型 seg 分段【脚本|Agent】（HTML segType）。
+pub(crate) fn type_seg(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> AnyElement {
+    let cur_agent = chat.tasks.page.kind_agent;
+    div()
+        .flex_none()
+        .flex()
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(radius::CTRL))
+        .overflow_hidden()
+        .bg(rgb(t.bg_panel))
+        .children([false, true].iter().map(|&agent| {
+            let on = cur_agent == agent;
+            let weak = weak.clone();
+            div()
+                .id(SharedString::from(format!("task-seg-{agent}")))
+                .flex()
+                .items_center()
+                .h(px(btn::MD_H))
+                .px(px(space::SP7))
+                .text_size(ui_size(12.))
+                .cursor_pointer()
+                .when(on, |d| {
+                    d.bg(rgb(t.bg_selected))
+                        .text_color(rgb(t.text))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                })
+                .when(!on, |d| {
+                    d.text_color(rgb(t.text_muted))
+                        .hover(|h| h.text_color(rgb(t.text)))
+                })
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.tasks.page.kind_agent = agent;
+                        // 类型切换换 kind 区块：开着的目标菜单（工具/模型/
+                        // 思考）锚点会悬空——顺手全关
+                        c.tasks.page.popup = None;
+                        cx.notify();
+                    });
+                })
+                .child(if agent {
+                    tr("task.type_agent").to_string()
+                } else {
+                    tr("task.type_script").to_string()
+                })
+        }))
+        .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// 调度行（HTML schedRow：sel-btn + 摘要；菜单 = anchored pmenu，2026-11-15
+// 用户拍板「下方只沿用 InputPanel 的操作栏」——composer bar_trigger 同机制）
+// ---------------------------------------------------------------------------
+
+/// sel-btn（h28 px8 border rounded 6 bg_panel gap 8 + chevron；hover accent 框）。
+pub(crate) fn sel_btn(
+    id: &'static str,
+    label: String,
+    w: Option<f32>,
+    open: bool,
+    t: &'static Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .h(px(28.))
+        .px(px(8.))
+        .border_1()
+        .border_color(rgb(if open { t.accent } else { t.border }))
+        .rounded(px(6.))
+        .bg(rgb(t.bg_panel))
+        .hover(|h| h.border_color(rgb(t.accent)))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .text_size(ui_size(12.))
+        .text_color(rgb(t.text))
+        .when_some(w, |d, w| d.w(px(w)))
+        .child(div().min_w_0().truncate().child(SharedString::from(label)))
+        .child(icon("chevron-down", 10., t.text_dim))
+}
+
+/// 触发钮包装（settings ag_trigger 同款）：点击记锚点 + 翻转 popup 槽位 +
+/// paint 期 tracker 抓 bounds（弹层统一定位测量端）。**点击就地截断**——
+/// composer 操作栏行内还有别的鼠标语义（项目 pill），菜单钮不冒泡
+/// （2026-11-15 截图 bug：点工具钮冒泡把项目弹窗也拉开了）。
+pub(crate) fn trg_wrap(
+    slot: u8,
+    weak: &gpui::WeakEntity<Chat>,
+    chat: &Chat,
+    visual: gpui::Stateful<gpui::Div>,
+) -> AnyElement {
+    let bounds = chat.tasks.page.anchors.get(slot).clone();
+    let bounds_click = bounds.clone();
+    let weak_click = weak.clone();
+    visual
+        .on_mouse_down(
+            MouseButton::Left,
+            move |ev: &gpui::MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                let at = ev.position;
+                let _ = weak_click.update(cx, |c, _| {
+                    // inputpanel 同款：锚点 = 按钮槽位 bounds（未就绪退点击坐标）
+                    c.tasks.page.anchor = Some(crate::PillBtns::anchor(&bounds_click, at));
+                    c.tasks.page.popup = if c.tasks.page.popup == Some(slot) {
+                        None
+                    } else {
+                        Some(slot)
+                    };
+                });
+            },
+        )
+        .child(crate::PillBtns::tracker(&bounds))
+        .into_any_element()
+}
+
+/// 调度文本段（「第」「分」「于」）。
+fn sched_text(s: &'static str) -> AnyElement {
+    let t = theme();
+    div()
+        .text_size(ui_size(12.5))
+        .text_color(rgb(t.text))
+        .child(tr(s).to_string())
+        .into_any_element()
+}
+
+/// 调度摘要（本地时区；HTML summary 去 GMT+8 硬编码）。
+fn sched_summary(chat: &Chat) -> String {
+    let p = &chat.tasks.page;
+    let hm = format!("{:02}:{:02}", p.hour, p.minute);
+    match p.unit_ix {
+        0 => tf(
+            tr("task.sum_cmin"),
+            &[("n", INTERVALS[p.interval_ix.min(9)].to_string())],
+        ),
+        1 => tf(tr("task.sum_hourly"), &[("m", p.minute.to_string())]),
+        2 => tf(tr("task.sum_daily"), &[("t", hm)]),
+        3 => {
+            let w = weekday_label(p.weekdays);
+            tf(tr("task.sum_weekly"), &[("w", w), ("t", hm)])
+        }
+        _ => tf(
+            tr("task.sum_monthly"),
+            &[("d", p.month_day.to_string()), ("t", hm)],
+        ),
+    }
+}
+
+/// weekly 单选的周几文案（1–7 周一=1；空表回落「一」）。
+fn weekday_label(weekdays: [bool; 7]) -> String {
+    let ix = weekdays
+        .iter()
+        .position(|on| *on)
+        .map(|i| i + 1)
+        .unwrap_or(1);
+    tr(match ix {
+        1 => "task.weekday_1",
+        2 => "task.weekday_2",
+        3 => "task.weekday_3",
+        4 => "task.weekday_4",
+        5 => "task.weekday_5",
+        6 => "task.weekday_6",
+        _ => "task.weekday_7",
+    })
+    .to_string()
+}
+
+pub(crate) fn weekday_key(i: usize) -> &'static str {
+    match i {
+        0 => "task.weekday_1",
+        1 => "task.weekday_2",
+        2 => "task.weekday_3",
+        3 => "task.weekday_4",
+        4 => "task.weekday_5",
+        5 => "task.weekday_6",
+        _ => "task.weekday_7",
+    }
+}
+
+/// freq 标签。
+fn freq_label(chat: &Chat) -> String {
+    match chat.tasks.page.unit_ix {
+        0 => format!(
+            "{} {} {}",
+            tr("task.sum_cmin_prefix"),
+            INTERVALS[chat.tasks.page.interval_ix.min(9)],
+            tr("task.minute_suffix")
+        ),
+        1 => tr("task.unit_hour").to_string(),
+        2 => tr("task.unit_day").to_string(),
+        3 => tr("task.unit_week").to_string(),
+        _ => tr("task.unit_month").to_string(),
+    }
+}
+
+/// 调度行（随 unit 重排；菜单槽位 popup_slot::*）。
+pub(crate) fn sched_row(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> AnyElement {
+    let page = &chat.tasks.page;
+    let summary = sched_summary(chat);
+
+    // HTML：非分钟档先渲染 freqPill；分钟档（cmin）= 频率与间隔合一的单钮
+    let mut row = div().flex().flex_wrap().items_center().gap(px(8.));
+    if page.unit_ix != 0 {
+        row = row.child(trg_wrap(
+            popup_slot::FREQ,
+            weak,
+            chat,
+            sel_btn(
+                "task-sel-freq",
+                freq_label(chat),
+                None,
+                page.popup == Some(popup_slot::FREQ),
+                t,
+            ),
+        ));
+    }
+
+    row = match page.unit_ix {
+        0 => {
+            // 每 N 分钟：单钮「每 N 分钟」（HTML cmin 同款合一）
+            row.child(trg_wrap(
+                popup_slot::INTERVAL,
+                weak,
+                chat,
+                sel_btn(
+                    "task-sel-interval",
+                    format!(
+                        "{} {} {}",
+                        tr("task.sum_cmin_prefix"),
+                        INTERVALS[page.interval_ix.min(9)],
+                        tr("task.minute_suffix")
+                    ),
+                    None,
+                    page.popup == Some(popup_slot::INTERVAL),
+                    t,
+                ),
+            ))
+        }
+        1 => {
+            // 每小时：第 [M] 分
+            row.child(sched_text("task.minute_nth"))
+                .child(trg_wrap(
+                    popup_slot::MINUTE,
+                    weak,
+                    chat,
+                    sel_btn(
+                        "task-sel-minute",
+                        format!("{:02}", page.minute),
+                        None,
+                        page.popup == Some(popup_slot::MINUTE),
+                        t,
+                    ),
+                ))
+                .child(sched_text("task.minute_suffix"))
+        }
+        2 => row
+            .child(sched_text("task.run_at"))
+            .child(time_pick(chat, weak, t)),
+        3 => {
+            // 每周：[周X] 于 HH:MM（单选落 weekdays 单元素）
+            row.child(trg_wrap(
+                popup_slot::WD,
+                weak,
+                chat,
+                sel_btn(
+                    "task-sel-wd",
+                    format!(
+                        "{}{}",
+                        tr("task.weekday_prefix"),
+                        weekday_label(page.weekdays)
+                    ),
+                    None,
+                    page.popup == Some(popup_slot::WD),
+                    t,
+                ),
+            ))
+            .child(sched_text("task.run_at"))
+            .child(time_pick(chat, weak, t))
+        }
+        _ => {
+            // 每月：[X 号] 于 HH:MM
+            row.child(trg_wrap(
+                popup_slot::MDAY,
+                weak,
+                chat,
+                sel_btn(
+                    "task-sel-md",
+                    format!("{} {}", page.month_day, tr("task.day_num")),
+                    None,
+                    page.popup == Some(popup_slot::MDAY),
+                    t,
+                ),
+            ))
+            .child(sched_text("task.run_at"))
+            .child(time_pick(chat, weak, t))
+        }
+    };
+    row.child(
+        div()
+            .text_size(ui_size(11.5))
+            .text_color(rgb(t.text_faint))
+            .child(SharedString::from(summary)),
+    )
+    .into_any_element()
+}
+
+/// 「于 HH:MM」时间拾取（HTML tpick 双列）。
+pub(crate) fn kind_block(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    cx: &gpui::Context<Chat>,
+) -> Vec<AnyElement> {
+    if chat.tasks.page.kind_agent {
+        vec![agent_block(chat, weak, t, cx)]
+    } else {
+        vec![script_block(chat, weak, t)]
+    }
+}
+
+/// composer 操作栏 pill（**InputPanel bar_trigger 同款**，2026-11-15 用户
+/// 拍板「下方只沿用 InputPanel 的操作栏」——禁止自造 pill 形制）。
+fn bar_pill(
+    slot: Option<u8>,
+    weak: &gpui::WeakEntity<Chat>,
+    chat: &Chat,
+    id: &'static str,
+    icon_name: Option<&'static str>,
+    label: String,
+    t: &'static Theme,
+) -> AnyElement {
+    let open = slot.is_some_and(|s| chat.tasks.page.popup == Some(s));
+    let color = if open { t.accent } else { t.text_muted };
+    let trg = crate::session::input::bar_trigger(id, icon_name, &label, true, color, true);
+    match slot {
+        Some(slot) => trg_wrap(slot, weak, chat, trg),
+        None => trg.into_any_element(),
+    }
+}
+
+/// stat pill（HTML pill.stat 同款：icon + [n] 常驻提示，非交互——不挂
+/// cursor/hover，InputPanel 扩展/MCP 钮同形制但任务表单无菜单可开）。
+fn stat_pill(id: &'static str, icon_name: &'static str, n: usize, t: &'static Theme) -> AnyElement {
+    crate::session::input::bar_trigger(
+        id,
+        Some(icon_name),
+        &format!("[{n}]"),
+        false,
+        t.text_muted,
+        false,
+    )
+    .into_any_element()
+}
+
+/// 工具档显示名（runtime `tool_preset_label` 同映射：内部键 custom →
+/// full+ 档名，其余键原样——TIER 菜单写回的是内部键）。
+fn tools_display(key: &str) -> String {
+    if key == "custom" {
+        tr("extensions.full").to_string()
+    } else {
+        key.to_string()
+    }
+}
+
+/// Agent 指令 composer 形制（max-w 620：textarea + **InputPanel 操作栏**：
+/// 项目/工具档/扩展/MCP 统计 …… 模型/思考——HTML cm-bar 同序）。
+fn agent_block(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    cx: &gpui::Context<Chat>,
+) -> AnyElement {
+    let page = &chat.tasks.page;
+    let desc = page.desc.clone().expect("page open ensures inputs");
+
+    let proj_label = page
+        .project
+        .as_ref()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| tr("task.project").to_string());
+    // InputPanel 同源统计（HTML 两颗 stat pill）：扩展 = 会话清单数，
+    // MCP = 全局启用数（mcp_button 同读点）
+    let ext_n = chat.rt().read(cx).ext_sources.len();
+    let mcp_n = chat
+        .cfg
+        .mcp_servers
+        .iter()
+        .filter(|s| s.scope == pi_link::mcp::Scope::Global && s.enabled)
+        .count();
+    let weak_proj = weak.clone();
+
+    field(
+        "task.instr",
+        div()
+            .w_full()
+            .max_w(px(620.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .rounded(px(radius::MODAL))
+            .bg(rgb(t.bg_panel))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(div().child(desc))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::SP1))
+                    .p(px(space::SP2))
+                    .px(px(space::SP3))
+                    // 项目钮：自身开 ProjectPicker（截断不冒泡——行内其余
+                    // 钮各有菜单语义，2026-11-15 截图 bug 根因即冒泡误开）
+                    .child(
+                        crate::session::input::bar_trigger(
+                            "task-pill-project",
+                            Some("folder"),
+                            &proj_label,
+                            true,
+                            t.text_muted,
+                            true,
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            move |_, _, cx| {
+                                cx.stop_propagation();
+                                let _ = weak_proj.update(cx, |c, cx| {
+                                    c.tasks.page.popup = None;
+                                    c.open_project_picker_for_task(cx);
+                                });
+                            },
+                        ),
+                    )
+                    .child(bar_pill(
+                        Some(popup_slot::TIER),
+                        weak,
+                        chat,
+                        "task-pill-tier",
+                        Some("wrench"),
+                        tools_display(page.tools),
+                        t,
+                    ))
+                    .child(stat_pill("task-pill-ext", "plug", ext_n, t))
+                    .child(stat_pill("task-pill-mcp", "server", mcp_n, t))
+                    .child(div().flex_1())
+                    .child(bar_pill(
+                        Some(popup_slot::MODEL),
+                        weak,
+                        chat,
+                        "task-pill-model",
+                        None,
+                        page.model
+                            .as_ref()
+                            .map(|(p, m)| format!("{p}/{m}"))
+                            .unwrap_or_else(|| tr("task.model_inherit").to_string()),
+                        t,
+                    ))
+                    .child(bar_pill(
+                        Some(popup_slot::THINKING),
+                        weak,
+                        chat,
+                        "task-pill-thinking",
+                        Some("lightbulb"),
+                        page.thinking.to_string(),
+                        t,
+                    )),
+            )
+            .into_any_element(),
+    )
+}
+
+/// 脚本文件 field：sel-btn + 浏览… + note。
+fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
+    let page = &chat.tasks.page;
+    let label = page
+        .script_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| tr("task.script_ph").to_string());
+    div()
+        .mt(px(14.))
+        .child(
+            div()
+                .text_size(ui_size(11.5))
+                .text_color(rgb(t.text_dim))
+                .mb(px(5.))
+                .child(tr("task.script").to_string()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(sel_btn("task-sel-script", label, Some(340.), false, t))
+                .child(config_button(
+                    "task-browse",
+                    weak,
+                    tr("task.browse"),
+                    Btn::Secondary,
+                    true,
+                    false,
+                    |c, cx| c.pick_task_script_file(cx),
+                )),
+        )
+        .child(
+            div()
+                .mt(px(6.))
+                .text_size(ui_size(11.5))
+                .text_color(rgb(t.text_faint))
+                .child(div().child(tr("task.script_note").to_string()).when_some(
+                    page.script_err.clone(),
+                    |d, e| {
+                        d.child(
+                            div()
+                                .mt(px(4.))
+                                .text_color(rgb(t.danger))
+                                .child(SharedString::from(e)),
+                        )
+                    },
+                )),
+        )
+        .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// ② 日志 tab（截图拍板版：行 = 任务列表行同语言）
+// ---------------------------------------------------------------------------

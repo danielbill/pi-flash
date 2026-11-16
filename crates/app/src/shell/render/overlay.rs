@@ -37,7 +37,7 @@ impl Chat {
         // pill_anchor_edges 定位）：挂在 dialogs **之前** = 画在模态之下
         // （settings ag_menus 同序；菜单开着时弹模态，菜单不许浮在模态上——
         // 2026-11-15 用户截图：工具菜单+项目弹窗双开浮在弹窗顶上）
-        if let Some(el) = crate::tasks::view::menus_overlay(self, &weak_for_dialog, window) {
+        if let Some(el) = crate::tasks::popup::menus_overlay(self, &weak_for_dialog, window) {
             root = root.child(el);
         }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
