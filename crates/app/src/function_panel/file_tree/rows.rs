@@ -9,7 +9,7 @@ use gpui::{SharedString, div, prelude::*, px, rgb};
 use crate::Chat;
 use crate::appearance::theme;
 use crate::function_panel::file_tree_drag::{
-    DRAG_EXPAND_DELAY, TreeDrag, TreeDragGhost, drag_move_target,
+    DRAG_EXPAND_DELAY, TreeDrag, TreeDragGhost, drag_items, drag_move_target,
 };
 use crate::function_panel::file_tree_edit::{edit_chrome, edit_input_slot, validation_note};
 use crate::same_path;
@@ -20,12 +20,15 @@ use crate::ui::icon_path;
 use super::{CONTENT_PAD, GUIDE_X, INDENT, ROW_H};
 
 /// One flattened row: indent guides + chevron + type icon + name + git badge.
+/// `selected` = 行在动作对象集里（`tree_effective_sel` 成员，021 多选高亮）；
+/// `marked` = 拖拽载荷的标记集起手快照（lists 渲染期取自 ws.tree_marked）。
 pub(crate) fn tree_row(
     row: TreeRow,
     prev_depth: Option<usize>,
     next_depth: Option<usize>,
     editing: Option<crate::function_panel::TreeEdit>,
     selected: bool,
+    marked: &std::sync::Arc<Vec<(std::path::PathBuf, bool)>>,
     weak: gpui::WeakEntity<Chat>,
 ) -> gpui::AnyElement {
     let t = theme::theme();
@@ -124,15 +127,12 @@ pub(crate) fn tree_row(
         // 折叠/展开挂 on_click（mouse-up）而非 on_mouse_down：gpui 的 click
         // 与 drag 天然互斥（位移超阈值进 drag、未超阈值 mouse-up 才算
         // click）——按下即触发的旧写法会在拖拽起手时先把目录翻个面；点击
-        // 即选中（082，F2 改名对象）
-        el = el.on_click(move |_, _, cx| {
+        // 即选中（082，F2 改名对象）。021 多选：修饰分支在
+        // tree_click_select（Zed on_click 同款挪植），只有裸点才翻面
+        el = el.on_click(move |ev: &gpui::ClickEvent, _, cx| {
+            let mods = ev.modifiers();
             let _ = weak.update(cx, |c, cx| {
-                c.ws.tree_selected = Some(dir_path.clone());
-                if !c.ws.expanded_dirs.remove(&dir_path) {
-                    c.ws.expanded_dirs.insert(dir_path.clone());
-                }
-                c.rebuild_tree();
-                cx.notify();
+                c.tree_click_select(&dir_path, true, mods, cx);
             });
         });
         el = el.child(tree_right_click(&weak_menu, &row));
@@ -153,11 +153,12 @@ pub(crate) fn tree_row(
         let fp = row.path.clone();
         // 023：文件点击一律进 fileView（编辑器区）。旧行为「带 git 变更
         // 徽标的文件点击弹 GitDiff」废弃——diff 入口收敛在 git 面板。
-        // on_click 同目录行：让位给拖拽起手（见上）；点击即选中（082）
-        el = el.on_click(move |_, _, cx| {
+        // on_click 同目录行：让位给拖拽起手（见上）；点击即选中（082）。
+        // 021 多选：修饰点击只动选择不打开（tree_click_select 分支）
+        el = el.on_click(move |ev: &gpui::ClickEvent, _, cx| {
+            let mods = ev.modifiers();
             let _ = weak.update(cx, |c, cx| {
-                c.ws.tree_selected = Some(fp.clone());
-                c.open_file_tab(fp.clone(), cx);
+                c.tree_click_select(&fp, false, mods, cx);
             });
         });
         el = el.child(tree_right_click(&weak_menu, &row));
@@ -176,16 +177,23 @@ pub(crate) fn tree_row(
             );
         }
     }
-    tree_drag_wiring(el, &row, &weak_drag).into_any_element()
+    tree_drag_wiring(el, &row, &weak_drag, marked).into_any_element()
 }
 
 /// 树行的拖拽接线（Zed project_panel drag_and_drop 行侧三件套）：`on_drag`
-/// 发起（payload = 条目路径，幽灵 = 图标 + 名字小签）、`drag_over` 落点
-/// 高亮（只在「真实移动」上亮，原地/进自身子树不高亮——拖拽期 hover 底
-/// 被 gpui 抑制，亮色即落点指示）、`on_drop` 提交移动。拖到文件行 = 移到
-/// 其父目录（语义在 [`drag_move_target`]，drop 与高亮同源）。行内改名态
-/// 不接线（tree_row 提前 return）。
-pub(crate) fn tree_drag_wiring<E>(mut el: E, row: &TreeRow, weak: &gpui::WeakEntity<Chat>) -> E
+/// 发起（payload = 条目路径 + 标记集起手快照，幽灵 = 图标 + 名字小签）、
+/// `drag_over` 落点高亮（只在「真实移动」上亮，原地/进自身子树不高亮
+/// ——拖拽期 hover 底被 gpui 抑制，亮色即落点指示；多选拖拽任一条目有
+/// 真实移动即亮）、`on_drop` 提交移动（标记集成员 = 整组逐条判定落点，
+/// 无落点的成员静默跳过）。拖到文件行 = 移到其父目录（语义在
+/// [`drag_move_target`]，drop 与高亮同源）。行内改名态不接线（tree_row
+/// 提前 return）。
+pub(crate) fn tree_drag_wiring<E>(
+    mut el: E,
+    row: &TreeRow,
+    weak: &gpui::WeakEntity<Chat>,
+    marked: &std::sync::Arc<Vec<(std::path::PathBuf, bool)>>,
+) -> E
 where
     E: gpui::InteractiveElement + gpui::StatefulInteractiveElement,
 {
@@ -193,6 +201,7 @@ where
     let drag = TreeDrag {
         path: row.path.clone(),
         is_dir: row.is_dir,
+        marked: marked.clone(),
     };
     let ghost_path = row.path.clone();
     let ghost_name = row.name.clone();
@@ -211,19 +220,24 @@ where
             })
         })
         .drag_over::<TreeDrag>(move |style, drag, _, _| {
-            if drag_move_target(&drag.path, drag.is_dir, &hl_path, hl_is_dir).is_some() {
+            let any = drag_items(&drag).iter().any(|(src, src_is_dir)| {
+                drag_move_target(src, *src_is_dir, &hl_path, hl_is_dir).is_some()
+            });
+            if any {
                 style.bg(rgb(t.bg_hover))
             } else {
                 style
             }
         })
         .on_drop::<TreeDrag>(move |drag, _, cx| {
-            let Some(dst) = drag_move_target(&drag.path, drag.is_dir, &drop_path, drop_is_dir)
-            else {
-                return;
-            };
             let _ = weak_drop.update(cx, |c, cx| {
-                c.tree_move_commit(&drag.path, drag.is_dir, &dst, cx);
+                for (src, src_is_dir) in drag_items(&drag) {
+                    // 逐条走落点判定（原地/进自身子树 = 该条静默跳过），
+                    // 同 Zed drag_onto 逐 item move_entry
+                    if let Some(dst) = drag_move_target(&src, src_is_dir, &drop_path, drop_is_dir) {
+                        c.tree_move_commit(&src, src_is_dir, &dst, cx);
+                    }
+                }
             });
         });
 
@@ -334,7 +348,10 @@ pub(crate) fn changed_dot() -> gpui::AnyElement {
 
 /// 行右键：挂文件树右键菜单（目录/文件两套，锚点 = 事件坐标）。
 /// 挂为行尾子元素占位（无视觉），事件在行容器上接。右键即选中该行
-/// （Zed project_panel 同语义，082：右键后 F2 可直接改名）。
+/// （Zed project_panel 同语义，082：右键后 F2 可直接改名）。021 多选：
+/// 点击行不在标记集 → 先折叠标记集再开菜单（Zed on_secondary_mouse_down
+/// 同款——部分菜单动作作用整组，右在未标记行上时用户未必意识到会波及
+/// 多个条目，折叠防误伤）。
 pub(crate) fn tree_right_click(weak: &gpui::WeakEntity<Chat>, row: &TreeRow) -> gpui::AnyElement {
     let weak = weak.clone();
     let path = row.path.clone();
@@ -350,7 +367,7 @@ pub(crate) fn tree_right_click(weak: &gpui::WeakEntity<Chat>, row: &TreeRow) -> 
                 cx.stop_propagation();
                 let path = path.clone();
                 let _ = weak.update(cx, |c, cx| {
-                    c.ws.tree_selected = Some(path.clone());
+                    c.tree_right_select(&path);
                     c.dlg.tree_menu = Some(if is_dir {
                         crate::function_panel::TreeMenu::Dir {
                             path,

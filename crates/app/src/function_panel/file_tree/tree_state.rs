@@ -183,8 +183,10 @@ impl Chat {
                 self.set_content_view(view);
             }
             // 旧项目的选中条目不再成立（F2/高亮都按行存在性复核，残留无害，
-            // 这里清掉是为了下拉切走再切回来不闪旧高亮）
+            // 这里清掉是为了下拉切走再切回来不闪旧高亮）；021 多选标记集
+            // 同步清空——成员全属旧项目
             self.ws.tree_selected = None;
+            self.ws.tree_marked.clear();
         }
         cx.notify();
     }
@@ -264,6 +266,13 @@ impl Chat {
         } else {
             services::file_tree::flatten(&cwd, &self.ws.expanded_dirs, &self.ws.git_files)
         });
+        // 021 多选标记集随树收口：外部删除的行出集（Zed worktree 事件
+        // 同步 marked_entries 同语义；活动条目不在此清——行存在性在使用点
+        // 复核是既有约定）
+        let rows = self.ws.tree_rows.as_ref();
+        self.ws
+            .tree_marked
+            .retain(|p| rows.iter().any(|r| same_path(&r.path, p)));
     }
 
     /// 挂上 fs watcher（递归 watch cwd；旧句柄 drop 即解除）。切项目时

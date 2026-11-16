@@ -84,7 +84,12 @@ pub(crate) fn tree_menu_layer(
                     false,
                     {
                         let path = path.clone();
-                        move |c, cx| c.tree_copy_path(path.clone(), cx)
+                        // 021 多选：作用于动作对象集（Zed copy_path 同款），
+                        // 多行拼接；单选时即槽路径
+                        move |c, cx| {
+                            let targets = c.tree_targets_or_slot(&path);
+                            c.tree_copy_path(targets, cx)
+                        }
                     },
                 ))
                 .child(tree_item(
@@ -127,7 +132,9 @@ pub(crate) fn tree_menu_layer(
                         true,
                         {
                             let path = path.clone();
-                            move |c, cx| c.confirm_tree_delete(path.clone(), cx)
+                            // 021 多选：删除对象 = 合并规则剪枝后的整组
+                            //（Zed disjoint_effective_entries 同款）
+                            move |c, cx| c.confirm_tree_delete_from_slot(path.clone(), cx)
                         },
                     ));
             }
@@ -241,7 +248,11 @@ pub(crate) fn tree_menu_layer(
                     false,
                     {
                         let path = path.clone();
-                        move |c, cx| c.tree_copy_path(path.clone(), cx)
+                        // 021 多选：作用于动作对象集（同目录菜单 copy）
+                        move |c, cx| {
+                            let targets = c.tree_targets_or_slot(&path);
+                            c.tree_copy_path(targets, cx)
+                        }
                     },
                 ))
                 .child(tree_item(
@@ -275,7 +286,8 @@ pub(crate) fn tree_menu_layer(
                     true,
                     {
                         let path = path.clone();
-                        move |c, cx| c.confirm_tree_delete(path.clone(), cx)
+                        // 021 多选：删除对象 = 合并规则剪枝后的整组（同目录菜单）
+                        move |c, cx| c.confirm_tree_delete_from_slot(path.clone(), cx)
                     },
                 ));
         }

@@ -46,8 +46,15 @@ pub(crate) struct WsUi {
     pub(crate) tree_drag_expand: Option<PathBuf>,
     /// 082 文件树选中条目（点击/右键留存，行高亮 + F2 改名的对象；纯内存
     /// 态不持久化）。行存在性在使用点对 tree_rows 复核（外部删除/切项目
-    /// 后残留 → F2 静默忽略）。
+    /// 后残留 → F2 静默忽略）。多选语义下即 Zed `selection`——**活动条目**
+    /// （键盘/改名/打开的落点，shift 范围扩选的锚点）。
     pub(crate) tree_selected: Option<PathBuf>,
+    /// 021 文件树多选标记集（Zed `marked_entries` 同构）：shift+点范围扩选、
+    /// ctrl+点切换的成员，插入序（删除确认按此序报数）。活动条目通常也在
+    /// 集内；动作对象 = `tree_effective_sel` 的合并规则（Zed
+    /// effective_entries 挪植）。路径作键（搜索面板 collapsed 同约定：索引
+    /// 会随重建重排，路径不会），纯内存态不持久化。
+    pub(crate) tree_marked: Vec<PathBuf>,
     /// 文件树滚动条共享状态（与会话列表 `psp.psp_sb_state` 同款分体：
     /// psp_scrollbar 的 hover 常显 + autohide 挂在状态上，两面板各持一份
     /// ——共用会让悬停一边持续续上另一边的淡出计时）

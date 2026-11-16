@@ -61,29 +61,37 @@ pub(crate) fn tree_del_error_layer(
         .into_any_element()
 }
 
-/// 删除确认：统一 overlay::confirm（自动居中 + 取消/确认两键）。
+/// 删除确认：统一 overlay::confirm（自动居中 + 取消/确认两键）。021 多选：
+/// `paths` = 待删集合（单条 = 单元素），N≥2 走计数文案（Zed
+/// build_removal_prompt 对多选同款一条提示盖全组）。
 pub(crate) fn tree_delete_confirm(
-    path: &std::path::PathBuf,
+    paths: &[std::path::PathBuf],
     dirty_count: usize,
     focus: &gpui::FocusHandle,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let weak = cx.entity().downgrade();
     let weak_cancel = weak.clone();
-    let name = path
-        .file_name()
+    let n = paths.len();
+    let name = paths
+        .first()
+        .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     // zed 同款：打开中的脏文件删除时明确「未保存更改将丢失」，一次确认
     // = 删文件 + 弃缓冲（discard_file_tab 强关，不再二次确认）；目录删除
     // 报其子树内全部受影响的脏 tab 数
-    let message = if dirty_count > 0 {
-        crate::i18n::tf(
+    let message = match (n, dirty_count > 0) {
+        (1, true) => crate::i18n::tf(
             "tree.delete_confirm_dirty",
             &[("name", name), ("n", dirty_count.to_string())],
-        )
-    } else {
-        crate::i18n::tf("tree.delete_confirm", &[("name", name)])
+        ),
+        (1, false) => crate::i18n::tf("tree.delete_confirm", &[("name", name)]),
+        (_, true) => crate::i18n::tf(
+            "tree.delete_confirm_multi_dirty",
+            &[("n", n.to_string()), ("m", dirty_count.to_string())],
+        ),
+        (_, false) => crate::i18n::tf("tree.delete_confirm_multi", &[("n", n.to_string())]),
     };
     crate::ui::overlay::confirm(
         focus,

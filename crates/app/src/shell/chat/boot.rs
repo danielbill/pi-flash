@@ -35,6 +35,7 @@ impl Chat {
                 tree_rows: std::sync::Arc::new(Vec::new()),
                 tree_drag_expand: None,
                 tree_selected: None,
+                tree_marked: Vec::new(),
                 tree_sb_state: crate::ui::psp_scrollbar::PspScrollbarState::new(),
                 fs_watch: None,
                 file_watches: std::collections::HashMap::new(),

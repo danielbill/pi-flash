@@ -161,10 +161,13 @@ impl Chat {
         if is_dir {
             self.ws.expanded_dirs = self.ws.expanded_dirs.iter().map(remap).collect();
         }
-        // 082 选中条目跟随（改名/移动后选中态不悬空，F2 仍指向新路径）
+        // 082 选中条目跟随（改名/移动后选中态不悬空，F2 仍指向新路径）；
+        // 021 多选标记集同路径跟随（Zed 以条目 id 天然存活，PF 路径键需
+        // 逐条 remap，否则移动后标记集悬空被 rebuild 剪掉）
         if let Some(sel) = self.ws.tree_selected.as_mut() {
             *sel = remap(sel);
         }
+        self.ws.tree_marked = self.ws.tree_marked.iter().map(remap).collect();
         // 021 Pin 收藏跟随（文件 = 单条，目录 = 整棵前缀）
         let pins_before = self.ws.pinned.clone();
         self.ws.pinned = self.ws.pinned.iter().map(remap).collect();

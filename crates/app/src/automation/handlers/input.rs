@@ -82,6 +82,24 @@ pub(super) fn dispatch(
                 _ => MouseButton::Left,
             };
             let count = params.get("count").and_then(Value::as_u64).unwrap_or(1) as usize;
+            // 修饰键（021 文件树多选：ctrl/shift+click 走真实事件链断言）：
+            // {"modifiers": ["ctrl","shift","alt","platform"]} 子集并集
+            let mut modifiers = gpui::Modifiers::default();
+            if let Some(list) = params.get("modifiers").and_then(Value::as_array) {
+                for m in list {
+                    match m.as_str() {
+                        Some("ctrl") => modifiers.control = true,
+                        Some("shift") => modifiers.shift = true,
+                        Some("alt") => modifiers.alt = true,
+                        Some("platform") | Some("win") => modifiers.platform = true,
+                        other => {
+                            return Err(bad(format!(
+                                "未知修饰键: {other:?}（可用 ctrl|shift|alt|platform）"
+                            )));
+                        }
+                    }
+                }
+            }
             // pressed=true 的 move 事件带 pressed_button（真实拖拽语义）——
             // 编辑器拖拽划选等按住拖动的手势只有它触发（component 端
             // on_drag_move 门 pressed_button==Some(Left)，裸 move 注入划
@@ -98,6 +116,7 @@ pub(super) fn dispatch(
                             position,
                             click_count: count,
                             first_mouse: false,
+                            modifiers,
                             ..Default::default()
                         })
                     } else {
@@ -105,6 +124,7 @@ pub(super) fn dispatch(
                             button,
                             position,
                             click_count: count,
+                            modifiers,
                             ..Default::default()
                         })
                     };
@@ -116,6 +136,7 @@ pub(super) fn dispatch(
                             PlatformInput::MouseMove(MouseMoveEvent {
                                 position,
                                 pressed_button: pressed.then_some(button),
+                                modifiers,
                                 ..Default::default()
                             }),
                             cx,

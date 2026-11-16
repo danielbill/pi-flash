@@ -70,6 +70,12 @@ pub mod method {
     /// 可断言浮层开合
     pub const FILE_DELETE: &str = "file.delete";
     pub const FILE_DELETE_CONFIRM: &str = "file.delete_confirm";
+    /// 021 文件树多选（Zed project_panel 选择模型挪植）：files.select 直调
+    /// 行点击统一入口 tree_click_select（与行 on_click 同一方法），可选
+    /// {"modifiers": ["ctrl","shift"]} 走修饰分支（shift=范围并集扩选 /
+    /// ctrl=进出标记集）；状态断言读 files 面快照的 tree_selected /
+    /// tree_marked / rows[].selected
+    pub const FILES_SELECT: &str = "files.select";
     pub const FILES_TOGGLE_DIR: &str = "files.toggle_dir";
     /// 021 行内编辑（Zed EditState 移植）的自动化入口：files.rename 打开
     /// 改名行（可选 name 预填新名），files.new_entry 打开新建行；提交/取消

@@ -130,7 +130,7 @@ pub(crate) fn editor_menu_layer(
                 true,
                 {
                     let path = path.clone();
-                    move |c, cx| c.confirm_tree_delete(path.clone(), cx)
+                    move |c, cx| c.confirm_tree_delete(vec![path.clone()], cx)
                 },
             )),
         };

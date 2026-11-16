@@ -31,6 +31,7 @@ use super::file_tree_pins::pin_list_view;
 
 mod lists;
 mod rows;
+mod selection;
 mod tree_action_bar;
 mod tree_state;
 
@@ -38,6 +39,7 @@ pub(crate) use lists::tree_scrollbar;
 pub(crate) use rows::{
     changed_dot, guide_lines, name_label, tree_drag_wiring, tree_right_click, tree_row,
 };
+pub(crate) use selection::disjoint as tree_disjoint_sel;
 pub(crate) use tree_action_bar::action_bar;
 
 /// 行高（pi-web FileExplorer 24px 行）。

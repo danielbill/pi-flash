@@ -105,6 +105,9 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         .flatten();
     let active_tab_bounds =
         active_tab_ix.and_then(|ix| chat.layout.tabs_scroll.bounds_for_item(ix));
+    // 021 多选：行 selected = 动作对象集成员（Zed effective_entries 合并
+    // 规则），整组另在 tree_marked 列出
+    let sel_set = chat.tree_effective_sel();
     let rows: Vec<Value> = chat
         .ws
         .tree_rows
@@ -119,6 +122,7 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 "git": r.git.map(|g| format!("{g:?}")),
                 "changed_dot": r.changed_dot,
                 "ignored": r.ignored,
+                "selected": sel_set.iter().any(|p| crate::services::workspace::same_path(p, &r.path)),
             })
         })
         .collect();
@@ -225,6 +229,19 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             .collect::<Vec<String>>(),
         "expanded": expanded,
         "rows": rows,
+        // 021 多选断言面：tree_selected = 活动条目（shift 扩选锚/F2 对象），
+        // tree_marked = 标记集（ctrl+点进出、shift+点并集扩选的成员）
+        "tree_selected": chat
+            .ws
+            .tree_selected
+            .as_ref()
+            .map(|p| p.display().to_string()),
+        "tree_marked": chat
+            .ws
+            .tree_marked
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>(),
         "tree_edit": tree_edit,
         "file_tabs": file_tabs,
         "ext_probe": {"runs": chat.ws.ext_probe.0, "hits": chat.ws.ext_probe.1},

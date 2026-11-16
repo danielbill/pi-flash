@@ -137,12 +137,16 @@ impl Chat {
             || self.aux.ext_dialog.is_some()
     }
 
-    /// 「复制路径」：绝对路径进剪贴板（gpui 原生 ClipboardItem）。
-    pub(crate) fn tree_copy_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    /// 「复制路径」：绝对路径进剪贴板（gpui 原生 ClipboardItem）。021 多选：
+    /// 对象 = 动作对象集，多行 `\n` 拼接（Zed copy_path 同款）；单条 = 单行。
+    pub(crate) fn tree_copy_path(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         self.dlg.tree_menu = None;
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-            path.to_string_lossy().to_string(),
-        ));
+        let joined = paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(joined));
         self.set_status(tr("session.copied").to_string(), cx);
         cx.notify();
     }

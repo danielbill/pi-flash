@@ -61,6 +61,9 @@ impl Chat {
     ) {
         self.dlg.tree_menu = None;
         self.dlg.editor_menu = None;
+        // 021 多选：改名单条动作——折叠标记集到改名对象（Zed workspace 级
+        // rename handler 对 marked_entries 同款 first()+clear）
+        self.ws.tree_marked.clear();
         if reveal {
             // dock_panel 不再切 Files（与 Default 渲染无差别，020-1 遗留已清）
             self.reveal_tree_row(&path);

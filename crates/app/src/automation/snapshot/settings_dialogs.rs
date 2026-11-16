@@ -227,9 +227,21 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         // 按键导航断言的数据化出口）
         "project_sel": chat.psp.project_sel,
         "confirm_delete": opt_path(chat.dlg.confirm_delete.as_ref()),
-        // 021 文件树删除确认浮层（Some=开着，值为待删路径；file.delete /
-        // file.delete_confirm 两段式 op 断言开合用）+ trash 失败持久弹层
-        "tree_confirm_del": opt_path(chat.dlg.tree_confirm_del.as_ref()),
+        // 021 文件树删除确认浮层（Some=开着，值为待删集合——021 多选起
+        // 可含多条，单条=单元素；file.delete / file.delete_confirm 两段式
+        // op 断言开合与条数用）+ trash 失败持久弹层
+        "tree_confirm_del": chat
+            .dlg
+            .tree_confirm_del
+            .as_ref()
+            .map(|ps| {
+                Value::Array(
+                    ps.iter()
+                        .map(|p| Value::String(p.display().to_string()))
+                        .collect(),
+                )
+            })
+            .unwrap_or(Value::Null),
         "tree_del_error": chat.dlg.tree_del_error.clone(),
         // 删除在飞清单长度（trash 已后台化：op 断言「删除完成」可轮询归零）
         "tree_deleting": chat.dlg.tree_deleting.len(),

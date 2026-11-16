@@ -100,18 +100,19 @@ pub(crate) fn psp_overlays(
             chat.dlg.tab_menu = None;
         }
     }
-    if let Some(path) = chat.dlg.tree_confirm_del.clone() {
+    if let Some(paths) = chat.dlg.tree_confirm_del.clone() {
         // zed build_removal_prompt 同款：删除打开中的文件时未保存修改并入
         // 删除确认（一次确认 = 删文件 + 弃缓冲）；目录删除统计其子树内
-        // 全部打开中的脏 tab（zed 对整个待删集合数 dirty_buffers）
+        // 全部打开中的脏 tab（zed 对整个待删集合数 dirty_buffers）——
+        // 021 多选后集合可含多条，脏 tab 对全集合求
         let dirty_count = chat
             .ws
             .file_cache
             .iter()
-            .filter(|(p, f)| f.dirty && (same_path(p, &path) || p.starts_with(&path)))
+            .filter(|(p, f)| f.dirty && paths.iter().any(|t| same_path(p, t) || p.starts_with(t)))
             .count();
         el = el.child(tree_delete_confirm(
-            &path,
+            &paths,
             dirty_count,
             &chat.dlg.dialog_focus,
             cx,

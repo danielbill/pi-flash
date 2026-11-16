@@ -9,7 +9,7 @@ use gpui::{SharedString, UniformListDecoration, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::appearance::theme;
-use crate::function_panel::file_tree_drag::TreeDrag;
+use crate::function_panel::file_tree_drag::{TreeDrag, drag_items};
 use crate::function_panel::file_tree_edit::{
     edit_chrome, edit_input_slot, tree_edit_row, validation_note,
 };
@@ -35,7 +35,25 @@ pub(crate) fn tree_list_view(
     let weak_root_drop = weak.clone();
     let cwd_bg = chat.ws.cwd.clone();
     let edit = chat.dlg.tree_edit.clone();
-    let selected = chat.ws.tree_selected.clone();
+    // 021 多选：行高亮对象 = 动作对象集（Zed effective_entries 合并规则，
+    // 活动条目与标记集的并语义）；拖拽载荷带标记集起手快照
+    let sel_set = std::sync::Arc::new(chat.tree_effective_sel());
+    let drag_marked = std::sync::Arc::new(
+        chat.ws
+            .tree_marked
+            .iter()
+            .map(|p| {
+                let is_dir = chat
+                    .ws
+                    .tree_rows
+                    .iter()
+                    .find(|r| same_path(&r.path, p))
+                    .map(|r| r.is_dir)
+                    .unwrap_or(p.is_dir());
+                (p.clone(), is_dir)
+            })
+            .collect::<Vec<_>>(),
+    );
     // 新建行的落点（Zed new_entry：虚拟行插在目录行下方、子项之前；
     // 目标 = 项目根时插列表顶）。改名行不注入（原地替换该行）。公式收在
     // Chat::tree_new_edit_slot，open_file_new 的编辑行自动滚动同源。
@@ -87,7 +105,11 @@ pub(crate) fn tree_list_view(
         .on_drop::<TreeDrag>(move |drag, _, cx| {
             let _ = weak_root_drop.update(cx, |c, cx| {
                 if let Some(cwd) = c.ws.cwd.clone() {
-                    c.tree_move_commit(&drag.path, drag.is_dir, &cwd, cx);
+                    // 标记集成员 = 整组移到根（Zed 背景落点逐 item 同语义）；
+                    // 逐条落点判定，根内的原地 drop 静默 no-op
+                    for (src, src_is_dir) in drag_items(&drag) {
+                        c.tree_move_commit(&src, src_is_dir, &cwd, cx);
+                    }
                 }
             });
         })
@@ -154,7 +176,8 @@ pub(crate) fn tree_list_view(
                             prev_depth,
                             next_depth,
                             edit.clone(),
-                            selected.as_ref().is_some_and(|p| same_path(p, &row.path)),
+                            sel_set.iter().any(|p| same_path(p, &row.path)),
+                            &drag_marked,
                             weak.clone(),
                         )
                     },
@@ -179,7 +202,9 @@ pub(crate) fn changes_list_view(
     let weak_bg = weak.clone();
     let cwd_bg = chat.ws.cwd.clone();
     let editing = chat.dlg.tree_edit.clone();
-    let selected = chat.ws.tree_selected.clone();
+    // 021 多选：变更视图无扩选手势（裸点即选中），行高亮仍走动作对象集
+    // ——点击行先清标记，集合此刻恒 = 单活动条目
+    let sel_set = std::sync::Arc::new(chat.tree_effective_sel());
     div()
         .flex_1()
         .min_h_0()
@@ -233,7 +258,7 @@ pub(crate) fn changes_list_view(
                         Some(row) => changes_row(
                             row.clone(),
                             editing.clone(),
-                            selected.as_ref().is_some_and(|p| same_path(p, &row.path)),
+                            sel_set.iter().any(|p| same_path(p, &row.path)),
                             weak_c.clone(),
                         ),
                         None => div().into_any_element(),
@@ -348,9 +373,10 @@ fn changes_row(
         let fp = row.path.clone();
         let weak_click = weak.clone();
         // on_click 与树行同款（mouse-up 触发，面板内点击语义统一）；点击
-        // 即选中（082，F2 改名对象）
+        // 即选中（082，F2 改名对象）。变更视图无多选手势：裸点清标记
         el = el.on_click(move |_, _, cx| {
             let _ = weak_click.update(cx, |c, cx| {
+                c.ws.tree_marked.clear();
                 c.ws.tree_selected = Some(fp.clone());
                 c.open_file_tab(fp.clone(), cx);
             });

@@ -117,14 +117,18 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
-        // 文件树删除流（自动化验证入口）：与右键菜单「删除」同槽同方法——
-        // 弹确认浮层（真删在 file.delete_confirm 应答后）
+        // 文件树删除流（自动化验证入口）：与右键菜单「删除」同链路——先补
+        // 齐右键选中语义（活动条目移到该行 + 未标记即折叠标记集，op 无真实
+        // 右键前置），再走 from_slot 合并规则取待删集合（021 多选：标记集
+        // 成员 = 整组；无多选 = 单条，与旧断言兼容），弹确认浮层（真删在
+        // file.delete_confirm 应答后）
         method::FILE_DELETE => {
             let path = params_path(params, "path")?;
             if !path.exists() {
                 return Err(not_found(format!("文件不存在: {}", path.display())));
             }
-            chat.confirm_tree_delete(path, cx);
+            chat.tree_right_select(&path);
+            chat.confirm_tree_delete_from_slot(path, cx);
             ok()
         }
         // 删除确认浮层的「确认」（与确认按钮同一方法）：清槽 + 投递后台
@@ -144,6 +148,37 @@ pub(super) fn dispatch(
             }
             chat.rebuild_tree();
             cx.notify();
+            ok()
+        }
+        // 021 多选：行点击统一入口（与行 on_click 同一方法
+        // tree_click_select），可选 modifiers 走修饰分支。文件/目录按树行
+        // 判定（目录 = 翻面语义）；裸点文件会开 tab——断言面同 UI。
+        method::FILES_SELECT => {
+            let path = params_path(params, "path")?;
+            let is_dir = chat
+                .ws
+                .tree_rows
+                .iter()
+                .find(|r| crate::services::workspace::same_path(&r.path, &path))
+                .map(|r| r.is_dir)
+                .unwrap_or(path.is_dir());
+            let mut mods = gpui::Modifiers::default();
+            if let Some(list) = params.get("modifiers").and_then(Value::as_array) {
+                for m in list {
+                    match m.as_str() {
+                        Some("ctrl") => mods.control = true,
+                        Some("shift") => mods.shift = true,
+                        Some("alt") => mods.alt = true,
+                        Some("platform") => mods.platform = true,
+                        other => {
+                            return Err(bad(format!(
+                                "未知修饰键: {other:?}（可用 ctrl|shift|alt|platform）"
+                            )));
+                        }
+                    }
+                }
+            }
+            chat.tree_click_select(&path, is_dir, mods, cx);
             ok()
         }
         // 021 行内改名：打开编辑行（可选 name 预填新名）。提交/取消走

@@ -40,7 +40,24 @@ pub(crate) fn pin_list_view(
     let cwd_bg = chat.ws.cwd.clone();
     let cwd_rows = chat.ws.cwd.clone();
     let editing = chat.dlg.tree_edit.clone();
-    let selected = chat.ws.tree_selected.clone();
+    // 021 多选：行高亮对象 = 动作对象集（同主树）；拖拽载荷带标记集快照
+    let sel_set = std::sync::Arc::new(chat.tree_effective_sel());
+    let drag_marked = std::sync::Arc::new(
+        chat.ws
+            .tree_marked
+            .iter()
+            .map(|p| {
+                let is_dir = chat
+                    .ws
+                    .tree_rows
+                    .iter()
+                    .find(|r| same_path(&r.path, p))
+                    .map(|r| r.is_dir)
+                    .unwrap_or(p.is_dir());
+                (p.clone(), is_dir)
+            })
+            .collect::<Vec<_>>(),
+    );
     div()
         .flex_1()
         .min_h_0()
@@ -119,7 +136,8 @@ pub(crate) fn pin_list_view(
                                 row.clone(),
                                 dim_dir,
                                 editing.clone(),
-                                selected.as_ref().is_some_and(|p| same_path(p, &row.path)),
+                                sel_set.iter().any(|p| same_path(p, &row.path)),
+                                &drag_marked,
                                 weak_c.clone(),
                             )
                         } else {
@@ -128,7 +146,8 @@ pub(crate) fn pin_list_view(
                                 prev_depth,
                                 next_depth,
                                 editing.clone(),
-                                selected.as_ref().is_some_and(|p| same_path(p, &row.path)),
+                                sel_set.iter().any(|p| same_path(p, &row.path)),
+                                &drag_marked,
                                 weak_c.clone(),
                             )
                         }
@@ -149,6 +168,7 @@ fn pin_root_row(
     dim_dir: String,
     editing: Option<crate::function_panel::TreeEdit>,
     selected: bool,
+    marked: &std::sync::Arc<Vec<(std::path::PathBuf, bool)>>,
     weak: gpui::WeakEntity<Chat>,
 ) -> gpui::AnyElement {
     let t = theme::theme();
@@ -248,9 +268,11 @@ fn pin_root_row(
 
     if row.is_dir {
         let dir_path = row.path.clone();
-        // on_click 同树行（mouse-up，让位拖拽起手）；展开集合与主树共享
+        // on_click 同树行（mouse-up，让位拖拽起手）；展开集合与主树共享。
+        // Pin 视图无多选手势：裸点清标记
         el = el.on_click(move |_, _, cx| {
             let _ = weak.update(cx, |c, cx| {
+                c.ws.tree_marked.clear();
                 c.ws.tree_selected = Some(dir_path.clone());
                 if !c.ws.expanded_dirs.remove(&dir_path) {
                     c.ws.expanded_dirs.insert(dir_path.clone());
@@ -266,6 +288,7 @@ fn pin_root_row(
         let fp = row.path.clone();
         el = el.on_click(move |_, _, cx| {
             let _ = weak.update(cx, |c, cx| {
+                c.ws.tree_marked.clear();
                 c.ws.tree_selected = Some(fp.clone());
                 c.open_file_tab(fp.clone(), cx);
             });
@@ -286,5 +309,5 @@ fn pin_root_row(
         }
     }
     el = el.child(tree_right_click(&weak_menu, &row));
-    tree_drag_wiring(el, &row, &weak_drag).into_any_element()
+    tree_drag_wiring(el, &row, &weak_drag, marked).into_any_element()
 }

@@ -11,7 +11,7 @@ use gpui::{
 
 use crate::Chat;
 use crate::appearance::theme;
-use crate::function_panel::file_tree_drag::{TreeDrag, drag_move_target};
+use crate::function_panel::file_tree_drag::{TreeDrag, drag_items, drag_move_target};
 use crate::services::file_icons;
 use crate::services::file_tree::TreeRow;
 use crate::ui::icon_path;
@@ -210,18 +210,24 @@ fn sticky_dir_row(
     })
     .child(tree_right_click(&weak_menu, row))
     .drag_over::<TreeDrag>(move |style, drag, _, _| {
-        if drag_move_target(&drag.path, drag.is_dir, &drag_row_path, true).is_some() {
+        // 多选拖拽任一条目有真实移动即亮（rows.rs 行侧同语义）
+        let any = drag_items(&drag).iter().any(|(src, src_is_dir)| {
+            drag_move_target(src, *src_is_dir, &drag_row_path, true).is_some()
+        });
+        if any {
             style.bg(rgb(theme::theme().bg_hover))
         } else {
             style
         }
     })
     .on_drop::<TreeDrag>(move |drag, _, cx| {
-        let Some(dst) = drag_move_target(&drag.path, drag.is_dir, &drop_row_path, true) else {
-            return;
-        };
         let _ = weak_drop.update(cx, |c, cx| {
-            c.tree_move_commit(&drag.path, drag.is_dir, &dst, cx);
+            // 标记集成员 = 整组逐条判定落点（rows.rs 行侧同语义）
+            for (src, src_is_dir) in drag_items(&drag) {
+                if let Some(dst) = drag_move_target(&src, src_is_dir, &drop_row_path, true) {
+                    c.tree_move_commit(&src, src_is_dir, &dst, cx);
+                }
+            }
         });
     })
     .into_any_element()

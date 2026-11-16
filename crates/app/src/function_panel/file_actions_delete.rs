@@ -6,24 +6,45 @@
 use crate::*;
 
 impl Chat {
-    /// 「删除」第一步：挂统一确认浮层（overlay::confirm，居中）。
-    pub(crate) fn confirm_tree_delete(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    /// 「删除」第一步（021 多选版）：待删集合 = Zed
+    /// `disjoint_effective_entries_excluding_roots` 语义——动作对象集
+    /// （[`Chat::tree_effective_sel`]，合并规则见 selection.rs）先剪掉被
+    /// 标记祖先目录覆盖的子孙（删父已连带），再剔除项目根。右键折叠保证
+    /// 集合非空；兜底落菜单槽路径。
+    pub(crate) fn confirm_tree_delete_from_slot(&mut self, slot: PathBuf, cx: &mut Context<Self>) {
+        let mut targets = self.tree_effective_sel();
+        if let Some(cwd) = self.ws.cwd.as_deref() {
+            targets.retain(|p| !crate::same_path(p, cwd));
+        }
+        targets = crate::function_panel::file_tree::tree_disjoint_sel(&targets);
+        if targets.is_empty() {
+            targets.push(slot);
+        }
+        self.confirm_tree_delete(targets, cx);
+    }
+
+    /// 「删除」第一步：挂统一确认浮层（overlay::confirm，居中）。单条入口
+    /// （自动化 op / psp 文件行）直接给定集合。
+    pub(crate) fn confirm_tree_delete(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         self.dlg.tree_menu = None;
         self.dlg.editor_menu = None;
-        self.dlg.tree_confirm_del = Some(path);
+        self.dlg.tree_confirm_del = Some(paths);
         cx.notify();
     }
 
     /// 删除确认的「确认」键（UI 按钮与 file.delete_confirm 自动化 op 同一
-    /// 方法）：取槽内路径、清槽、再 commit——取/清都在这一个方法里做，
+    /// 方法）：取槽内集合、清槽、再逐条 commit——取/清都在这一个方法里做，
     /// 杜绝「回调先清槽、commit 再 take 取到空」的时序（文件树删除从未
-    /// 生效过的根因）。
+    /// 生效过的根因）。逐条复用单条机（根护栏/在飞去重/后台回收站/
+    /// applied 收尾各自独立）。
     pub(crate) fn tree_delete_confirm_commit(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.dlg.tree_confirm_del.clone() else {
+        let Some(paths) = self.dlg.tree_confirm_del.clone() else {
             return;
         };
         self.dlg.tree_confirm_del = None;
-        self.tree_delete_commit(&path, cx);
+        for path in paths {
+            self.tree_delete_commit(&path, cx);
+        }
     }
 
     /// 确认后真删：trash crate 送回收站（Windows 回收站 / macOS 废纸篓，
@@ -119,6 +140,10 @@ impl Chat {
         self.ws
             .expanded_dirs
             .retain(|d| !(same_path(d, path) || d.starts_with(path)));
+        // 021 多选标记集清理：被删条目（目录连子树）出集
+        self.ws
+            .tree_marked
+            .retain(|m| !(same_path(m, path) || m.starts_with(path)));
         // 021 Pin 收藏清理：被删条目（目录连子树）出收藏夹
         let pins_before = self.ws.pinned.len();
         self.ws
