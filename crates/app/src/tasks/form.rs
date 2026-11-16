@@ -10,9 +10,9 @@ use crate::i18n::{tf, tr};
 use crate::tasks::INTERVALS;
 use crate::tasks::popup::time_pick;
 use crate::tasks::popup_slot;
-use crate::ui::icon;
 use crate::ui::kit::{Btn, config_button};
 use crate::ui::tokens::{btn, radius, space};
+use crate::ui::{icon, icon_hover};
 
 pub(crate) fn form_head(
     chat: &Chat,
@@ -479,10 +479,11 @@ pub(crate) fn kind_block(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    window: &gpui::Window,
     cx: &gpui::Context<Chat>,
 ) -> Vec<AnyElement> {
     if chat.tasks.page.kind_agent {
-        vec![agent_block(chat, weak, t, cx)]
+        agent_block(chat, weak, t, window, cx)
     } else {
         script_block(chat, weak, t)
     }
@@ -532,24 +533,20 @@ fn tools_display(key: &str) -> String {
     }
 }
 
-/// Agent 指令 composer 形制（max-w 620：textarea + **InputPanel 操作栏**：
-/// 项目/工具档/扩展/MCP 统计 …… 模型/思考——HTML cm-bar 同序）。
+/// Agent 块（2026-11-16 拍板）：【项目】chip 行（新会话页 action_bar 项目
+/// 组件同款，挪到输入面板上方）+【指令】composer 胶囊（复用新会话页输入框
+/// 形制：去发送钮、输入区 10 行 ≈ 最小高 +200px，操作栏 = +/工具档/扩展/MCP
+/// …… 模型/思考，原项目 pill 移除——项目独立成行）。
 fn agent_block(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    window: &gpui::Window,
     cx: &gpui::Context<Chat>,
-) -> AnyElement {
+) -> Vec<AnyElement> {
     let page = &chat.tasks.page;
     let desc = page.desc.clone().expect("page open ensures inputs");
-
-    let proj_label = page
-        .project
-        .as_ref()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| tr("task.project").to_string());
-    // InputPanel 同源统计（HTML 两颗 stat pill）：扩展 = 会话清单数，
-    // MCP = 全局启用数（mcp_button 同读点）
+    // InputPanel 同源统计：扩展 = 会话清单数，MCP = 全局启用数
     let ext_n = chat.rt().read(cx).ext_sources.len();
     let mcp_n = chat
         .cfg
@@ -557,86 +554,145 @@ fn agent_block(
         .iter()
         .filter(|s| s.scope == pi_link::mcp::Scope::Global && s.enabled)
         .count();
-    let weak_proj = weak.clone();
+    let focused = desc.read(cx).focus_handle_in(cx).is_focused(window);
 
-    field(
-        "task.instr",
-        div()
-            .w_full()
-            .border_1()
-            .border_color(rgb(t.border))
-            .rounded(px(radius::MODAL))
-            .bg(rgb(t.bg_panel))
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .child(div().child(desc))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::SP1))
-                    .p(px(space::SP2))
-                    .px(px(space::SP3))
-                    // 项目钮：自身开 ProjectPicker（截断不冒泡——行内其余
-                    // 钮各有菜单语义，2026-11-15 截图 bug 根因即冒泡误开）
-                    .child(
-                        crate::session::input::bar_trigger(
-                            "task-pill-project",
-                            Some("folder"),
-                            &proj_label,
-                            true,
-                            t.text_muted,
-                            true,
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            move |_, _, cx| {
-                                cx.stop_propagation();
-                                let _ = weak_proj.update(cx, |c, cx| {
-                                    c.tasks.page.popup = None;
-                                    c.open_project_picker_for_task(cx);
-                                });
-                            },
-                        ),
-                    )
-                    .child(bar_pill(
-                        Some(popup_slot::TIER),
-                        weak,
-                        chat,
-                        "task-pill-tier",
-                        Some("wrench"),
-                        tools_display(page.tools),
-                        t,
-                    ))
-                    .child(stat_pill("task-pill-ext", "plug", ext_n, t))
-                    .child(stat_pill("task-pill-mcp", "server", mcp_n, t))
-                    .child(div().flex_1())
-                    .child(bar_pill(
-                        Some(popup_slot::MODEL),
-                        weak,
-                        chat,
-                        "task-pill-model",
-                        None,
-                        page.model
-                            .as_ref()
-                            .map(|(p, m)| format!("{p}/{m}"))
-                            .unwrap_or_else(|| tr("task.model_inherit").to_string()),
-                        t,
-                    ))
-                    .child(bar_pill(
-                        Some(popup_slot::THINKING),
-                        weak,
-                        chat,
-                        "task-pill-thinking",
-                        Some("lightbulb"),
-                        page.thinking.to_string(),
-                        t,
-                    )),
-            )
-            .into_any_element(),
-        true,
-    )
+    // 项目 chip（新会话 action_bar ns-open-project 同款：folder 图标 +
+    // 项目名/选择项目，h28 hover 洗底；点击开 ProjectPicker 回填表单）
+    let proj_label = page
+        .project
+        .as_ref()
+        .and_then(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .filter(|n| !n.is_empty())
+        })
+        .unwrap_or_else(|| tr("action.select_project").to_string());
+    let weak_proj = weak.clone();
+    let proj_chip = div()
+        .id("task-open-project")
+        .h(px(btn::MD_H))
+        .px(px(space::SP4))
+        .flex()
+        .items_center()
+        .gap(px(space::SP3))
+        .rounded(px(radius::CARD))
+        .cursor_pointer()
+        .text_size(ui_size(12.))
+        .text_color(rgb(t.text_muted))
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = weak_proj.update(cx, |c, cx| {
+                c.tasks.page.popup = None;
+                c.open_project_picker_for_task(cx);
+            });
+        })
+        .child(icon("folder", crate::ui::tokens::icon::MD, t.text_muted))
+        .child(SharedString::from(proj_label))
+        .into_any_element();
+
+    // composer 胶囊（InputPanel 同构：rounded16 + 焦点 accent 框 + shadow）
+    let plus = trg_wrap(popup_slot::PLUS, weak, chat, plus_button(t));
+    let capsule = div()
+        .id("task-composer")
+        .w_full()
+        .rounded(px(16.))
+        .border_1()
+        .border_color(rgb(if focused { t.accent } else { t.border }))
+        .bg(rgb(t.bg))
+        .shadow_lg()
+        .flex()
+        .flex_col()
+        .pt(px(space::SP5))
+        .pb(px(space::SP3))
+        // 输入区：desc 实体 flat 多行（10 行 ≈ 输入最小高 +200px）
+        .child(
+            div()
+                .pt(px(space::SP1))
+                .pb(px(space::SP1))
+                .px(px(space::SP3))
+                .child(desc),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .px(px(space::SP5))
+                // 左组：+（统一菜单技能页）/工具档/扩展/MCP，间距 15（InputPanel 同）
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(15.))
+                        .child(plus)
+                        .child(bar_pill(
+                            Some(popup_slot::TIER),
+                            weak,
+                            chat,
+                            "task-pill-tier",
+                            Some("wrench"),
+                            tools_display(page.tools),
+                            t,
+                        ))
+                        .child(stat_pill("task-pill-ext", "plug", ext_n, t))
+                        .child(stat_pill("task-pill-mcp", "server", mcp_n, t)),
+                )
+                // 右组：模型/思考（无发送——任务表单由【保存】提交）
+                .child(
+                    div()
+                        .ml_auto()
+                        .flex()
+                        .items_center()
+                        .gap(px(15.))
+                        .child(bar_pill(
+                            Some(popup_slot::MODEL),
+                            weak,
+                            chat,
+                            "task-pill-model",
+                            None,
+                            page.model
+                                .as_ref()
+                                .map(|(p, m)| format!("{p}/{m}"))
+                                .unwrap_or_else(|| tr("task.model_inherit").to_string()),
+                            t,
+                        ))
+                        .child(bar_pill(
+                            Some(popup_slot::THINKING),
+                            weak,
+                            chat,
+                            "task-pill-thinking",
+                            Some("lightbulb"),
+                            page.thinking.to_string(),
+                            t,
+                        )),
+                ),
+        );
+
+    vec![
+        field("task.project", proj_chip, false),
+        field("task.instr", capsule.into_any_element(), true),
+    ]
+}
+
+/// 「+」钮（InputPanel 图片钮同款形制：ml3 / 28×28 / rounded4 / plus LG，
+/// hover 洗底；点击 = 统一菜单技能页锚定弹层，点行插 `/skill:name`）。
+fn plus_button(t: &'static Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("task-pill-plus")
+        .ml(px(3.))
+        .size(px(btn::MD_H))
+        .rounded(px(space::SP2))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(t.text_muted))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .child(icon_hover(
+            "plus",
+            crate::ui::tokens::icon::LG,
+            t.text_muted,
+        ))
 }
 
 /// 脚本块（field 行 + 说明行）：sel-btn + 浏览…，note 带扩展名校验错误。

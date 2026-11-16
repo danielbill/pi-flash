@@ -37,7 +37,7 @@ use crate::ui::tooltip::WithTip;
 pub(crate) fn page(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
-    _window: &mut gpui::Window,
+    window: &gpui::Window,
     cx: &gpui::Context<Chat>,
 ) -> AnyElement {
     let t = theme();
@@ -75,7 +75,7 @@ pub(crate) fn page(
 
     let body = match page.tab {
         PAGE_TAB_LOG => log_body(chat, weak, t),
-        _ => tasks_body(chat, weak, t, cx),
+        _ => tasks_body(chat, weak, t, window, cx),
     };
 
     div()
@@ -266,6 +266,7 @@ fn tasks_body(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    window: &gpui::Window,
     cx: &gpui::Context<Chat>,
 ) -> AnyElement {
     let sel = chat.tasks.page.sel.clone();
@@ -358,7 +359,7 @@ fn tasks_body(
                 .flex_1()
                 .child(field("task.type", type_seg(chat, weak, t), false))
                 .child(field("task.sched", sched_row(chat, weak, t), false))
-                .children(kind_block(chat, weak, t, cx)),
+                .children(kind_block(chat, weak, t, window, cx)),
         );
 
     div()

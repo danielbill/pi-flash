@@ -151,6 +151,7 @@ pub(crate) fn menus_overlay(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     window: &gpui::Window,
+    cx: &gpui::Context<Chat>,
 ) -> Option<AnyElement> {
     let slot = chat.tasks.page.popup?;
     let t = theme();
@@ -165,6 +166,7 @@ pub(crate) fn menus_overlay(
         popup_slot::MODEL => 380.,
         popup_slot::TIER => 320.,
         popup_slot::THINKING => 320.,
+        popup_slot::PLUS => 380.,
         _ => return None,
     };
     let pos = crate::session::picker_shell::pill_anchor_edges(
@@ -412,6 +414,53 @@ pub(crate) fn menus_overlay(
                         .children(minute_items),
                 )
                 .into_any_element()
+        }
+        popup_slot::PLUS => {
+            // 「+」统一菜单技能页（InputPanel + 同语义）：技能清单，
+            // 点行把 `/skill:name ` 追加进指令输入
+            let skills: Vec<_> = chat
+                .slash_commands(cx)
+                .iter()
+                .filter(|c| c.name.starts_with("skill:"))
+                .cloned()
+                .collect();
+            if skills.is_empty() {
+                crate::session::picker_shell::empty_row(tr("agents.pick_empty").into())
+            } else {
+                let rows: Vec<AnyElement> = skills
+                    .iter()
+                    .map(|c| {
+                        let weak = weak.clone();
+                        let name = c.name.clone();
+                        let label = name.strip_prefix("skill:").unwrap_or(&name).to_string();
+                        let desc = c.description.clone();
+                        pill_row(
+                            &weak,
+                            move |c, cx| {
+                                c.tasks.page.popup = None;
+                                if let Some(i) = c.tasks.page.desc.clone() {
+                                    i.update(cx, |inp, icx| {
+                                        let mut v = inp.value().to_string();
+                                        if !v.is_empty() && !v.ends_with(' ') && !v.ends_with('\n')
+                                        {
+                                            v.push(' ');
+                                        }
+                                        v.push_str(&format!("/{name} "));
+                                        inp.set_value(v, icx);
+                                    });
+                                }
+                            },
+                            crate::session::menu_rows::PillRow {
+                                key: "skill",
+                                label,
+                                desc,
+                                active: false,
+                            },
+                        )
+                    })
+                    .collect();
+                list_card(rows, 300.)
+            }
         }
         _ => return None,
     };

@@ -91,6 +91,27 @@ RESULT: fail=0。
 
 RESULT: fail=0。
 
+## 执行记录 4（2026-11-16 续：表单四条拍板）
+
+①Agent 字段序 = 名称/类型/定时/**项目**/指令；②脚本 = 名称/类型/定时/
+脚本（不变）；③项目组件 = 新会话页 action_bar 项目 chip 同款（folder +
+项目名/选择项目，h28 hover 洗底），挪到输入面板上方独立 field 行；
+④指令框 = 新会话页 composer 胶囊复用：rounded16 + 焦点 accent 框 +
+shadow、去发送钮、输入 10 行 ≈ +200px，操作栏 = +/工具档/扩展/MCP ……
+模型/思考（原项目 pill 删除）；＋号 = 统一菜单技能页锚定弹层
+（popup_slot::PLUS，点行插 `/skill:name ` 进指令，空态「暂无可选项」）。
+
+```
+✓ Agent 表单五行序（截图核对）
+✓ 项目 chip 点击开 ProjectPicker → Enter 默认行 → chip 显「20观宏知微」
+✓ + 钮 → popup=10 锚定弹层（无项目上下文 = 暂无可选项）
+✓ composer 点击聚焦 → 胶囊边框 accent
+✓ 脚本模式四行序 + note
+✓ 三仓测试全绿 + check_ui_raw OK
+```
+
+RESULT: fail=0。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；

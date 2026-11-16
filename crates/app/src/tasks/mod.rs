@@ -116,6 +116,8 @@ pub(crate) mod popup_slot {
     pub(crate) const MODEL: u8 = 7;
     pub(crate) const TIER: u8 = 8;
     pub(crate) const THINKING: u8 = 9;
+    /// 指令 composer「+」（统一菜单技能页：点行插 `/skill:name` 进 prompt）
+    pub(crate) const PLUS: u8 = 10;
 }
 
 /// 触发钮 bounds 槽位组（paint 期 tracker 每帧覆盖；独立槽位避免与
@@ -131,6 +133,7 @@ pub(crate) struct TaskAnchors {
     pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub plus: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl TaskAnchors {
@@ -147,6 +150,7 @@ impl TaskAnchors {
             popup_slot::MODEL => &self.model,
             popup_slot::THINKING => &self.thinking,
             popup_slot::TIER => &self.tier,
+            popup_slot::PLUS => &self.plus,
             _ => &self.freq,
         }
     }
@@ -294,12 +298,13 @@ impl Chat {
             self.tasks.page.name = Some(cx.new(|cx| TextInput::new(cx)));
         }
         if self.tasks.page.desc.is_none() {
-            // 指令 composer 容器提供 chrome（flat 不出双层框），6 行 auto_grow
+            // 指令 composer 容器提供 chrome（flat 不出双层框）；10 行 ≈
+            // InputPanel 输入最小高 + 200px（2026-11-16 拍板）
             self.tasks.page.desc = Some(cx.new(|cx| {
                 TextInput::new(cx)
                     .placeholder(crate::i18n::tr("task.desc_ph"))
                     .flat()
-                    .lines(6)
+                    .lines(10)
             }));
         }
     }
