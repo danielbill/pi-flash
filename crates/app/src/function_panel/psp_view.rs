@@ -339,7 +339,7 @@ fn psp_ctrl_bar(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = w_tasks.update(cx, |c, cx| c.open_tasks_page(cx));
                     })
-                    .child(icon("clock-4", crate::ui::tokens::icon::LG))
+                    .child(icon("calendar-clock", crate::ui::tokens::icon::LG))
                     .child(tr("task.entry")),
             )
         })

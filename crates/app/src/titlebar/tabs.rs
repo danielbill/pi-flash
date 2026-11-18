@@ -114,7 +114,7 @@ pub(super) fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::
                 tr("task.manager").into(),
                 None,
                 false,
-                Some("clock-4"),
+                Some("calendar-clock"),
                 ContentView::Tasks,
             ),
             // PF 插件面板（beads 360）：标题 = 清单 title（随语言），图标 puzzle

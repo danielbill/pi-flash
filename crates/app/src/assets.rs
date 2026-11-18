@@ -174,6 +174,10 @@ assets! {
     // 046 任务列表行类型 icon（脚本行，lucide file-code；agent 行复用 bot
     // ——任务管理-原型.html sp-li tico 同源）
     "icons/file-code.svg",
+    // 046 任务入口 icon（psp 控制栏「任务」钮 + PanelTab::Tasks 页签；
+    // 任务管理-原型.html pc-btn/c-tab 的日历时钟逐字落资产——2026-11-17
+    // 用户拍板「icon 用设计 html 的」）
+    "icons/calendar-clock.svg",
     // v64 topbar：会话标题 icon + ⋯ 菜单（系统提示词 / 工具）
     "icons/message-square-more.svg",
     // 016 topbar：置顶会话标签 icon（lucide bot-message-square）

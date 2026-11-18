@@ -149,6 +149,27 @@ RESULT: fail=0。
 不出 skill: 清单；行几何 = menu.rs slash_menu_view card 逐值复刻，插入
 链路与原 pill_row 版逐字同（set_value 拼接）。
 
+## 执行记录 6（2026-11-17 续：icon 指认纠偏 + 按钮文案紧排）
+
+用户截图纠偏上一条的第①项：「icon 用设计 html 的」指的是**任务入口
+icon**（psp 控制栏「任务」钮 + 「任务管理」页签）——设计稿为日历时钟
+（pc-btn/c-tab 同一枚，`M21 7.338…` 日历叠时钟），原用 clock-4 光秃钟面
+不算数。另：按钮「不对齐子代理」实为文案——task.save「保 存」带全角
+空格撑宽一圈，子代理 agents.save 是紧排「保存」。
+
+- 新资产 `icons/calendar-clock.svg`（设计稿 path 逐字落资产），替换
+  psp_view「任务」钮 + titlebar PanelTab::Tasks 页签两处（clock-4 仍留
+  子代理时长行用）；task.create「创 建」/task.save「保 存」去空格紧排。
+
+```
+✓ psp「任务」钮 icon = 日历时钟（像素裁切核对 = 用户截图 3）
+✓ 「任务管理」页签 icon = 日历时钟
+✓ 保存钮紧排「保存」，与新建/子代理同宽同款
+✓ app 测试 + check_arch/ui-raw 全绿
+```
+
+RESULT: fail=0。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；

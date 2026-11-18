@@ -941,8 +941,10 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.browse", "浏览…", "瀏覽…", "Browse…"),
     ("task.script_note", "运行目录=脚本所在目录;超时 30 分钟自动终止", "執行目錄=腳本所在目錄;逾時 30 分鐘自動終止", "Runs in the script's folder; killed after 30 min"),
     ("task.script_err_ext", "不支持的脚本扩展名", "不支援的腳本副檔名", "Unsupported script extension"),
-    ("task.create", "创 建", "建 立", "Create"),
-    ("task.save", "保 存", "儲 存", "Save"),
+    ("task.create", "创建", "建立", "Create"),
+    // 2026-11-17 拍板：按钮对齐子代理页（agents.save「保存」紧排同款，
+    // 去全角空格——空格曾把保存钮撑宽一圈，与新建钮不成对）
+    ("task.save", "保存", "儲存", "Save"),
     ("task.cancel", "取消", "取消", "Cancel"),
     ("task.delete", "删除", "刪除", "Delete"),
     ("task.delete_confirm", "删除任务「{title}」?运行中的会先中止。", "刪除任務「{title}」？執行中的會先中止。", "Delete task \"{title}\"? A running run is aborted first."),
