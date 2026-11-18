@@ -36,10 +36,10 @@ use crate::ui::tooltip::WithTip;
 
 /// 任务管理页主体（content.rs `ContentView::Tasks` 分支）。
 pub(crate) fn page(
-    chat: &Chat,
+    chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     window: &gpui::Window,
-    cx: &gpui::Context<Chat>,
+    cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let t = theme();
     let page = &chat.tasks.page;
@@ -54,8 +54,8 @@ pub(crate) fn page(
         .border_color(rgba(theme::border_alpha(t, 0x45)))
         .flex()
         .items_center()
-        .px(px(12.))
         .pl(px(16.))
+        .pr(px(15.))
         .child(pipe_tabs(page.tab, &weak_tab, t))
         .child(
             div()
@@ -271,11 +271,11 @@ fn task_row(
 // ---------------------------------------------------------------------------
 
 fn tasks_body(
-    chat: &Chat,
+    chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     window: &gpui::Window,
-    cx: &gpui::Context<Chat>,
+    cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let sel = chat.tasks.page.sel.clone();
 

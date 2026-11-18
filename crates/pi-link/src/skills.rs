@@ -37,14 +37,27 @@ pub fn discover_skills(
     let mut dirs: Vec<(PathBuf, SkillScope)> = vec![
         (cwd.join(".pi").join("skills"), SkillScope::Project),
         (cwd.join(".agents").join("skills"), SkillScope::Project),
-        (agent_dir.join("skills"), SkillScope::Global),
-        (home_agents_dir.to_path_buf(), SkillScope::Global),
     ];
     if let Some(extra) = settings.get("skills").and_then(|v| v.as_array()) {
         for p in extra.iter().filter_map(|v| v.as_str()) {
             dirs.push((resolve_setting_path(cwd, agent_dir, p), SkillScope::Project));
         }
     }
+    dirs.push((agent_dir.join("skills"), SkillScope::Global));
+    dirs.push((home_agents_dir.to_path_buf(), SkillScope::Global));
+    discover_in_dirs(dirs)
+}
+
+/// 仅全局目录（agent dir skills + home .agents/skills）的技能发现——
+/// 无项目语境的 `/` 菜单兜底用（启动一次性装载，渲染路径不扫盘）。
+pub fn discover_global_skills(agent_dir: &Path, home_agents_dir: &Path) -> Vec<SkillEntry> {
+    discover_in_dirs(vec![
+        (agent_dir.join("skills"), SkillScope::Global),
+        (home_agents_dir.to_path_buf(), SkillScope::Global),
+    ])
+}
+
+fn discover_in_dirs(dirs: Vec<(PathBuf, SkillScope)>) -> Vec<SkillEntry> {
     let mut out: Vec<SkillEntry> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for (dir, scope) in dirs {

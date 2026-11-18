@@ -170,6 +170,44 @@ icon**（psp 控制栏「任务」钮 + 「任务管理」页签）——设计�
 
 RESULT: fail=0。
 
+## 执行记录 7（2026-11-17 四条拍板：InputPanel 直接搬 + 全局技能兜底 + 增高）
+
+用户令「把 InputPanel 直接搬上来，只改高度/宽度、去发送钮」——原 tasks 侧
+手搓操作栏/菜单整链退役（popup_slot::MODEL/TIER/THINKING/PLUS +
+TaskAnchors 四槽 + composer 槽 + plus_menu 四件 + pill_row/model_menu_body
+/tasks 接线），【指令】= session::input::input_area 嵌入态：
+
+- 嵌入态仅四差异：统一菜单限高按胶囊 bounds 测距钳（列内净空 130，
+  上限 620）、编辑区 min_h 300、宽度不吃内容列封顶、无发送/停止钮；
+  Enter/Ctrl+Enter 在任务页 = 换行（不 send，compose.rs 实体回调按
+  content_view 关门）；任务页打字不落会话草稿盘（drafts save_throttled
+  同门）；
+- 模型/思考/工具档菜单读写分支到 tasks.page（pill.rs / model_picker 三
+  处 task_form 分支；工具档不走重绑链）；模型 pill 未选时按 InputPanel
+  同链显示实际默认模型名（用户令：不出「继承新会话默认」字样）；
+- ext/MCP = 真 picker（勾选语义同会话区：ext=会话清单、MCP=全局
+  mcp.json）；「技能出不来」修 = Globals 增 global_skill_commands
+  （pi-link discover_global_skills 全局目录启动一次性装载），
+  slash_commands 兜底链无条件并入（项目同名让位）——未选项目
+  （cwd=None）时 `/` 菜单此前给空表是根因；
+- 按钮右缘对齐：页头 pr 12→15（与详情列 15 同值，新建/保存右缘一线）。
+
+```
+✓ 真 InputPanel 上墙（bar=真 pills/环，无发送钮；像素核对）
+✓ 模型菜单 = 原菜单（无「继承」行；点行落 page.model，pill 显
+  DeepSeek V4.1 Flash；新建复位回默认链显示）
+✓ ext/MCP 菜单弹出（选择扩展合计 5,565 / 选择 MCP 已开启 1/1）
+✓ + 菜单 = 真统一菜单（搜索栏+tab 条+打开文件+Tab 提示），贴胶囊
+  上方限高不出屏（净空 130 修正后搜索栏完整）
+✓ `/` 出全局技能（image-gen/jev/chart-visualization，cwd=None 兜底链）
+✓ Enter 留在任务页不发送；建任务端到端 defs=1 sel 回填
+✓ 胶囊 min_h 300 / 菜单上限 620（用户令各 +100）
+✓ 新建/保存右缘齐（页头 pr 15）
+✓ 三仓 529/298/59 全绿 + check_arch/ui-raw OK
+```
+
+RESULT: fail=0。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；

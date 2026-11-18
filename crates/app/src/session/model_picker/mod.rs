@@ -270,8 +270,13 @@ impl Chat {
             .get(sel)
             .map(|m| (m.provider.clone(), m.id.clone()));
         if let Some((provider, id)) = pick {
-            self.rt()
-                .update(cx, |r, cx| r.select_model(provider, id, cx));
+            // 任务页嵌入态：落任务表单字段（spec）
+            if self.layout.content_view == crate::ContentView::Tasks {
+                self.tasks.page.model = Some((provider, id));
+            } else {
+                self.rt()
+                    .update(cx, |r, cx| r.select_model(provider, id, cx));
+            }
         }
         self.dlg.model_picker = None;
         cx.notify();

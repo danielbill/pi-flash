@@ -4,6 +4,8 @@
 use super::*;
 
 /// 控件行：左 = 图片 + 工具预设；右 = 上下文环 + 模型 + 思考 + 发送/停止。
+/// `task_form` = 046 任务页嵌入态：右组**无发送/停止**（任务由表单【保存】
+/// 提交，2026-11-17 拍板），其余 pill/环原样。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn composer_bar(
     chat: &mut Chat,
@@ -15,6 +17,7 @@ pub(crate) fn composer_bar(
     thinking_label: &str,
     tools_label: &str,
     ctx_pct: Option<f64>,
+    task_form: bool,
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {
@@ -169,60 +172,62 @@ pub(crate) fn composer_bar(
     );
     // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
     // 左移 5px、上移 13px（034 胶囊 pb 12→7 后底距只剩 7，补上 5 追平右边
-    // 距 12——2026-11-08 用户定夺）
-    right = right.child(
-        div()
-            .id("send")
-            .mr(px(2.)) // 右边距=栏padding10+2=12（与下边距对齐）
-            .mt(px(-13.))
-            .mb(px(5.)) // 行高守恒：36-13+5=28 与行内 pill 齐平，行高不被撑高
-            .size(px(36.)) // 发送/停止共用直径（用户微调处）
-            .rounded(if running { px(9.) } else { px(18.) })
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(!locked, |d| d.cursor_pointer())
-            .bg(rgb(if locked {
-                // 压缩锁：恒灰，不给"可点"的暗示
-                t.bg_selected
-            } else if running {
-                t.accent // 停止态外圈=主题色（用户定稿，非深色）
-            } else if can_queue {
-                t.accent
-            } else {
-                t.bg_selected
-            }))
-            .hover(move |s| if locked { s } else { s.opacity(0.9) })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                    if this.rt().read(cx).compacting {
-                        return;
-                    }
-                    // 与按钮渲染同源：agent_running（事件驱动），快照
-                    // is_streaming 恒 false 会把"停止"点成"发送"；
-                    // `!` bash 执行中点它 = abort_bash
-                    let bash_running = this.rt().read(cx).bash_running;
-                    if bash_running {
-                        this.abort_bash(cx);
-                    } else if this.rt().read(cx).agent_running {
-                        this.abort_stream(cx);
-                    } else {
-                        this.send_input(cx);
-                    }
+    // 距 12——2026-11-08 用户定夺）。任务嵌入态整颗不出
+    if !task_form {
+        right = right.child(
+            div()
+                .id("send")
+                .mr(px(2.)) // 右边距=栏padding10+2=12（与下边距对齐）
+                .mt(px(-13.))
+                .mb(px(5.)) // 行高守恒：36-13+5=28 与行内 pill 齐平，行高不被撑高
+                .size(px(36.)) // 发送/停止共用直径（用户微调处）
+                .rounded(if running { px(9.) } else { px(18.) })
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(!locked, |d| d.cursor_pointer())
+                .bg(rgb(if locked {
+                    // 压缩锁：恒灰，不给"可点"的暗示
+                    t.bg_selected
+                } else if running {
+                    t.accent // 停止态外圈=主题色（用户定稿，非深色）
+                } else if can_queue {
+                    t.accent
+                } else {
+                    t.bg_selected
+                }))
+                .hover(move |s| if locked { s } else { s.opacity(0.9) })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                        if this.rt().read(cx).compacting {
+                            return;
+                        }
+                        // 与按钮渲染同源：agent_running（事件驱动），快照
+                        // is_streaming 恒 false 会把"停止"点成"发送"；
+                        // `!` bash 执行中点它 = abort_bash
+                        let bash_running = this.rt().read(cx).bash_running;
+                        if bash_running {
+                            this.abort_bash(cx);
+                        } else if this.rt().read(cx).agent_running {
+                            this.abort_stream(cx);
+                        } else {
+                            this.send_input(cx);
+                        }
+                    }),
+                )
+                .child(if running {
+                    // 停止方块
+                    div()
+                        .size(px(12.))
+                        .rounded(px(2.5))
+                        .bg(rgb(t.accent_contrast))
+                        .into_any_element()
+                } else {
+                    icon("arrow-up", 15., t.accent_contrast)
                 }),
-            )
-            .child(if running {
-                // 停止方块
-                div()
-                    .size(px(12.))
-                    .rounded(px(2.5))
-                    .bg(rgb(t.accent_contrast))
-                    .into_any_element()
-            } else {
-                icon("arrow-up", 15., t.accent_contrast)
-            }),
-    );
+        );
+    }
     bar = bar.child(right);
     bar
 }

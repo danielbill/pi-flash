@@ -213,7 +213,15 @@ pub(crate) fn view(
     // 活进程下 pending 恒空（走 SetModel），仍以 state 为准。都没有（全新
     // 草稿）→ 兜底到 spawn 真会用的默认（星标 / pi 默认），与 pill 同源：
     // 新会话一打开 ✓ 就在默认行上（用户 2026-11-02 定稿）
-    let current = {
+    let task_form = chat.layout.content_view == crate::ContentView::Tasks;
+    let current = if task_form {
+        // 任务页嵌入态：✓ = 任务表单模型（None = 继承，无 ✓）
+        chat.tasks
+            .page
+            .model
+            .as_ref()
+            .map(|(p, id)| format!("{p}/{id}"))
+    } else {
         let r = chat.rt().read(cx);
         r.pending_model
             .as_ref()
@@ -252,7 +260,12 @@ pub(crate) fn view(
     }
 
     let pick_action: ModelPickAction = std::rc::Rc::new(|c: &mut Chat, cx, dp, di| {
-        c.rt().update(cx, |r, cx| r.select_model(dp, di, cx));
+        // 任务页嵌入态：落任务表单字段（spec），不碰会话运行时
+        if c.layout.content_view == crate::ContentView::Tasks {
+            c.tasks.page.model = Some((dp.to_string(), di.to_string()));
+        } else {
+            c.rt().update(cx, |r, cx| r.select_model(dp, di, cx));
+        }
         // picking is also the dismissal gesture
         c.dlg.model_picker = None;
         cx.notify();

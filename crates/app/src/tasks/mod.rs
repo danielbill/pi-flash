@@ -77,9 +77,9 @@ pub(crate) struct TaskPage {
     pub tab: u8,
     /// 左列表选中 def（None = 新建空态，表单清空）。
     pub sel: Option<String>,
-    // ---- 表单字段（选中回填 / 新建清空共用一套）
+    // ---- 表单字段（选中回填 / 新建清空共用一套）。指令不在此——
+    // 2026-11-17 拍板 InputPanel 直接嵌入，prompt 即 chat.composer.input
     pub name: Option<Entity<TextInput>>,
-    pub desc: Option<Entity<TextInput>>,
     /// false = 脚本、true = Agent（HTML 原稿新建默认 Agent）。
     pub kind_agent: bool,
     pub unit_ix: usize,
@@ -103,10 +103,6 @@ pub(crate) struct TaskPage {
     pub anchors: TaskAnchors,
     /// 移除确认（overlay::confirm 槽：(def_id, title)）。
     pub confirm_del: Option<(String, String)>,
-    /// 「+」统一菜单搜索词镜像（slash_menu_view 万能搜索同语义；空 = 不过滤）
-    pub plus_query: String,
-    /// 「+」统一菜单搜索框实体（懒创建；ensure_menu_search 同款）
-    pub plus_search: Option<Entity<TextInput>>,
 }
 
 /// 锚定菜单槽位号（[`TaskPage::popup`]）。
@@ -117,11 +113,8 @@ pub(crate) mod popup_slot {
     pub(crate) const WD: u8 = 4;
     pub(crate) const MDAY: u8 = 5;
     pub(crate) const TIME: u8 = 6;
-    pub(crate) const MODEL: u8 = 7;
-    pub(crate) const TIER: u8 = 8;
-    pub(crate) const THINKING: u8 = 9;
-    /// 指令 composer「+」（统一菜单技能页：点行插 `/skill:name` 进 prompt）
-    pub(crate) const PLUS: u8 = 10;
+    // 模型/工具档/思考/「+」槽位退役（2026-11-17）：指令 = 真 InputPanel，
+    // 那四样菜单走会话区原链（dlg.pill_menu / model_picker / slash menu）
 }
 
 /// 触发钮 bounds 槽位组（paint 期 tracker 每帧覆盖；独立槽位避免与
@@ -134,12 +127,8 @@ pub(crate) struct TaskAnchors {
     pub wd: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub mday: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub time: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    pub tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    pub plus: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    /// 指令 composer 胶囊整体 bounds（非触发钮——PLUS 统一菜单贴胶囊正上方
-    /// 同宽定位用，inputpanel slash_menu 同位；2026-11-17 拍板）
+    /// 指令胶囊（真 InputPanel）bounds——嵌入态 slash 菜单限高测距用
+    /// （菜单挂详情滚动列内，限高须按列内净空，不是全视口）
     pub composer: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
@@ -154,10 +143,6 @@ impl TaskAnchors {
             popup_slot::WD => &self.wd,
             popup_slot::MDAY => &self.mday,
             popup_slot::TIME => &self.time,
-            popup_slot::MODEL => &self.model,
-            popup_slot::THINKING => &self.thinking,
-            popup_slot::TIER => &self.tier,
-            popup_slot::PLUS => &self.plus,
             _ => &self.freq,
         }
     }
@@ -291,64 +276,27 @@ impl Chat {
         window: &gpui::Window,
         cx: &gpui::Context<Self>,
     ) -> bool {
-        [self.tasks.page.name.as_ref(), self.tasks.page.desc.as_ref()]
-            .into_iter()
-            .flatten()
-            .any(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
+        self.tasks
+            .page
+            .name
+            .as_ref()
+            .map(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
+            .unwrap_or(false)
+            || (self.layout.content_view == crate::ContentView::Tasks
+                && self
+                    .composer
+                    .composer
+                    .as_ref()
+                    .is_some_and(|c| c.read(cx).focus_handle_in(cx).is_focused(window)))
     }
 
-    /// 表单文本输入 / 下拉守卫懒创建（aux.market 同款）。
+    /// 表单文本输入懒创建（aux.market 同款）。指令输入 = 真 composer
+    /// （ensure_composer 渲染期懒建），此处无实体要建。
     pub(crate) fn tasks_ensure_inputs(&mut self, cx: &mut Context<Self>) {
         if self.tasks.page.name.is_none() {
             // subagent 表单头同款默认输入（2026-11-16 拍板；label 已带
             // 「名称」，不出占位符）
             self.tasks.page.name = Some(cx.new(|cx| TextInput::new(cx)));
-        }
-        if self.tasks.page.desc.is_none() {
-            // 指令 composer 容器提供 chrome（flat 不出双层框）；10 行 ≈
-            // InputPanel 输入最小高 + 200px（2026-11-16 拍板）
-            self.tasks.page.desc = Some(cx.new(|cx| {
-                TextInput::new(cx)
-                    .placeholder(crate::i18n::tr("task.desc_ph"))
-                    .flat()
-                    .lines(10)
-            }));
-        }
-        self.ensure_tasks_plus_search(cx);
-    }
-
-    /// 「+」统一菜单搜索框实体懒创建（menu.rs ensure_menu_search 同款接线：
-    /// on_change 只镜像值；菜单壳由 tasks/popup.rs 按值过滤技能清单）。
-    pub(crate) fn ensure_tasks_plus_search(&mut self, cx: &mut Context<Self>) {
-        if self.tasks.page.plus_search.is_some() {
-            return;
-        }
-        let weak = cx.entity().downgrade();
-        let input = cx.new(|cx| {
-            TextInput::new(cx)
-                .flat()
-                .text_size(11.)
-                .placeholder(crate::i18n::tr("menu.search_placeholder"))
-        });
-        input.update(cx, |ti, _| {
-            ti.set_on_change(Box::new(move |v, cx| {
-                let _ = weak.update(cx, |c, cx| {
-                    if c.tasks.page.plus_query != v {
-                        c.tasks.page.plus_query.clear();
-                        c.tasks.page.plus_query.push_str(v);
-                        cx.notify();
-                    }
-                });
-            }));
-        });
-        self.tasks.page.plus_search = Some(input);
-    }
-
-    /// 「+」统一菜单搜索复位（开菜单时清旧查询词；menu_dismiss 清搜索同语义）。
-    pub(crate) fn tasks_plus_search_reset(&mut self, cx: &mut Context<Self>) {
-        self.tasks.page.plus_query.clear();
-        if let Some(i) = &self.tasks.page.plus_search {
-            i.update(cx, |ti, cx| ti.set_value(String::new(), cx));
         }
     }
 
@@ -422,9 +370,8 @@ impl Chat {
         if let Some(i) = &self.tasks.page.name {
             i.update(cx, |inp, icx| inp.set_value(row.def.title.clone(), icx));
         }
-        if let Some(i) = &self.tasks.page.desc {
-            i.update(cx, |inp, icx| inp.set_value(desc, icx));
-        }
+        // 指令回填 = 真 composer（InputPanel 嵌入态的输入本体）
+        self.set_input(desc, cx);
         cx.notify();
     }
 
@@ -452,9 +399,7 @@ impl Chat {
         if let Some(i) = &page.name {
             i.update(cx, |inp, icx| inp.set_value(String::new(), icx));
         }
-        if let Some(i) = &page.desc {
-            i.update(cx, |inp, icx| inp.set_value(String::new(), icx));
-        }
+        self.set_input(String::new(), cx);
         cx.notify();
     }
 
@@ -468,13 +413,8 @@ impl Chat {
             .as_ref()
             .map(|i| i.read(cx).value().to_string())
             .unwrap_or_default();
-        let desc = self
-            .tasks
-            .page
-            .desc
-            .as_ref()
-            .map(|i| i.read(cx).value().to_string())
-            .unwrap_or_default();
+        // 指令 = 真 composer 的当前值（InputPanel 嵌入态）
+        let desc = self.composer.input.clone();
         let page = &self.tasks.page;
         let snap = FormSnap {
             name,

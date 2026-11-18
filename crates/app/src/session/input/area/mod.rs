@@ -31,23 +31,68 @@ fn has_menu_trigger(s: &str) -> bool {
 
 /// `hero` = 012 新会话页模式：胶囊走正常流（由新会话页内容簇摆位），
 /// 不再 0 高 + 绝对定位贴聊天区底。
+///
+/// `task_form` = 046 任务页【指令】嵌入态（2026-11-17 用户拍板「InputPanel
+/// 直接搬上来，只改高度/宽度、去发送钮」）：同一组件原样挂任务表单——
+/// 只换四样：统一菜单限高按视口钳（composer 在页中段，520 全高会顶出屏）、
+/// 编辑区最小高 200、宽度不吃内容列宽封顶（随 60% 详情列走）、无发送钮；
+/// 菜单/操作栏/pill 全是会话区同一份。
 pub(crate) fn input_area(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     streaming: bool,
     input_focused: bool,
     hero: bool,
+    task_form: bool,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
-    let can_queue = !chat.composer.input.is_empty() || !chat.composer.pending_images.is_empty();
+    let can_queue =
+        !task_form && (!chat.composer.input.is_empty() || !chat.composer.pending_images.is_empty());
     // 新会话默认值（pi selectInitialModelScope parity：settings 默认模型
     // 在 scope 内 → 用它，否则 scope 首个；思考档 pin > per-model > 全局）
     // ——草稿态（无 state）的 pill 显示就落在它身上，进程起来后由 pi 的
     // get_state 接管。只在 fallback 真会被消费时才算：它每帧全量扫模型
     // 目录（逐模型 format! 拼键 + 排序键），挂会话后模型/思考都有 state
     // 答案，扫描是纯浪费（打字每键一帧，最忌每帧 O(目录)）。
-    let (model_label, thinking_label, tools_label, ctx_pct, compacting) = {
+    let (model_label, thinking_label, tools_label, ctx_pct, compacting) = if task_form {
+        // 任务页：pill 读任务表单状态（tasks/page 字段是写入端，菜单
+        // 分支见 pill.rs / model_picker；任务 spawn 落 spec）。未选模型
+        // 时按 InputPanel 同一条链显示**实际默认模型名**（pending → state
+        // → 新会话默认）——不出「继承」字样（2026-11-17 用户拍板）
+        let page = &chat.tasks.page;
+        let model_label = match page.model.as_ref() {
+            Some((p, id)) => chat.model_display_name(p, id),
+            None => {
+                let r = chat.rt().read(cx);
+                let state_model = r.state.as_ref().and_then(|s| s.model_label());
+                let need_draft = state_model.is_none();
+                let draft_model = if need_draft {
+                    chat.new_session_default().0
+                } else {
+                    None
+                };
+                state_model
+                    .or_else(|| {
+                        draft_model
+                            .as_ref()
+                            .map(|(p, id)| chat.model_display_name(p, id))
+                    })
+                    .unwrap_or_else(|| tr("model.select_title").to_string())
+            }
+        };
+        (
+            model_label,
+            page.thinking.to_string(),
+            crate::tasks::form::tools_display(page.tools),
+            chat.rt()
+                .read(cx)
+                .stats
+                .as_ref()
+                .and_then(|s| s.context_percent),
+            false,
+        )
+    } else {
         let r = chat.rt().read(cx);
         let state_model = r.state.as_ref().and_then(|s| s.model_label());
         let state_thinking = r.state.as_ref().and_then(|s| s.thinking_level.clone());
@@ -61,7 +106,7 @@ pub(crate) fn input_area(
         // 手选（pending_model）优先于 state：它只在无活进程时写入（草稿 /
         // 进程已死），是用户最新意图，spawn 时变成 --model 但不清账——
         // 首个 get_state 到达才由 response 臂清零（pi 冷启动 1-3s+，这
-        // 段窗口 state 还没答案，清早了标签会先跳默认模型再跳回手选）
+        // 段窗口 state 没答案，清早了标签会先跳默认模型再跳回手选）
         let model_label = r
             .pending_model
             .as_ref()
@@ -89,8 +134,10 @@ pub(crate) fn input_area(
     // 输入组件：惰性创建 + 每帧同步占位/值（set_value 同值跳过）
     let composer = ensure_composer(chat, weak, cx);
     // `!` shell 模式（031 pi-web bashMode parity）：去前导空白后以 ! 开头且
-    // 无图片附着——边框着色 + 提示行（!! = 输出仅本地）
-    let bash_mode = chat.composer.pending_images.is_empty()
+    // 无图片附着——边框着色 + 提示行（!! = 输出仅本地）。任务嵌入态不出
+    // （指令以 ! 开头是正文，不是 shell 触发）
+    let bash_mode = !task_form
+        && chat.composer.pending_images.is_empty()
         && chat.composer.input.trim_start().starts_with('!');
     // @ 菜单/万能搜索可能用到文件索引：预热/续期（TTL 内幂等，后台构建）
     let menu_open = chat.active_menu(cx).is_some();
@@ -105,7 +152,9 @@ pub(crate) fn input_area(
     if menu_open {
         chat.ensure_menu_search(cx);
     }
-    let ph: SharedString = if compacting {
+    let ph: SharedString = if task_form {
+        tr("task.desc_ph").into()
+    } else if compacting {
         // 压缩期间输入锁死（下方 on_change/on_submit 丢弃变更），用
         // placeholder 文案告知用户系统在做什么
         tr("composer.compacting_wait2").into()
@@ -182,25 +231,26 @@ pub(crate) fn input_area(
         .pt(px(10.))
         // 034：为底部状态带收紧胶囊内部留白（原 12，−5 定案见 034 §3.1）
         .pb(px(7.)); // 操作栏到下边框的距离
-    // 附加图片缩略图条（v58 图片粘贴；布局与删除/预览交互见 pending_images_strip）
-    if let Some(strip) = pending_images_strip(chat, weak, t) {
+    // 附加图片缩略图条（v58 图片粘贴；布局与删除/预览交互见 pending_images_strip）。
+    // 任务嵌入态不出（指令是纯文本 prompt，图片/排队语义都属会话发送）
+    if let Some(strip) = pending_images_strip(chat, weak, t).filter(|_| !task_form) {
         capsule = capsule.child(strip);
     }
     // 090 排队卡条（queue_cards.rs）：queue 模式运行中的发送以卡片呈现，
     // 不进气泡流；立即/撤回编辑/删除/拖拽重排
-    if let Some(strip) = queue_cards_strip(chat, weak, t, cx) {
+    if let Some(strip) = queue_cards_strip(chat, weak, t, cx).filter(|_| !task_form) {
         capsule = capsule.child(strip);
     }
     // 编辑区：真输入组件（多行 AutoGrow，超出 max 出纵向滚动条）；右键
     // 弹输入菜单（031，事件从组件冒泡上来——vendored 组件右键只做
     // 「无选区时移动光标」，不吞事件）。压缩锁期间整块是提示占位、无
-    // 可编辑对象，不弹
+    // 可编辑对象，不弹。任务嵌入态最小高 300（2026-11-17 用户令：+100）
     let weak_menu = weak.clone();
     capsule = capsule.child(
         div()
             .id("composer-editor")
             .w_full()
-            .min_h(px(60.))
+            .min_h(px(if task_form { 300. } else { 60. }))
             .pt(px(2.))
             .pb(px(2.))
             .px(px(6.))
@@ -225,13 +275,14 @@ pub(crate) fn input_area(
     }
     capsule = capsule.child(composer_bar(
         chat,
-        streaming,
+        if task_form { false } else { streaming },
         can_queue,
-        compacting,
+        if task_form { false } else { compacting },
         &model_label,
         &thinking_label,
         &tools_label,
         ctx_pct,
+        task_form,
         t,
         cx,
     ));
@@ -242,10 +293,28 @@ pub(crate) fn input_area(
     // 斜杠与 @ 菜单共用 slash_menu_view（视图内部按 kind 分支渲染）
     let slash_open = chat.active_menu(cx).is_some();
     // 「回到最新」按钮：不贴底且有消息时，悬浮在输入面板顶部上方 20px
-    let show_scroll_btn =
-        !chat.rt().read(cx).pager.is_at_bottom() && !chat.rt().read(cx).messages.is_empty();
-    // 内容列宽（设置-界面可调；与消息列同源）
+    let show_scroll_btn = !task_form
+        && !chat.rt().read(cx).pager.is_at_bottom()
+        && !chat.rt().read(cx).messages.is_empty();
+    // 内容列宽（设置-界面可调；与消息列同源）。任务嵌入态不吃封顶——
+    // 宽度随 60% 详情列（2026-11-17 拍板「改宽度」）
     let content_w = crate::services::workspace::chat_content_width();
+    let cap_w = (!task_form).then(|| px(content_w));
+    // 任务嵌入态统一菜单限高：菜单挂详情滚动列内，全高既会顶出窗口上沿
+    // 又被列顶裁剪（用户实测）——按上一帧胶囊 bounds 测距：胶囊顶缘 −
+    // 列顶净空(130 = topbar+页头+8缝) 即列内可用高，上限 620（2026-11-17
+    // 用户令：+100）；未就绪退 420 兜底
+    let menu_max_h = if task_form {
+        chat.tasks
+            .page
+            .anchors
+            .composer
+            .borrow()
+            .map(|b| (b.origin.y - px(130.)).min(px(620.)).max(px(160.)))
+            .unwrap_or(px(420.))
+    } else {
+        px(520.)
+    };
     // 胶囊高度测量槽（导航刻度条 033 居中用）；先克隆引用再拼元素，
     // 避免 &chat.composer.composer_h 与下方 slash_menu_view(&mut chat) 借用冲突
     let composer_h_slot = chat.composer.composer_h.clone();
@@ -270,12 +339,9 @@ pub(crate) fn input_area(
                     // 与测量元素（同款 max_w）对齐后左右边缘贴合胶囊
                     .flex()
                     .justify_center()
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(content_w))
-                            .child(crate::slash_menu_view(chat, weak, t, cx)),
-                    ),
+                    .child(div().w_full().when_some(cap_w, |d, w| d.max_w(w)).child(
+                        crate::slash_menu_view(chat, weak, t, menu_max_h.to_f64() as f32, cx),
+                    )),
             )
         })
         .child(
@@ -289,9 +355,13 @@ pub(crate) fn input_area(
                     // 外层（会话界面 px(15) / 新会话页内容簇）已扣除内边距，
                     // 此处宽度 == 消息列宽，再按内容列宽封顶（pi-web 单一内容列宽）
                     .w_full()
-                    .max_w(px(content_w))
+                    .when_some(cap_w, |d, w| d.max_w(w))
+                    // 任务嵌入态：胶囊 bounds 测距端（slash 菜单限高）
+                    .when(task_form, |d| {
+                        d.child(crate::PillBtns::tracker(&chat.tasks.page.anchors.composer))
+                    })
                     .child(capsule),
             ),
         );
-    composer_wrap(inner, hero, show_scroll_btn, weak, t)
+    composer_wrap(inner, hero || task_form, show_scroll_btn, weak, t)
 }

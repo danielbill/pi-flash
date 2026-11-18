@@ -226,8 +226,16 @@ pub(crate) fn main_column(
                             .child(if observer {
                                 observer_notice(t)
                             } else {
-                                input::input_area(chat, weak, streaming, input_focused, false, cx)
-                                    .into_any_element()
+                                input::input_area(
+                                    chat,
+                                    weak,
+                                    streaming,
+                                    input_focused,
+                                    false,
+                                    false,
+                                    cx,
+                                )
+                                .into_any_element()
                             })
                             .children(ext_widget_rows(chat, t, false))
                             // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap

@@ -14,7 +14,15 @@ impl Chat {
         window: &gpui::Window,
         cx: &gpui::Context<Chat>,
     ) -> Option<gpui::AnyElement> {
-        let (thinking_override, preset_key) = {
+        // 任务页嵌入态（046）：pill 菜单读写任务表单字段（tasks/page），
+        // 不触会话 RPC/重绑——工具档是 spawn 参数（spec），思考档落 spec
+        let task_form = self.layout.content_view == crate::ContentView::Tasks;
+        let (thinking_override, preset_key) = if task_form {
+            (
+                Some(self.tasks.page.thinking.to_string()),
+                self.tasks.page.tools.to_string(),
+            )
+        } else {
             let rt = self.rt();
             let r = rt.read(cx);
             (r.thinking_override.clone(), r.tools_preset.clone())
@@ -30,12 +38,16 @@ impl Chat {
                         .into_iter()
                         .map(|row| {
                             let weak_row = weak_menu.clone();
-                            let key_for_rpc = row.key.to_string();
+                            let key_for_rpc = row.key;
                             crate::session::menu_rows::pill_row(
                                 &weak_row,
                                 move |c, cx| {
                                     c.dlg.pill_menu = None;
-                                    c.set_thinking_level(&key_for_rpc, cx);
+                                    if c.layout.content_view == crate::ContentView::Tasks {
+                                        c.tasks.page.thinking = key_for_rpc;
+                                    } else {
+                                        c.set_thinking_level(&key_for_rpc, cx);
+                                    }
                                 },
                                 row,
                             )
@@ -48,12 +60,14 @@ impl Chat {
                     // 档位选中态），分隔线与档位分隔（需求原文）；点击发
                     // /plan（乐观翻转 + 防哑弹见 mode::state）。计划模式的
                     // 唯一 UI 指示 = 此菜单条目（用户裁决，禁状态栏/标记）。
+                    // 任务页嵌入态不出（计划属会话运行态，spec 无此字段）
                     let plan_on = {
                         let rt = self.rt();
                         rt.read(cx).plan_enabled
                     };
-                    let mut items: Vec<gpui::AnyElement> = vec![
-                        crate::session::menu_rows::pill_row(
+                    let mut items: Vec<gpui::AnyElement> = Vec::new();
+                    if !task_form {
+                        items.push(crate::session::menu_rows::pill_row(
                             &weak_menu,
                             |c, cx| {
                                 c.dlg.pill_menu = None;
@@ -65,26 +79,34 @@ impl Chat {
                                 desc: tr("plan.menu_desc").to_string(),
                                 active: plan_on,
                             },
-                        ),
+                        ));
                         // 菜单分隔线（§5.6：1px t.border，上下留白 6）
-                        div()
-                            .mx(px(crate::session::picker_shell::PAD))
-                            .my(px(6.))
-                            .h(px(1.))
-                            .bg(rgb(t.border))
-                            .into_any_element(),
-                    ];
+                        items.push(
+                            div()
+                                .mx(px(crate::session::picker_shell::PAD))
+                                .my(px(6.))
+                                .h(px(1.))
+                                .bg(rgb(t.border))
+                                .into_any_element(),
+                        );
+                    }
                     items.extend(
                         crate::session::menu_rows::tools_preset_rows(&preset_key)
                             .into_iter()
                             .map(|row| {
                                 let weak_row = weak_menu.clone();
-                                let key_for_rpc = row.key.to_string();
+                                let key_for_rpc = row.key;
                                 crate::session::menu_rows::pill_row(
                                     &weak_row,
                                     move |c, cx| {
                                         c.dlg.pill_menu = None;
-                                        c.mc_set_tools_preset(&key_for_rpc, cx);
+                                        if c.layout.content_view == crate::ContentView::Tasks {
+                                            // 直写表单字段（不走重绑链——工具档
+                                            // 是任务 spec 的 spawn 参数）
+                                            c.tasks.page.tools = key_for_rpc;
+                                        } else {
+                                            c.mc_set_tools_preset(&key_for_rpc, cx);
+                                        }
                                     },
                                     row,
                                 )

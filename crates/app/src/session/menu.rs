@@ -583,6 +583,8 @@ pub(crate) fn slash_menu_view(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static crate::appearance::theme::Theme,
+    // 壳限高（会话区 520；任务页嵌入态按视口钳——见 input_area）
+    max_h: f32,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
     let searching = chat.menu_searching();
@@ -808,7 +810,7 @@ pub(crate) fn slash_menu_view(
         .border_color(rgb(t.border))
         .rounded(px(8.))
         .shadow_lg()
-        .max_h(px(520.))
+        .max_h(px(max_h))
         .overflow_hidden()
         // ---- 搜索栏（菜单底色同体；万能搜索入口）----
         .child(menu_search_bar(chat, t))

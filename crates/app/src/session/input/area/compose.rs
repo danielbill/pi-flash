@@ -298,7 +298,11 @@ pub(super) fn ensure_composer(
                                 .then(|| r.cwd.to_string_lossy().to_string())
                         })
                         .flatten();
-                    if let Some(cwd) = draft_cwd {
+                    // 任务页嵌入态不打草稿盘：指令属任务 spec，落库走
+                    // 【保存】，覆写用户会话草稿是数据丢失
+                    if let Some(cwd) =
+                        draft_cwd.filter(|_| chat.layout.content_view != crate::ContentView::Tasks)
+                    {
                         pi_link::drafts::save_throttled(&cwd, v);
                     }
                     if !enter_pollution {
@@ -344,6 +348,11 @@ pub(super) fn ensure_composer(
         }));
         f.set_on_submit(Rc::new(move |v, cx| {
             let _ = weak_submit.update(cx, |chat, cx| {
+                // 任务页嵌入态：Enter = 换行（不发送；on_change 已把组件
+                // 自插的换行镜进了 composer.input，直接返回即保留它）
+                if chat.layout.content_view == crate::ContentView::Tasks {
+                    return;
+                }
                 if chat.rt().read(cx).compacting {
                     return;
                 }
@@ -369,6 +378,10 @@ pub(super) fn ensure_composer(
         // steer 模式 = 显式入队（排队护栏：入本地队列，不直接发出去）
         f.set_on_submit_secondary(Rc::new(move |v, cx| {
             let _ = weak_submit2.update(cx, |chat, cx| {
+                // 任务页嵌入态：Ctrl+Enter 不排队/不插话（同上，保留换行）
+                if chat.layout.content_view == crate::ContentView::Tasks {
+                    return;
+                }
                 if chat.rt().read(cx).compacting {
                     return;
                 }

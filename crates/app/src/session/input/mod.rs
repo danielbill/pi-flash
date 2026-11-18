@@ -349,6 +349,13 @@ impl Chat {
             .get(&self.project_key())
             .map(|ctx| ctx.skill_commands.clone())
             .unwrap_or_default();
+        // 全局目录技能兜底：未选项目（cwd=None → 项目缓存缺席）时 `/` 菜单
+        // 也要出全局技能（2026-11-17 任务页「技能出不来」修）；项目同名让位
+        for c in self.pool.globals.global_skill_commands.iter() {
+            if !out.iter().any(|o| o.name == c.name) {
+                out.push(c.clone());
+            }
+        }
         out.extend(self.pool.globals.commands.iter().cloned());
         std::borrow::Cow::Owned(out)
     }

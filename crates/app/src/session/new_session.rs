@@ -117,6 +117,7 @@ pub(crate) fn page(
                             streaming,
                             input_focused,
                             true,
+                            false,
                             cx,
                         ))
                         .child(action_bar(chat, weak, t))

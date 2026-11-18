@@ -18,6 +18,9 @@ pub(crate) struct Globals {
     pub models: Vec<ModelInfo>,
     /// 扩展命令缓存 + pi 内置表（pi 1.0.0 = 空）。skill 命令按项目走 `ProjectCtx`。
     pub commands: Vec<SlashCommand>,
+    /// 全局目录技能的 `skill:<name>` 命令（启动一次性装载；未选项目态的
+    /// `/` 菜单兜底——2026-11-17 任务页「技能出不来」修）。
+    pub global_skill_commands: Vec<SlashCommand>,
     /// `settings.json defaultTools`（会话预设 `configured` 由 pi 按它解析）。
     pub default_tools: Option<Vec<String>>,
     /// 全局插件声明（`settings.json packages`）。
@@ -58,9 +61,20 @@ pub(crate) fn load_globals() -> Globals {
     commands.extend(cache.commands);
 
     let settings_path = pi_link::config::settings_path();
+    // 全局目录技能（cwd 无关；无项目态 / 草稿态 `/` 菜单兜底——2026-11-17
+    // 任务页「技能出不来」修）。home 推导同 load_skills。
+    let agent_dir = pi_link::config::agent_dir();
+    let home_agents = agent_dir
+        .parent()
+        .map(|p| p.join("..").join(".agents").join("skills"))
+        .map(|p| dunce::canonicalize(&p).unwrap_or(p))
+        .unwrap_or_else(|| agent_dir.clone());
+    let global_skills = pi_link::skills::discover_global_skills(&agent_dir, &home_agents);
+    let global_skill_commands = pi_link::catalog::skill_commands(&global_skills);
     Globals {
         models,
         commands,
+        global_skill_commands,
         default_tools: pi_link::config::read_default_tools(&settings_path).unwrap_or(None),
         packages: pi_link::config::read_packages(&settings_path).unwrap_or_default(),
         catalog_provisional: true,

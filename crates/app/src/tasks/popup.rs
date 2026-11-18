@@ -8,8 +8,6 @@ use crate::appearance::theme::{self, Theme, theme};
 use crate::appearance::ui_size;
 use crate::editor::markdown::MONO_FAMILY;
 use crate::i18n::{tf, tr};
-use crate::session::menu_rows::{pill_row, thinking_rows, tools_preset_rows};
-use crate::session::model_picker::{ModelPickAction, model_menu_body};
 use crate::tasks::INTERVALS;
 use crate::tasks::form::{sel_btn, trg_wrap, weekday_key};
 use crate::tasks::popup_slot;
@@ -151,118 +149,27 @@ pub(crate) fn menus_overlay(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     window: &gpui::Window,
-    cx: &gpui::Context<Chat>,
+    _cx: &gpui::Context<Chat>,
 ) -> Option<AnyElement> {
     let slot = chat.tasks.page.popup?;
     let t = theme();
     let page = &chat.tasks.page;
     let vp = window.viewport_size();
-
-    // 定位：PLUS 走专用算法——贴指令胶囊正上方、与胶囊同宽（缝 8；
-    // inputpanel slash_menu 同位，2026-11-17 拍板「弹出样式和 InputPanel
-    // 对齐」），锚定端 = 胶囊 bounds tracker（form.rs capsule 挂）；其余
-    // 槽位走统一定位（按钮居中 + 半屏定向）。
-    let (menu_w, pos) = match slot {
-        popup_slot::PLUS => {
-            let capsule = page.anchors.composer.borrow();
-            match *capsule {
-                Some(b) => (
-                    b.size.width,
-                    crate::session::picker_shell::PillCardPos {
-                        left: b.origin.x,
-                        top: None,
-                        bottom: Some(vp.height - b.origin.y + px(8.)),
-                    },
-                ),
-                None => (
-                    px(380.),
-                    crate::session::picker_shell::pill_anchor_edges(page.anchor, vp, px(380.)),
-                ),
-            }
-        }
-        _ => {
-            let w = match slot {
-                popup_slot::FREQ => 160.,
-                popup_slot::INTERVAL => 160.,
-                popup_slot::MINUTE => 96.,
-                popup_slot::WD => 140.,
-                popup_slot::MDAY => 140.,
-                popup_slot::TIME => 132.,
-                popup_slot::MODEL => 380.,
-                popup_slot::TIER => 320.,
-                popup_slot::THINKING => 320.,
-                _ => return None,
-            };
-            (
-                px(w),
-                crate::session::picker_shell::pill_anchor_edges(page.anchor, vp, px(w)),
-            )
-        }
+    // 统一定位（按钮居中 + 半屏定向）——唯一算法 pill_anchor_edges
+    let menu_w = match slot {
+        popup_slot::FREQ => 160.,
+        popup_slot::INTERVAL => 160.,
+        popup_slot::MINUTE => 96.,
+        popup_slot::WD => 140.,
+        popup_slot::MDAY => 140.,
+        popup_slot::TIME => 132.,
+        _ => return None,
     };
+    let pos = crate::session::picker_shell::pill_anchor_edges(page.anchor, vp, px(menu_w));
     let weak_c = weak.clone();
 
     // ---- 各槽位卡片内容
     let content: AnyElement = match slot {
-        popup_slot::MODEL => {
-            let (models, _total) = chat.picker_models_from(None, None);
-            let mut items: Vec<AnyElement> = vec![menu_row(
-                "task-mi-inherit",
-                tr("task.model_inherit").to_string(),
-                page.model.is_none(),
-                |c, _cx| c.tasks.page.model = None,
-                weak,
-            )];
-            let on_pick: ModelPickAction = std::rc::Rc::new(|c: &mut Chat, _cx, p, id| {
-                c.tasks.page.model = Some((p.clone(), id.clone()));
-            });
-            items.push(
-                div()
-                    .id("task-model-list")
-                    .max_h(px(300.))
-                    .overflow_y_scroll()
-                    .child(model_menu_body(
-                        weak,
-                        &models,
-                        page.model
-                            .as_ref()
-                            .map(|(p, m)| format!("{p}/{m}"))
-                            .as_deref(),
-                        None,
-                        |_| false,
-                        Some(on_pick),
-                        t,
-                    ))
-                    .into_any_element(),
-            );
-            div()
-                .flex()
-                .flex_col()
-                .py(px(4.))
-                .children(items)
-                .into_any_element()
-        }
-        popup_slot::TIER => {
-            let rows: Vec<AnyElement> = tools_preset_rows(page.tools)
-                .into_iter()
-                .map(|r| {
-                    let weak = weak.clone();
-                    let key = r.key;
-                    pill_row(&weak, move |c, _cx| c.tasks.page.tools = key, r)
-                })
-                .collect();
-            list_card(rows, 300.)
-        }
-        popup_slot::THINKING => {
-            let rows: Vec<AnyElement> = thinking_rows(page.thinking)
-                .into_iter()
-                .map(|r| {
-                    let weak = weak.clone();
-                    let key = r.key;
-                    pill_row(&weak, move |c, _cx| c.tasks.page.thinking = key, r)
-                })
-                .collect();
-            list_card(rows, 300.)
-        }
         popup_slot::FREQ => {
             // 五档全列（HTML freqMenu 同源；2026-11-15 补「每 N 分钟」——
             // 原四档清单让 cmin 档不可达）
@@ -440,17 +347,6 @@ pub(crate) fn menus_overlay(
                 )
                 .into_any_element()
         }
-        popup_slot::PLUS => {
-            // 「+」统一菜单技能页（InputPanel + 同语义）：技能清单，
-            // 点行把 `/skill:name ` 追加进指令输入
-            let skills: Vec<_> = chat
-                .slash_commands(cx)
-                .iter()
-                .filter(|c| c.name.starts_with("skill:"))
-                .cloned()
-                .collect();
-            plus_menu_body(chat, &skills, weak, t)
-        }
         _ => return None,
     };
 
@@ -459,261 +355,13 @@ pub(crate) fn menus_overlay(
             cx.notify();
         }
     });
-    // PLUS：统一菜单壳自带 chrome（slash_menu_view 同构 rounded8 + border +
-    // shadow，2026-11-17 拍板），只包一层裸定位座；其余槽位走 picker_card 卡座
-    if slot == popup_slot::PLUS {
-        let base = div()
-            .absolute()
-            .left(pos.left)
-            .w(menu_w)
-            .max_h(px(520.))
-            .flex();
-        let base = match pos.top {
-            Some(top) => base.top(top),
-            None => base.bottom(pos.bottom.unwrap_or(px(64.))),
-        };
-        return Some(
-            layer
-                .child(crate::ui::overlay::stop_click(base.child(content)))
-                .into_any_element(),
-        );
-    }
     Some(
         layer
             .child(crate::ui::overlay::stop_click(
-                crate::session::picker_shell::picker_card(pos, menu_w, t).child(content),
+                crate::session::picker_shell::picker_card(pos, px(menu_w), t).child(content),
             ))
             .into_any_element(),
     )
-}
-
-// ---------------------------------------------------------------------------
-// 「+」统一菜单（InputPanel slash_menu_view 同构复刻，2026-11-17 拍板
-// 「弹出样式和 InputPanel 对齐」）
-// ---------------------------------------------------------------------------
-
-/// 「+」统一菜单本体：搜索栏 + tab 条 + 技能卡滚动列表，壳自带 chrome
-/// （rounded8 + border + shadow，max_h 520 = slash_menu_view 同值）。
-/// 搜索按剥前缀名子串过滤（万能搜索同口径）；空态两档（无技能 / 无命中）。
-fn plus_menu_body(
-    chat: &Chat,
-    skills: &[pi_link::protocol::SlashCommand],
-    weak: &gpui::WeakEntity<Chat>,
-    t: &'static Theme,
-) -> AnyElement {
-    let q = chat.tasks.page.plus_query.trim().to_lowercase();
-    let hits: Vec<&pi_link::protocol::SlashCommand> = skills
-        .iter()
-        .filter(|c| {
-            if q.is_empty() {
-                return true;
-            }
-            c.name
-                .strip_prefix("skill:")
-                .unwrap_or(&c.name)
-                .to_lowercase()
-                .contains(&q)
-        })
-        .collect();
-    let rows: Vec<AnyElement> = hits.iter().map(|c| plus_row(c, weak, t)).collect();
-    let empty: SharedString = if skills.is_empty() {
-        tr("agents.pick_empty").into()
-    } else {
-        tr("menu.no_search_result").into()
-    };
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(t.bg))
-        .border_1()
-        .border_color(rgb(t.border))
-        .rounded(px(8.))
-        .shadow_lg()
-        .max_h(px(520.))
-        .overflow_hidden()
-        .child(plus_search_bar(chat, t))
-        .child(plus_tab_strip(t))
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(if rows.is_empty() {
-                    div()
-                        .pt(px(10.))
-                        .pb(px(10.))
-                        .pl(px(10.))
-                        .pr(px(14.))
-                        .text_size(ui_size(11.))
-                        .text_color(rgb(t.text_dim))
-                        .child(empty)
-                        .into_any_element()
-                } else {
-                    div()
-                        .id("task-plus-list")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        // 右侧比左侧多 4px 给滚动条让位（menu-body 同款）
-                        .pt(px(10.))
-                        .pb(px(10.))
-                        .pl(px(10.))
-                        .pr(px(14.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(rows)
-                        .into_any_element()
-                }),
-        )
-        .into_any_element()
-}
-
-/// 搜索栏（menu_search_bar 同构：h36 + search icon + flat 输入，菜单底色同体）。
-fn plus_search_bar(chat: &Chat, t: &'static Theme) -> AnyElement {
-    div()
-        .flex_shrink_0()
-        .h(px(36.))
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .px(px(10.))
-        .bg(rgb(t.bg))
-        .child(icon("search", crate::ui::tokens::icon::SM, t.text_faint))
-        .child(
-            div().flex_1().min_w_0().children(
-                chat.tasks
-                    .page
-                    .plus_search
-                    .as_ref()
-                    .map(|i| i.clone().into_any_element()),
-            ),
-        )
-        .into_any_element()
-}
-
-/// tab 条静态复刻（menu_views::menu_tab_strip 同构）：技能页钉活（任务表单
-/// 语境只有技能可插），其余三类 dim 0.45 = `menu_tab_available` false 同款；
-/// 条下 5px 同色带承激活 tab 的连体缘。
-fn plus_tab_strip(t: &'static Theme) -> AnyElement {
-    div()
-        .flex_shrink_0()
-        .h(px(39.))
-        .flex()
-        .items_end()
-        .px(px(space::SP4))
-        // tab 栏钉面板字体槽（menu_tab_strip 同源，与搜索框一致）
-        .font_family(SharedString::from(
-            crate::appearance::panel_font().family.clone(),
-        ))
-        .bg(rgb(t.chrome))
-        .border_b_5()
-        .border_color(rgb(t.bg))
-        .children(crate::MenuKind::ALL.iter().map(|k| {
-            let active = *k == crate::MenuKind::Skill;
-            let badge = div()
-                .font_family(MONO_FAMILY)
-                .text_size(ui_size(11.))
-                .text_color(rgb(if active { t.accent } else { t.text_faint }))
-                .child(SharedString::from(k.prefix().to_string()))
-                .into_any_element();
-            crate::titlebar::tab_body(
-                None,
-                tr(k.label_key()).into(),
-                active,
-                0.,
-                t,
-                None,
-                Some(badge),
-                false,
-            )
-            .h(px(34.))
-            .rounded(px(0.))
-            .mb(px(0.))
-            .text_size(ui_size(11.))
-            .border_l_0()
-            .border_r_0()
-            .when(!active, |d| {
-                d.opacity(0.45).cursor(gpui::CursorStyle::Arrow)
-            })
-        }))
-        .into_any_element()
-}
-
-/// 技能条目卡（menu.rs slash_menu_view card 同构逐值复刻）：32px 卡 +
-/// wand icon + mono 剥前缀名 + 右侧说明；点击把 `/skill:名 ` 追加进指令
-/// （点行即确认，无键盘导航——任务菜单不挂 composer 键路由）。
-fn plus_row(
-    c: &pi_link::protocol::SlashCommand,
-    weak: &gpui::WeakEntity<Chat>,
-    t: &'static Theme,
-) -> AnyElement {
-    let weak = weak.clone();
-    let name = c.name.clone();
-    let label = name.strip_prefix("skill:").unwrap_or(&name).to_string();
-    let desc = c.description.replace('\n', " ");
-    let id = SharedString::from(format!("task-plus-{label}"));
-    div()
-        .id(id)
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .px(px(10.))
-        // ui-raw: ok slash_menu_view 条目卡逐值复刻（h32/gap8/px10/r5），§10.8 登记
-        .h(px(32.))
-        .flex_shrink_0()
-        .rounded(px(5.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .bg(rgb(t.bg_panel))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-            let weak = weak.clone();
-            let name = name.clone();
-            let _ = weak.update(cx, |c, cx| {
-                c.tasks.page.popup = None;
-                if let Some(i) = c.tasks.page.desc.clone() {
-                    i.update(cx, |inp, icx| {
-                        let mut v = inp.value().to_string();
-                        if !v.is_empty() && !v.ends_with(' ') && !v.ends_with('\n') {
-                            v.push(' ');
-                        }
-                        v.push_str(&format!("/{name} "));
-                        inp.set_value(v, icx);
-                    });
-                }
-                cx.notify();
-            });
-        })
-        .child(icon("wand", 13., t.text_dim))
-        .child(
-            div()
-                .font_family(MONO_FAMILY)
-                .text_size(ui_size(11.))
-                .text_color(rgb(t.text))
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(SharedString::from(label)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(ui_size(10.))
-                .text_color(rgb(t.text_dim))
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(SharedString::from(desc)),
-        )
-        .into_any_element()
 }
 
 // ---------------------------------------------------------------------------
