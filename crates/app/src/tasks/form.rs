@@ -265,7 +265,7 @@ pub(crate) fn trg_wrap(
             move |ev: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 let at = ev.position;
-                let _ = weak_click.update(cx, |c, _| {
+                let _ = weak_click.update(cx, |c, cx| {
                     // inputpanel 同款：锚点 = 按钮槽位 bounds（未就绪退点击坐标）
                     c.tasks.page.anchor = Some(crate::PillBtns::anchor(&bounds_click, at));
                     c.tasks.page.popup = if c.tasks.page.popup == Some(slot) {
@@ -273,6 +273,10 @@ pub(crate) fn trg_wrap(
                     } else {
                         Some(slot)
                     };
+                    // 「+」统一菜单打开即清旧查询词（menu_dismiss 清搜索同语义）
+                    if c.tasks.page.popup == Some(popup_slot::PLUS) {
+                        c.tasks_plus_search_reset(cx);
+                    }
                 });
             },
         )
@@ -591,7 +595,10 @@ fn agent_block(
         .child(SharedString::from(proj_label))
         .into_any_element();
 
-    // composer 胶囊（InputPanel 同构：rounded16 + 焦点 accent 框 + shadow）
+    // composer 胶囊（InputPanel 同构：rounded16 + 焦点 accent 框 + shadow；
+    // 纵向留白同 inputarea：pt10 / pb7——2026-11-17 拍板 textarea 内 padding
+    // 对齐 InputPanel）；composer bounds 槽挂 tracker（PLUS 菜单锚定端：
+    // 菜单贴胶囊正上方同宽，inputpanel slash_menu 同位）
     let plus = trg_wrap(popup_slot::PLUS, weak, chat, plus_button(t));
     let capsule = div()
         .id("task-composer")
@@ -604,15 +611,19 @@ fn agent_block(
         .flex()
         .flex_col()
         .pt(px(space::SP5))
-        .pb(px(space::SP3))
-        // 输入区：desc 实体 flat 多行（10 行 ≈ 输入最小高 +200px）
+        .pb(px(7.))
+        // 输入区：desc 实体 flat 多行（10 行 ≈ 输入最小高 +200px）；水平
+        // 内缩 18 = InputPanel 同几何（wrapper 6 + 组件 input_px 12——flat
+        // 档组件 pl_0，由 wrapper 补足）
         .child(
             div()
                 .pt(px(space::SP1))
                 .pb(px(space::SP1))
-                .px(px(space::SP3))
+                .pl(px(18.))
+                .pr(px(6.))
                 .child(desc),
         )
+        .child(crate::PillBtns::tracker(&chat.tasks.page.anchors.composer))
         .child(
             div()
                 .flex()

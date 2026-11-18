@@ -171,6 +171,9 @@ assets! {
     "icons/arrow-down.svg",
     "icons/wand.svg",
     "icons/bot.svg",
+    // 046 任务列表行类型 icon（脚本行，lucide file-code；agent 行复用 bot
+    // ——任务管理-原型.html sp-li tico 同源）
+    "icons/file-code.svg",
     // v64 topbar：会话标题 icon + ⋯ 菜单（系统提示词 / 工具）
     "icons/message-square-more.svg",
     // 016 topbar：置顶会话标签 icon（lucide bot-message-square）

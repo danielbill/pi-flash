@@ -103,6 +103,10 @@ pub(crate) struct TaskPage {
     pub anchors: TaskAnchors,
     /// 移除确认（overlay::confirm 槽：(def_id, title)）。
     pub confirm_del: Option<(String, String)>,
+    /// 「+」统一菜单搜索词镜像（slash_menu_view 万能搜索同语义；空 = 不过滤）
+    pub plus_query: String,
+    /// 「+」统一菜单搜索框实体（懒创建；ensure_menu_search 同款）
+    pub plus_search: Option<Entity<TextInput>>,
 }
 
 /// 锚定菜单槽位号（[`TaskPage::popup`]）。
@@ -134,6 +138,9 @@ pub(crate) struct TaskAnchors {
     pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub plus: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// 指令 composer 胶囊整体 bounds（非触发钮——PLUS 统一菜单贴胶囊正上方
+    /// 同宽定位用，inputpanel slash_menu 同位；2026-11-17 拍板）
+    pub composer: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl TaskAnchors {
@@ -294,7 +301,7 @@ impl Chat {
     pub(crate) fn tasks_ensure_inputs(&mut self, cx: &mut Context<Self>) {
         if self.tasks.page.name.is_none() {
             // subagent 表单头同款默认输入（2026-11-16 拍板；label 已带
-            // 「任务名称」，不出占位符）
+            // 「名称」，不出占位符）
             self.tasks.page.name = Some(cx.new(|cx| TextInput::new(cx)));
         }
         if self.tasks.page.desc.is_none() {
@@ -306,6 +313,42 @@ impl Chat {
                     .flat()
                     .lines(10)
             }));
+        }
+        self.ensure_tasks_plus_search(cx);
+    }
+
+    /// 「+」统一菜单搜索框实体懒创建（menu.rs ensure_menu_search 同款接线：
+    /// on_change 只镜像值；菜单壳由 tasks/popup.rs 按值过滤技能清单）。
+    pub(crate) fn ensure_tasks_plus_search(&mut self, cx: &mut Context<Self>) {
+        if self.tasks.page.plus_search.is_some() {
+            return;
+        }
+        let weak = cx.entity().downgrade();
+        let input = cx.new(|cx| {
+            TextInput::new(cx)
+                .flat()
+                .text_size(11.)
+                .placeholder(crate::i18n::tr("menu.search_placeholder"))
+        });
+        input.update(cx, |ti, _| {
+            ti.set_on_change(Box::new(move |v, cx| {
+                let _ = weak.update(cx, |c, cx| {
+                    if c.tasks.page.plus_query != v {
+                        c.tasks.page.plus_query.clear();
+                        c.tasks.page.plus_query.push_str(v);
+                        cx.notify();
+                    }
+                });
+            }));
+        });
+        self.tasks.page.plus_search = Some(input);
+    }
+
+    /// 「+」统一菜单搜索复位（开菜单时清旧查询词；menu_dismiss 清搜索同语义）。
+    pub(crate) fn tasks_plus_search_reset(&mut self, cx: &mut Context<Self>) {
+        self.tasks.page.plus_query.clear();
+        if let Some(i) = &self.tasks.page.plus_search {
+            i.update(cx, |ti, cx| ti.set_value(String::new(), cx));
         }
     }
 

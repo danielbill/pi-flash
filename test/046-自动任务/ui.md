@@ -112,10 +112,49 @@ shadow、去发送钮、输入 10 行 ≈ +200px，操作栏 = +/工具档/扩�
 
 RESULT: fail=0。
 
+## 执行记录 5（2026-11-17 任务页五条拍板：icon/按钮/字段名/padding/+弹层）
+
+①icon 全对齐任务管理-原型.html（新建钮去「＋」字符改子代理同款 Primary
+纯文字钮；列表行加设计稿 tico——脚本=file-code（新资产）、Agent=bot；
+folder 资产补设计稿横线 `M2 10h20`）；②按钮对齐子代理页：页头新建
+Btn::Secondary→Primary（保存原已是）；③字段名 agent 侧 名称/类型/定时/
+项目/指令，前三项两侧同时改（task.name/type/sched 三键 i18n 改值，脚本侧
+共用同键）；④指令 textarea 内 padding 对齐 InputPanel（胶囊 pb 6→7 =
+inputarea 同值；文本内缩 6→18 = wrapper 6 + 组件 input_px 12，flat 档
+pl_0 由 wrapper 补足）；⑤「+」弹层彻底重做 = InputPanel slash_menu_view
+同构复刻（搜索栏 + tab 条静态复刻[技能钉活/其余 dim] + 32px 条目卡
+wand+mono 名+右说明，点行插 `/skill:name `；定位弃按钮居中锚改**贴指令
+胶囊正上方同宽缝 8**——胶囊 bounds 新增 composer tracker 槽；搜索框实体
+plus_search 懒创建镜像 plus_query，开菜单即清旧词；plus_row 豁免
+ui-raw: ok，§10.8 登记）。
+
+单实例（PI_FLASH_AUTO_TASKS=1，project.switch 注cwd 后 tasks 页会被切走
+——重开即可）：
+
+```
+✓ 开页：字段序 名称/类型/定时/项目/指令（新建钮 Primary 纯文字，像素核对）
+✓ 脚本 seg：名称/类型/定时/脚本文件 + note（前三项两侧同改）
+✓ + 钮 (1035,499) → popup=10：搜索栏+tab 条（技能 active/命令·项目文件·会话
+  dim 0.45）+ 暂无可选项，贴胶囊正上方与胶囊同宽（像素核对）
+✓ 点外 (597,512) → popup=null
+✓ 建任务（name+prompt 注入 → 保存）defs=1 sel 回填，行=tico(bot)+名，
+  组头【脚本任务 0】【Agent 任务 1】
+✓ 项目 chip folder 图标带横线（设计稿版），指令文本左缩进与 + 字形对齐
+✓ 三仓 529/298/59 全绿 + check_arch/ui-raw OK（豁免 9）
+```
+
+RESULT: fail=0。
+
+备注：条目卡实渲染（有技能清单时）未在本实例验到——隔离实例无 pi 会话
+不出 skill: 清单；行几何 = menu.rs slash_menu_view card 逐值复刻，插入
+链路与原 pill_row 版逐字同（set_value 拼接）。
+
 ## 陷阱回填
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；
 - `snapshot --only` 输出 pretty JSON，grep 键要带冒号后空格；
 - `wait` 断言只有 `--eq/--contains/--truthy`（无 `--null`——null 用 snapshot+grep）；
 - **dev_flags::summary 原版只看 dev-flags.json**，env 开的旗标日志显 off
-  误导排障——已修为 enabled 同语义（env 覆盖计入）。
+  误导排障——已修为 enabled 同语义（env 覆盖计入）；
+- `--arg keys=t` 单字符到不了 handler（bad_params 需 `{"keys":…}`）——用
+  `--params-file` 传合法 JSON（本记录 type_key helper 即此法）。

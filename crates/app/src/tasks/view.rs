@@ -24,6 +24,7 @@ use crate::market::pi_native_market::design::px18;
 use crate::services::format::fmt_msg_time;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::tasks::{DefRow, PAGE_TAB_LOG, PAGE_TAB_TASKS};
+use crate::ui::icon;
 use crate::ui::kit::{Btn, config_button, group_header, sidebar_item, status_dot};
 use crate::ui::overlay;
 use crate::ui::spark_spinner;
@@ -43,7 +44,7 @@ pub(crate) fn page(
     let t = theme();
     let page = &chat.tasks.page;
 
-    // 页头：左【任务 | 日志】简易 tab + 右【＋新建】
+    // 页头：左【任务 | 日志】简易 tab + 右【新建】（子代理页同款 Primary）
     let weak_tab = weak.clone();
     let head = div()
         .flex_none()
@@ -63,10 +64,12 @@ pub(crate) fn page(
                 .flex()
                 .items_center()
                 .child(config_button(
+                    // 子代理页「新建」同款主按钮（2026-11-17 拍板：按钮样式
+                    // 对齐 settings/agents——同 Btn::Primary 纯文字钮）
                     "task-page-new",
                     weak,
-                    &format!("＋ {}", tr("task.new")),
-                    Btn::Secondary,
+                    &tr("task.new"),
+                    Btn::Primary,
                     true,
                     false,
                     |c, cx| c.task_new_form(cx),
@@ -181,15 +184,18 @@ fn run_tip(r: &TaskRun) -> String {
     tip
 }
 
-/// 行装配（两 tab 共用，subagent list 同款 30px sidebar_item）：结果槽 +
-/// 名（可点下划线开话；停用/跳过灰名）+ 右缘 mono 时间。`select` =
-/// Some(def_id) 时行点击 = 详情回填（任务列表行）。
+/// 行装配（两 tab 共用，subagent list 同款 30px sidebar_item）：类型 icon
+/// （2026-11-17 拍板：icon 用设计 HTML 的 tico——脚本=file-code、
+/// Agent=bot，None = 不出）+ 名（可点下划线开话；停用/跳过灰名）+
+/// 结果槽 + 右缘 mono 时间。`select` = Some(def_id) 时行点击 = 详情回填
+/// （任务列表行）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
     title: String,
     gray: bool,
     link: Option<PathBuf>,
+    tico: Option<&'static str>,
     slot: Option<AnyElement>,
     tip: Option<String>,
     stamp: String,
@@ -234,6 +240,8 @@ fn task_row(
                 });
             })
         })
+        // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间
+        .children(tico.map(|name| icon(name, crate::ui::tokens::icon::SM, t.text_dim)))
         .child(
             div()
                 .id(dot_id)
@@ -323,11 +331,14 @@ fn tasks_body(
                 let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
                 let link = last.and_then(|r| r.session_path.clone()).map(PathBuf::from);
                 let id = def.id.clone();
+                // 设计 HTML tico：脚本行 file-code / Agent 行 bot（分组即类型）
+                let tico: &'static str = if agent { "bot" } else { "file-code" };
                 list = list.child(task_row(
                     SharedString::from(format!("task-sp-{id}")),
                     def.title.clone(),
                     !def.enabled,
                     link,
+                    Some(tico),
                     slot,
                     tip,
                     stamp,
@@ -399,8 +410,20 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                 .find(|d| d.def.id == r.def_id)
                 .map(|d| d.def.title.clone())
                 .unwrap_or_else(|| r.def_id.clone());
+            let tico: Option<&'static str> = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| d.def.id == r.def_id)
+                .map(|d| {
+                    if matches!(d.spec.kind, TaskKind::Agent) {
+                        "bot"
+                    } else {
+                        "file-code"
+                    }
+                });
             task_row(
-                id, title, gray, link, slot, tip, stamp, false, weak, None, t,
+                id, title, gray, link, tico, slot, tip, stamp, false, weak, None, t,
             )
         })
         .collect();
