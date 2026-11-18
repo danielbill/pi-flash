@@ -110,7 +110,7 @@ pub(super) fn agent_detail(
         head = head.child(dirty_dot);
     }
 
-    let mut form = div().flex().flex_col().gap(px(12.)).mt(px(12.)).flex_1();
+    let mut form = div().flex().flex_col().gap(px(16.)).mt(px(16.)).flex_1();
 
     // 损坏态：红条 + 打开文件修复 + 删除
     if let Some(err) = broken {
