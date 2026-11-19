@@ -2048,9 +2048,17 @@ impl InputState {
         let (disp_row, disp_col) = self.offset_to_display_point(last_layout, offset, Bias::Right);
         let row_offset_y = disp_row as f32 * line_height;
 
-        if let Some(line) = last_layout
-            .lines
-            .get(disp_row as usize - last_layout.visible_range.start)
+        // zed scroll/autoscroll.rs `autoscroll_horizontally`：水平调整只在
+        // 目标行确属当前可见行时才索引 layouts（head.row() >= start_row &&
+        // head.row() < start_row + layouts.len()），守卫不过直接跳过。
+        // 此处同谓词 = checked_sub + get。裸减法必崩的场景：SearchPanel
+        // replace_all 在 replace_text_in_range_silent 后调 scroll_to(0)，
+        // last_layout 仍是上一帧的（visible_range 停在旧滚动位），目标行 0
+        // 在其上方 → usize 下溢 → panic unwind 出 FFI 边界 → abort
+        // （2026-11-20 md 替换全部即崩，crash-*.log 全同栈）。
+        if let Some(line) = disp_row
+            .checked_sub(last_layout.visible_range.start as u32)
+            .and_then(|vis_ix| last_layout.lines.get(vis_ix as usize))
         {
             // Check to scroll horizontally（列 = 显示字节列，shape 同坐标系）
             if let Some(pos) = line.position_for_index(disp_col, line_height) {
