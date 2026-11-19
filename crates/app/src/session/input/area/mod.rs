@@ -310,7 +310,7 @@ pub(crate) fn input_area(
             .anchors
             .composer
             .borrow()
-            .map(|b| (b.origin.y - px(130.)).min(px(670.)).max(px(160.)))
+            .map(|b| (b.origin.y - px(85.)).min(px(670.)).max(px(160.)))
             .unwrap_or(px(470.))
     } else {
         px(520.)
@@ -333,14 +333,22 @@ pub(crate) fn input_area(
                     .left_0()
                     .right_0()
                     .bottom(gpui::relative(1.))
-                    .pb(px(8.))
+                    // 菜单贴胶囊缝：任务页 2px（2026-11-19 用户令），会话区照旧 8
+                    .pb(px(if task_form { 2. } else { 8. }))
                     // 与胶囊同宽同位：inner 会话界面下是全宽（仅 px(15) 内
                     // 边距），直接铺满会比内容列宽封顶的胶囊宽一截；居中约束
                     // 与测量元素（同款 max_w）对齐后左右边缘贴合胶囊
                     .flex()
                     .justify_center()
                     .child(div().w_full().when_some(cap_w, |d, w| d.max_w(w)).child(
-                        crate::slash_menu_view(chat, weak, t, menu_max_h.to_f64() as f32, cx),
+                        crate::slash_menu_view(
+                            chat,
+                            weak,
+                            t,
+                            menu_max_h.to_f64() as f32,
+                            task_form,
+                            cx,
+                        ),
                     )),
             )
         })

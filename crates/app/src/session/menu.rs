@@ -585,6 +585,8 @@ pub(crate) fn slash_menu_view(
     t: &'static crate::appearance::theme::Theme,
     // 壳限高（会话区 520；任务页嵌入态按视口钳——见 input_area）
     max_h: f32,
+    // 任务页嵌入态（046）：壳边框换主题色（2026-11-19 用户令）——会话区照旧灰边
+    task_form: bool,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
     let searching = chat.menu_searching();
@@ -807,7 +809,7 @@ pub(crate) fn slash_menu_view(
         .flex_col()
         .bg(rgb(t.bg))
         .border_1()
-        .border_color(rgb(t.border))
+        .border_color(rgb(if task_form { t.accent } else { t.border }))
         .rounded(px(8.))
         .shadow_lg()
         .max_h(px(max_h))
