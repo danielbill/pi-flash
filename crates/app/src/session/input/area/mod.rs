@@ -219,7 +219,10 @@ pub(crate) fn input_area(
         } else {
             rgb(t.border)
         })
-        .bg(rgb(t.bg))
+        // 任务页嵌入态分支配色（2026-11-19 用户令）：胶囊底=bg_panel 与表单
+        // 上方小输入框同色（gpui-component TextInput 填充即 c.background=
+        // bg_panel，appearance/mod.rs 同步）；会话区照旧 bg
+        .bg(rgb(if task_form { t.bg_panel } else { t.bg }))
         .shadow_lg()
         // 鼠标透传修复（psp_overlays 同款方案）：胶囊浮在聊天区上，指针处
         // 双层 hitbox 都命中，事件漏进底下的消息列表（悬停/滚轮/点击穿
