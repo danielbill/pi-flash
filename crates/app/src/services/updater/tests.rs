@@ -180,38 +180,23 @@ fn cleanup_skips_live_payload_dir() {
     fake_payload(&live, "0.1.8");
     fake_payload(&me, "0.1.10");
 
-    // 占用者：share-none 打开 live 内的文件，抓住后写哨兵文件（测试侧靠它
-    // 同步，不靠碰运气的 sleep）
-    let sentinel = root.join("holding.txt");
-    let mut holder = hidden_powershell()
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "$f=[System.IO.File]::Open('{}','Open','Read','None'); \
-                 Set-Content -LiteralPath '{}' -Value ok; \
-                 Start-Sleep -Seconds 30",
-                live.join(exe_rel()).display(),
-                sentinel.display()
-            ),
-        ])
-        .spawn()
-        .unwrap();
-    for _ in 0..50 {
-        if sentinel.exists() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(sentinel.exists(), "占用者未就位（powershell 启动失败？）");
+    // 占用者：本进程 share-none（FILE_SHARE_NONE）持住 live 内文件的句柄，
+    // 句柄存活 = 占用生效，Drop = 释放。不再借道 powershell——原实现靠哨兵
+    // 文件 + 5s 预算同步，CI 冷机 powershell 启动超预算即假红（2026-11-18
+    // 实录）；std OpenOptionsExt::share_mode 原生等价，零进程零等待。
+    use std::os::windows::fs::OpenOptionsExt;
+    let holder = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(live.join(exe_rel()))
+        .expect("share-none 打开占用者");
 
     cleanup_older(root.clone(), me.clone());
     assert!(live.exists(), "活目录（文件被占用）绝不能删");
     assert!(me.exists(), "自己不动");
 
-    let _ = holder.kill();
-    let _ = holder.wait();
-    std::thread::sleep(Duration::from_millis(300));
+    drop(holder);
+    cleanup_older(root.clone(), me.clone());
     cleanup_older(root.clone(), me.clone());
     assert!(!live.exists(), "占用释放后应能删掉");
     assert!(me.exists());
