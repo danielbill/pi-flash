@@ -370,6 +370,19 @@ impl Chat {
             } else {
                 self.open_session(path.clone(), false, cx);
             }
+        } else {
+            // 目标已持注意力（固定 tab 开着）：上面整段 switch 被跳过，而前台
+            // 视图正停在会话查询（或终端/文件）tab——locate 照样在后台改
+            // ListState，用户却看不到任何跳转（2026-11-19 报障：已打开的会话
+            // 点搜索结果不动）。补一遍切姿态：switch_to 的「回 chat 前台」
+            // 姿态（active_panel_tab 清位 + content_view → Chat）只在真切换
+            // 时才走，这里得手动补——observer 入口幂等（tab 已开 = 激活 +
+            // switch_to），普通会话走池命中同款 switch_pool_rt。
+            if subagent {
+                self.open_subagent_session_window(path.clone(), cx);
+            } else if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+                self.switch_pool_rt(rt, cx);
+            }
         }
         let rt = self.rt();
         let located = rt.update(cx, |r, cx| r.locate_message(ts, &needle, cx));
