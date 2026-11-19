@@ -585,8 +585,6 @@ pub(crate) fn slash_menu_view(
     t: &'static crate::appearance::theme::Theme,
     // 壳限高（会话区 520；任务页嵌入态按视口钳——见 input_area）
     max_h: f32,
-    // 任务页嵌入态（046）：壳边框换主题色（2026-11-19 用户令）——会话区照旧灰边
-    task_form: bool,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
     let searching = chat.menu_searching();
@@ -809,7 +807,9 @@ pub(crate) fn slash_menu_view(
         .flex_col()
         .bg(rgb(t.bg))
         .border_1()
-        .border_color(rgb(if task_form { t.accent } else { t.border }))
+        // 全站唯一菜单壳样式（2026-11-19 用户令「统一成一个，一处改都改」：
+        // 不再分任务页/会话区两套分支）——1px 主题色描边
+        .border_color(rgb(t.accent))
         .rounded(px(8.))
         .shadow_lg()
         .max_h(px(max_h))
