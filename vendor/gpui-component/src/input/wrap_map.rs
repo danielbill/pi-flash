@@ -365,17 +365,20 @@ impl WrapSnapshot {
 
             while let Some(edit) = tab_edits_iter.next() {
                 if edit.new.start.0 > new_transforms.summary().input.lines {
-                    let summary = tab_text_summary_rows(
+                    let summary = tab_text_summary_points(
                         &new_tab_snapshot,
-                        new_transforms.summary().input.lines.row..edit.new.start.row(),
+                        TabPoint::new(
+                            new_transforms.summary().input.lines.row,
+                            new_transforms.summary().input.lines.column,
+                        )..edit.new.start,
                     );
                     new_transforms.push_or_extend(WTransform::isomorphic(summary));
                 }
 
                 if edit.new.start < edit.new.end {
-                    let summary = tab_text_summary_rows(
+                    let summary = tab_text_summary_points(
                         &new_tab_snapshot,
-                        edit.new.start.row()..edit.new.end.row() + 1,
+                        edit.new.start..edit.new.end,
                     );
                     new_transforms.push_or_extend(WTransform::isomorphic(summary));
                 }
@@ -384,9 +387,9 @@ impl WrapSnapshot {
                 if let Some(next_edit) = tab_edits_iter.peek() {
                     if next_edit.old.start > old_cursor.end() {
                         if old_cursor.end().0 > edit.old.end.0 {
-                            let summary = tab_text_summary_rows(
+                            let summary = tab_text_summary_points(
                                 &self.tab_snapshot,
-                                edit.old.end.row()..old_cursor.end().row(),
+                                edit.old.end..old_cursor.end(),
                             );
                             new_transforms.push_or_extend(WTransform::isomorphic(summary));
                         }
@@ -399,9 +402,9 @@ impl WrapSnapshot {
                     }
                 } else {
                     if old_cursor.end().0 > edit.old.end.0 {
-                        let summary = tab_text_summary_rows(
+                        let summary = tab_text_summary_points(
                             &self.tab_snapshot,
-                            edit.old.end.row()..old_cursor.end().row(),
+                            edit.old.end..old_cursor.end(),
                         );
                         new_transforms.push_or_extend(WTransform::isomorphic(summary));
                     }
@@ -468,9 +471,13 @@ impl WrapSnapshot {
 
             while let Some(edit) = row_edits.next() {
                 if edit.new_rows.start > new_transforms.summary().input.lines.row {
-                    let summary = tab_text_summary_rows(
+                    let summary = tab_text_summary_points(
                         &new_tab_snapshot,
-                        new_transforms.summary().input.lines.row..edit.new_rows.start,
+                        TabPoint::new(
+                            new_transforms.summary().input.lines.row,
+                            new_transforms.summary().input.lines.column,
+                        )
+                            ..TabPoint::new(edit.new_rows.start, 0),
                     );
                     new_transforms.push_or_extend(WTransform::isomorphic(summary));
                 }
@@ -519,9 +526,12 @@ impl WrapSnapshot {
                 if let Some(next_edit) = row_edits.peek() {
                     if next_edit.old_rows.start > old_cursor.end().row() {
                         if old_cursor.end() > TabPoint::new(edit.old_rows.end, 0) {
-                            let summary = tab_text_summary_rows(
+                            // zed 同款：点区间 gap 填充（光标可停在 iso piece
+                            // 行中——区间须含落点前的部分行内容，见
+                            // tab_text_summary_points 注释）
+                            let summary = tab_text_summary_points(
                                 &self.tab_snapshot,
-                                edit.old_rows.end..old_cursor.end().row(),
+                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(),
                             );
                             new_transforms.push_or_extend(WTransform::isomorphic(summary));
                         }
@@ -534,9 +544,9 @@ impl WrapSnapshot {
                     }
                 } else {
                     if old_cursor.end() > TabPoint::new(edit.old_rows.end, 0) {
-                        let summary = tab_text_summary_rows(
+                        let summary = tab_text_summary_points(
                             &self.tab_snapshot,
-                            edit.old_rows.end..old_cursor.end().row(),
+                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(),
                         );
                         new_transforms.push_or_extend(WTransform::isomorphic(summary));
                     }
@@ -549,8 +559,6 @@ impl WrapSnapshot {
         self.transforms = new_transforms;
         self.tab_snapshot = new_tab_snapshot;
     }
-
-    // ---- 换算（zed WrapSnapshot 同名方法移植） ----
 
     /// zed max_point。
     pub fn max_point(&self) -> WrapPoint {
@@ -840,6 +848,21 @@ fn tab_text_summary_rows(tab: &TabSnapshot, rows: Range<u32>) -> TextSummary {
     TextSummary::from_str(&text)
 }
 
+/// zed TabSnapshot::text_summary_for_range 的 tab 点区间摘要：端点经
+/// tab→fold 换算后取 fold 层 summary（折叠/续行段感知，区间端点可落在
+/// 行中）。wrap 链 gap 填充专用——**必须用点区间**：编辑行边界常落在
+/// iso piece 内部（一个 iso 横跨「段落尾段 + 整行 + 下段首段」），行区
+/// 间会丢掉光标落点与行尾之间的部分内容，suffix 从行中续上后输入流缺
+/// 一段，后续所有 wrap 边界错位（2026-11-19 md 源码态回车即崩的根因）。
+fn tab_text_summary_points(tab: &TabSnapshot, range: Range<TabPoint>) -> TextSummary {
+    if range.start >= range.end {
+        return TextSummary::default();
+    }
+    let input_start = tab.tab_point_to_fold_point(range.start, Bias::Left).0;
+    let input_end = tab.tab_point_to_fold_point(range.end, Bias::Right).0;
+    tab.fold_snapshot.text_summary_for_range(input_start..input_end)
+}
+
 // ---------- 测试（构树直测 + 假 wrap_line 闭包，无文本系统依赖） ----------
 
 #[cfg(test)]
@@ -1120,6 +1143,110 @@ fn second() {
         // 直通：wrap 行 == tab 行
         for row in 0..4u32 {
             assert_eq!(ws.to_tab_point(WrapPoint::new(row, 0)), TabPoint::new(row, 0));
+        }
+    }
+
+    /// 假 wrap_line：每 4 字符一折（char 对齐、缩进 0；短行不折——只折
+    /// >6 字符的行，让「长行尾段 + 后续短行」融合成跨多行的单个 iso）。
+    fn fake_boundaries(line: &str, _w: Pixels) -> Vec<gpui::Boundary> {
+        let mut out = Vec::new();
+        let mut ix = 0usize;
+        let mut n = 0u32;
+        for c in line.chars() {
+            if c == '\n' {
+                break;
+            }
+            ix += c.len_utf8();
+            n += 1;
+            if n == 4 {
+                out.push(gpui::Boundary {
+                    ix,
+                    next_indent: 0,
+                });
+                n = 0;
+            }
+        }
+        out
+    }
+
+    fn wrap_all(ws: &mut WrapSnapshot, tab: TabSnapshot, width: Pixels) {
+        let range = TabPoint::new(0, 0)..tab.max_point();
+        ws.update(
+            tab,
+            &[TabEdit {
+                old: range.clone(),
+                new: range,
+            }],
+            width,
+            &mut fake_boundaries,
+        );
+    }
+
+    /// 回车崩溃回归（2026-11-19 用户实测：md 源码态软换行段边界处敲
+    /// Enter 即崩，element.rs 段切片 mid-char panic）：
+    ///
+    /// 编辑 old_rows 的行首落点会停在**跨多行的 iso piece 内部**（长行尾
+    /// 段 + 后续短行 + 下一段首段融合成一件）。gap 填充若按**行区间**取
+    /// 旧树内容，会丢掉落点所在 piece 的行中部分（恰是下一段的首段字
+    /// 节），suffix 从 piece 行中续上——输入流缺一段，后续所有 wrap 边界
+    /// 错位到列 0，row_info 产出 (0, 旧边界) 的 mid-char 段。zed 原文为
+    /// 点区间；本测试锁死「内容不丢 + 段界 char 对齐」两条不变量。
+    #[test]
+    fn repro_enter_edit_keeps_wrapped_row_content() {
+        // 行长（字符）：5 / 0 / 14 / 0 / 5 / 0 / 14——只有两个 14 字符长行
+        // 折（4 字符一段：12/24/36 字节边界），行 2 尾段 + 行 3/4/5 + 行 6
+        // 首段融合成跨行 iso
+        let text0 = "零一二三四\n\n段落甲特别长需要换行测试中文\n\n二级标题行\n\n段落乙也特别长足够长测试换行\n";
+        let mut ws = WrapSnapshot::new(tab_snap(text0));
+        let tab0 = ws.tab_snapshot.clone();
+        wrap_all(&mut ws, tab0, px(100.));
+
+        // Enter：行 2 首个 wrap 边界（4 字符 = 12 字节）处插入换行——
+        // 折行段边界处回车 = 用户实际姿势（End 键停在段边界）
+        let text1 = "零一二三四\n\n段落甲特别\n长需要换行测试中文\n\n二级标题行\n\n段落乙也特别长足够长测试换行\n";
+        let tab1 = tab_snap(text1);
+        ws.update(
+            tab1,
+            &[TabEdit {
+                old: TabPoint::new(2, 12)..TabPoint::new(2, 12),
+                new: TabPoint::new(2, 12)..TabPoint::new(3, 0),
+            }],
+            px(100.),
+            &mut fake_boundaries,
+        );
+
+        // 不变量 1：树内容不丢——iso 输入字节总和 == 新文本字节长
+        let mut cur = ws.transforms.cursor::<TabPoint>(());
+        cur.seek(&TabPoint::new(0, 0), Bias::Left);
+        let mut total = 0usize;
+        while let Some(item) = cur.item() {
+            total += item.summary.input.len;
+            cur.next();
+        }
+        assert_eq!(total, text1.len(), "树内容字节数必须等于新文本（不丢段）");
+
+        // 不变量 2：每个显示行的段界都是该行文本的 char 边界，且段序列
+        // 无缝覆盖整行（崩溃现场 = seg_end 落在 CJK 字节中间）
+        let max_row = ws.max_point().row();
+        let mut per_tab: std::collections::BTreeMap<u32, (usize, usize)> = Default::default();
+        for row in 0..=max_row {
+            let info = ws.row_info(row);
+            let line = ws.tab_snapshot.expand_row(info.tab_row).text;
+            assert!(
+                line.is_char_boundary(info.seg_start as usize)
+                    && line.is_char_boundary(info.seg_end as usize),
+                "display row {row} seg=({},{}) 落在 '{}' 非边界处",
+                info.seg_start,
+                info.seg_end,
+                &line[..line.len().min(30)]
+            );
+            let e = per_tab.entry(info.tab_row).or_insert((0, 0));
+            e.1 = e.1.max(info.seg_end as usize);
+        }
+        // 不变量 3：每个 tab 行段覆盖连续到行尾（无跳段）
+        for (tab_row, (_, end)) in per_tab {
+            let len = ws.tab_snapshot.line_len(tab_row);
+            assert_eq!(end, len as usize, "tab row {tab_row} 段覆盖不连续");
         }
     }
 }
