@@ -312,6 +312,7 @@ impl Chat {
                 });
             }
         }
+        let same_rt = self.pool.active_key == rt.read(cx).key;
         let (input, images, history, key, file) = rt.update(cx, |r, _| {
             (
                 r.input.clone(),
@@ -321,10 +322,17 @@ impl Chat {
                 r.file.clone(),
             )
         });
-        self.composer.input = input;
-        self.composer.pending_images = images;
-        self.composer.history = history;
-        self.composer.history_ix = None;
+        // 幂等激活守卫（2026-11-19 用户报障）：打字只活在 composer 镜像，
+        // r.input 只在跨会话切换/发送时同步——同会话再走 switch_to（终端/
+        // 文件视图点回主会话 tab、列表重开活跃行）若照旧用 r.input 回灌
+        // composer，就是拿旧值清掉用户未发送的输入。同 rt 时镜像即真值，
+        // 不动。
+        if !same_rt {
+            self.composer.input = input;
+            self.composer.pending_images = images;
+            self.composer.history = history;
+            self.composer.history_ix = None;
+        }
         self.pool.active_key = key.clone();
         // tab 姿态（044-0 验收②）：普通会话 = 主会话指针跟进 + 标题快照刷
         // 新 + 自由区全灭（chat 前台高亮归固定段）；observer 观察窗 = 激活
