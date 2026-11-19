@@ -50,59 +50,69 @@ pub(crate) fn composer_bar(
             cx,
         ));
     // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 15px（2026-10-13 用户
-    // 定夺，与左组一致）；操作栏左右 padding 10px = 发送钮距胶囊边框 10px
+    // 定夺，与左组一致）；操作栏左右 padding 10px = 发送钮距胶囊边框 10px。
+    // 任务嵌入态无上下文环（2026-11-19 用户令：会话用量与任务表单无关）
     let ctx_tip = ctx_tip_element(chat, t, cx);
-    let mut right = div().ml_auto().flex().items_center().gap(px(15.)).child(
-        // 上下文用量环：track 在下、实际比例的主题色弧在上（弧 SVG 按百分比
-        // 运行时生成，icons/ring-p{1-99}；100% 走静态 ring-100）。悬浮显示
-        // 用量详情，挪开淡出（ctx_tip_* 状态机）
-        div()
-            .id("ctx-ring")
-            .relative()
-            .p(px(4.))
-            .m(px(-4.)) // 命中区扩到 26px，视觉位置不变
-            .cursor_pointer()
-            .rounded_full()
-            .hover(|s| s.bg(rgb(t.bg_hover)))
-            .on_hover(cx.listener(|this, h: &bool, _w, cx| ctx_tip_hover(this, true, *h, cx)))
-            .child(
-                // 同心双环：track 在下、进度弧在上（svg 是 flex 行内子元素
-                // 会并排——必须各自绝对定位铺满后居中才叠成同心）
+    let mut right = div()
+        .ml_auto()
+        .flex()
+        .items_center()
+        .gap(px(15.))
+        .when(!task_form, |d| {
+            d.child(
+                // 上下文用量环：track 在下、实际比例的主题色弧在上（弧 SVG 按百分比
+                // 运行时生成，icons/ring-p{1-99}；100% 走静态 ring-100）。悬浮显示
+                // 用量详情，挪开淡出（ctx_tip_* 状态机）
                 div()
+                    .id("ctx-ring")
                     .relative()
-                    .size(px(18.))
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(crate::ui::icon("ring-track", 18., t.bg_selected)),
+                    .p(px(4.))
+                    .m(px(-4.)) // 命中区扩到 26px，视觉位置不变
+                    .cursor_pointer()
+                    .rounded_full()
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .on_hover(
+                        cx.listener(|this, h: &bool, _w, cx| ctx_tip_hover(this, true, *h, cx)),
                     )
-                    .children(ctx_pct.map(|p| {
-                        let path = if p >= 100. {
-                            "icons/ring-100.svg".to_string()
-                        } else {
-                            format!("icons/ring-p{}.svg", p.round().clamp(1., 99.) as u8)
-                        };
+                    .child(
+                        // 同心双环：track 在下、进度弧在上（svg 是 flex 行内子元素
+                        // 会并排——必须各自绝对定位铺满后居中才叠成同心）
                         div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
+                            .relative()
+                            .size(px(18.))
                             .child(
-                                gpui::svg()
-                                    .path(SharedString::from(path))
-                                    .text_color(rgb(t.accent))
-                                    .size(px(18.)),
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(crate::ui::icon("ring-track", 18., t.bg_selected)),
                             )
-                    }))
-                    // 悬浮详情浮层（absolute 越界，浮层随 hover/淡出态挂载）
-                    .children(ctx_tip),
-            ),
-    );
+                            .children(ctx_pct.map(|p| {
+                                let path = if p >= 100. {
+                                    "icons/ring-100.svg".to_string()
+                                } else {
+                                    format!("icons/ring-p{}.svg", p.round().clamp(1., 99.) as u8)
+                                };
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        gpui::svg()
+                                            .path(SharedString::from(path))
+                                            .text_color(rgb(t.accent))
+                                            .size(px(18.)),
+                                    )
+                            }))
+                            // 悬浮详情浮层（absolute 越界，浮层随 hover/淡出态挂载）
+                            .children(ctx_tip),
+                    ),
+            )
+        });
     // 模型 ∨（基座 = bar_trigger；锚点与守卫留在本处）。cpu 前缀：
     // 与思考/工具钮同款 icon+label 节奏（2026-11-08 用户定稿）
     right = right.child(

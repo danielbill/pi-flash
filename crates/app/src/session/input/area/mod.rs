@@ -250,7 +250,7 @@ pub(crate) fn input_area(
         div()
             .id("composer-editor")
             .w_full()
-            .min_h(px(if task_form { 300. } else { 60. }))
+            .min_h(px(if task_form { 200. } else { 60. }))
             .pt(px(2.))
             .pb(px(2.))
             .px(px(6.))
@@ -302,16 +302,16 @@ pub(crate) fn input_area(
     let cap_w = (!task_form).then(|| px(content_w));
     // 任务嵌入态统一菜单限高：菜单挂详情滚动列内，全高既会顶出窗口上沿
     // 又被列顶裁剪（用户实测）——按上一帧胶囊 bounds 测距：胶囊顶缘 −
-    // 列顶净空(130 = topbar+页头+8缝) 即列内可用高，上限 620（2026-11-17
-    // 用户令：+100）；未就绪退 420 兜底
+    // 列顶净空(130 = topbar+页头+8缝) 即列内可用高，上限 670（2026-11-19
+    // 用户令：再 +50）；未就绪退 470 兜底
     let menu_max_h = if task_form {
         chat.tasks
             .page
             .anchors
             .composer
             .borrow()
-            .map(|b| (b.origin.y - px(130.)).min(px(620.)).max(px(160.)))
-            .unwrap_or(px(420.))
+            .map(|b| (b.origin.y - px(130.)).min(px(670.)).max(px(160.)))
+            .unwrap_or(px(470.))
     } else {
         px(520.)
     };

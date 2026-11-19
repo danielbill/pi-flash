@@ -559,7 +559,12 @@ fn agent_block(
 
     vec![
         field("task.project", proj_chip, false),
-        field("task.instr", panel, true),
+        // 项目 ↔ 指令 间距拉大到 50（2026-11-19 用户令；容器 gap 16 + mt 34）
+        div()
+            .mt(px(34.))
+            .w_full()
+            .child(field("task.instr", panel, true))
+            .into_any_element(),
     ]
 }
 
