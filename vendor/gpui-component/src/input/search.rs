@@ -14,8 +14,8 @@ use crate::{
     button::{Button, ButtonVariants},
     h_flex,
     input::{
-        Enter, Escape, IndentInline, InputEvent, InputState, RopeExt as _, Search, SearchReplace,
-        TextInput,
+        Enter, Escape, IndentInline, InputEvent, InputState, OutdentInline, RopeExt as _, Search,
+        SearchReplace, TextInput,
     },
     label::Label,
     v_flex, ActiveTheme, Disableable, IconName, Selectable, Sizable,
@@ -303,9 +303,15 @@ impl SearchPanel {
     ) {
         self.open = true;
         // ctrl+f 只出搜索行，ctrl+h 出搜索+替换（zed 同款）；面板已开时
-        // 重复按键也按新意图归位
+        // 重复按键也按新意图归位。zed toggle_replace（buffer_search.rs
+        // L1749-1761）：展开替换行时焦点自动落替换框，收起回查询框——
+        // 用户无需 Tab 跳栏即可续填
         self.replace_mode = replace;
-        self.search_input.read(cx).focus_handle.focus(window);
+        if replace {
+            self.replace_input.read(cx).focus_handle.focus(window);
+        } else {
+            self.search_input.read(cx).focus_handle.focus(window);
+        }
 
         self.search_input.update(cx, |this, cx| {
             if selected_text.len() > 0 {
@@ -353,8 +359,41 @@ impl SearchPanel {
         self.hide(window, cx);
     }
 
+    // zed buffer_search.rs（scroll 之外第二处字段焦点语义）tab/backtab/
+    // cycle_field（L1661-1690）移植：Tab/shift-tab 在面板字段间轮转
+    // （查询框 → 替换框 → 编辑器本体），与 zed 同款走 capture 阶段截获
+    // 编辑器既有动作（PF：tab→IndentInline、shift-tab→OutdentInline，
+    // input state.rs L145/146 绑定；zed：editor::Tab/editor::Backtab）——
+    // 焦点在面板内时编辑器收不到（不误触 indent/outdent）；焦点落到编辑
+    // 器后面板退出焦点链，两键恢复原语义。上游原 on_action_tab 一步甩编
+    // 辑器（无替换框中转），与用户肌肉记忆相悖（2026-11-20 报障）。
     fn on_action_tab(&mut self, _: &IndentInline, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.focus_handle(cx).focus(window);
+        self.cycle_field(true, window, cx);
+    }
+
+    fn on_action_backtab(&mut self, _: &OutdentInline, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_field(false, window, cx);
+    }
+
+    fn cycle_field(&mut self, next: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let mut handles = vec![self.search_input.read(cx).focus_handle(cx)];
+        if self.replace_mode {
+            handles.push(self.replace_input.read(cx).focus_handle(cx));
+        }
+        handles.push(self.editor.focus_handle(cx));
+        let Some(current) = handles.iter().position(|h| h.is_focused(window)) else {
+            return;
+        };
+        let len = handles.len();
+        let new_index = if next {
+            (current + 1) % len
+        } else if current == 0 {
+            len - 1
+        } else {
+            current - 1
+        };
+        handles[new_index].focus(window);
+        cx.stop_propagation();
     }
 
     fn prev(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -481,7 +520,10 @@ impl Render for SearchPanel {
             .on_action(cx.listener(Self::on_action_prev))
             .on_action(cx.listener(Self::on_action_next))
             .on_action(cx.listener(Self::on_action_escape))
-            .on_action(cx.listener(Self::on_action_tab))
+            // zed 同款 capture 阶段截获（buffer_search.rs L462-463）：焦点
+            // 在查询/替换框时先于 InputState 自身的 indent/outdent 处理
+            .capture_action(cx.listener(Self::on_action_tab))
+            .capture_action(cx.listener(Self::on_action_backtab))
             .font_family(".SystemUIFont")
             .items_center()
             // 内边距对齐操作栏行（pl 12 = 面包屑文字左缘，pr 8 = 右侧图标
