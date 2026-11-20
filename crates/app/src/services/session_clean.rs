@@ -91,7 +91,7 @@ impl Chat {
                     crate::i18n::tf("session.autoclean_done", &[("n", n.to_string())]),
                     cx,
                 );
-                c.refresh_sessions();
+                c.refresh_sessions(cx);
                 cx.notify();
             });
         })

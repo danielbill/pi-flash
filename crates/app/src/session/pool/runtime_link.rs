@@ -74,7 +74,7 @@ impl Chat {
                     cx.notify();
                 }
                 SessionEvent::ListDirty => {
-                    chat.refresh_sessions();
+                    chat.refresh_sessions(cx);
                     cx.notify();
                 }
                 SessionEvent::PendingTab(preview) => {

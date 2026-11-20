@@ -209,6 +209,8 @@ impl Chat {
                 psp_shown: std::collections::HashMap::new(),
                 psp_scroll: gpui::ScrollHandle::new(),
                 psp_sb_state: crate::ui::psp_scrollbar::PspScrollbarState::new(),
+                sessions_scan_inflight: false,
+                sessions_scan_queued: false,
                 search_hits: Vec::new(),
                 search_truncated: false,
                 search_running: false,

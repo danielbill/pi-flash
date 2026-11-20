@@ -336,7 +336,7 @@ impl Chat {
                 );
             }
         }
-        self.refresh_sessions();
+        self.refresh_sessions(cx);
         cx.notify();
     }
 

@@ -207,7 +207,7 @@ impl Chat {
         self.psp
             .collapsed_keys
             .remove(&same_ws_key(&rt.read(cx).cwd.to_string_lossy()));
-        self.refresh_sessions();
+        self.refresh_sessions(cx);
         // 046 任务派发链：在途上下文随身份搬家（draft-N → 会话文件键）
         crate::tasks::run::on_session_bound(self, &old_key, &path, cx);
         cx.notify();
@@ -287,7 +287,7 @@ impl Chat {
         //    项目默认展开 cwd）；Pin 视图同样按项目恢复（关闭前开着 = 重启
         //    还开），但收藏为空时无意义（照旧退回文件树）
         self.restore_tree_state(&cwd);
-        self.refresh_sessions();
+        self.refresh_sessions(cx);
         self.load_project_files();
         // 9rk0：refresh_git 的 rebuild_tree 随数据后台换入（~150ms），这里先
         // 用空 git 数据同步展平新 cwd 的树，否则换项目瞬间文件树残留旧项目

@@ -62,17 +62,53 @@ impl Chat {
         self.rt().update(cx, |r, _| r.refresh_state());
     }
 
-    pub(crate) fn refresh_sessions(&mut self) {
+    /// 当前项目会话清单刷新。扫描器调用（list_sessions_for_cwd）必须留在
+    /// 后台：pi-link Scanner 是进程级全局 Mutex，指纹失配的文件在锁内重读
+    /// （无基线 = 全量流读整份会话文件），而打开项目弹窗的项目聚合
+    ///（list_sessions(2000)）/ recents 30s 轮询都持同一把锁——这条此前跑在
+    /// UI 线程，撞上后台持锁就把整个窗口冻死（pi-flash-m526，2026-11-20
+    /// 用户报障：新会话页点项目「无论如何无法切换」，片刻后自行恢复）。
+    /// 挪后台回填 + 在飞合并（inflight/queued）：飞行期间的新请求不叠
+    /// 并发扫描，落地后补扫一轮——在飞那轮可能扫于本次变更前，结果
+    /// 不可信（删除的会话行会被旧扫描复活）。
+    pub(crate) fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
         // 无项目态：没有「当前项目会话清单」可言（psp 窗口分组照常）
         let Some(cwd) = self.ws.cwd.clone() else {
             return;
         };
+        if self.psp.sessions_scan_inflight {
+            self.psp.sessions_scan_queued = true;
+            return;
+        }
+        self.psp.sessions_scan_inflight = true;
         let cwd = cwd.to_string_lossy().to_string();
+        let cwd_scan = cwd.clone();
+        cx.spawn(async move |this, cx| {
+            let full = cx
+                .background_spawn(async move { list_sessions_for_cwd(&cwd_scan, 500) })
+                .await;
+            let _ = this.update(cx, |c, cx| {
+                c.psp.sessions_scan_inflight = false;
+                if c.psp.sessions_scan_queued {
+                    c.psp.sessions_scan_queued = false;
+                    c.refresh_sessions(cx);
+                    return;
+                }
+                c.apply_session_scan(&cwd, full);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 扫描结果落地回填（refresh_sessions 的后台半程，纯内存装配）：影子/
+    /// 时间窗/置顶过滤 + 当前项目组同步 + topbar 标题快照对齐。
+    fn apply_session_scan(&mut self, cwd: &str, scanned: Vec<SessionInfo>) {
         // 影子会话（插件认领线）不进任何列表：过滤清单由插件自己注入
         let hidden = pi_link::hidden_sessions::load();
-        let full = list_sessions_for_cwd(&cwd, 500)
+        let full = scanned
             .into_iter()
-            .filter(|s| same_ws(&s.cwd, &cwd))
+            .filter(|s| same_ws(&s.cwd, cwd))
             .filter(|s| !hidden.hides(s.name.as_deref(), &s.path))
             .collect::<Vec<_>>();
         // v60: 加载语义 = 时间窗口（设置.加载时间窗口）——当前项目只保留
@@ -109,7 +145,7 @@ impl Chat {
             .projects
             .iter()
             .flat_map(|g| {
-                if same_ws(&g.path.to_string_lossy(), &cwd) {
+                if same_ws(&g.path.to_string_lossy(), cwd) {
                     self.pool.sessions.clone()
                 } else {
                     g.sessions.clone()

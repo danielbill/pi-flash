@@ -168,6 +168,12 @@ pub(crate) struct PspUi {
     /// psp 会话列表滚动（滚动条数据源）
     pub(crate) psp_scroll: gpui::ScrollHandle,
     pub(crate) psp_sb_state: crate::ui::psp_scrollbar::PspScrollbarState,
+    /// 会话清单后台扫描在飞（pi-flash-m526）：refresh_sessions 的扫描器
+    /// 调用已挪后台——扫描器全局锁内可能全量流读会话文件，UI 线程等待
+    /// 会把切项目/发消息整窗冻死。在飞期间新请求只置 queued，落地时补扫。
+    pub(crate) sessions_scan_inflight: bool,
+    /// 在飞扫描落地后需再补一轮（飞行期间又有刷新请求进来）
+    pub(crate) sessions_scan_queued: bool,
     // session content search (013): dialog query input + background results
     pub(crate) search_hits: Vec<pi_link::sessions::SearchHit>,
     pub(crate) search_truncated: bool,
