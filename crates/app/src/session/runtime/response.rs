@@ -234,6 +234,34 @@ impl SessionRuntime {
                 }
             }
             self.refresh_state();
+        } else if command == "set_model" && !success {
+            // pi 拒绝切换（此前静默吞掉 = 用户「点了没反应」）。最常见根因
+            // 是**长驻进程目录快照过期**：pi 只在 spawn 时读一次 models.dev
+            // 目录缓存，活进程永不重读；菜单目录却来自 PF 自有缓存 / 同 cwd
+            // 新进程的新答案（models_by_cwd 后写覆盖）——新上架模型菜单里
+            // 有、老进程快照里没有，rpc `set_model` 在可用快照里 find 不到
+            // 即回 "Model not found: p/id"（rpc-mode.js 拒绝串，钉版 1.5.2
+            // 稳定）。兜底：空闲时记 pending_model + 重绑进程——spawn 重读
+            // 磁盘目录（TTL 过期自动刷新），--model 在新目录上必然可解析，
+            // `--session` 复接不丢消息（rebind_pending 同通道）。运行中只报
+            // 错不重绑（打断输出换模型不值，等空闲重试）；auth 类报错重绑
+            // 也救不了且 --model 解析失败会静默回落默认模型（切错模型），
+            // 一并只报错。
+            let reason = error.clone().unwrap_or_else(|| "unknown".into());
+            match stale_model_from_error(&reason) {
+                Some((provider, id)) if !self.agent_running && !self.compacting => {
+                    self.pending_model = Some((provider, id));
+                    self.spawn_attached(cx); // 失败时已置 status.disconnected
+                    // ensure_spawned 同口径：新进程起来先拉一次状态
+                    //（首个 session_start/get_state 到达即清账 pending）
+                    self.refresh_state();
+                    self.notify_toast(tr("model.switch_stale_respawn").to_string(), cx);
+                }
+                _ => {
+                    self.notify_toast(format!("{}: {reason}", tr("model.switch_failed")), cx);
+                }
+            }
+            cx.notify();
         } else if command == "get_entries" && success {
             // fork 锚点的唯一可靠来源：扁平 entries + parentId 回溯。
             // get_tree 在长会话上会被 pi 自己拒绝（见 GetEntries 注释），
@@ -471,5 +499,58 @@ impl SessionRuntime {
             self.status = format!("{command} failed: {}", error.unwrap_or_default());
         }
         true
+    }
+}
+
+/// pi `set_model` 拒绝串 → 过期目录场景的 (provider, modelId)。
+///
+/// 只识别 "Model not found: p/id"（rpc-mode.js 在可用快照里 find 不到时
+/// 的拒绝文案，钉版 1.5.2 稳定；vendor 升级复核点：这串变了兜底就退化成
+/// 只报错，无害）。其余拒绝（"No API key for p/i" 等）返回 None——重绑
+/// 救不了那些，spawn 的 `--model` 解析失败还会静默回落默认模型。商 id
+/// 不含 `/`，模型 id 可能含（openrouter `thinkingmachines/inkling-2-small`），
+/// 所以 `split_once` 取商。
+fn stale_model_from_error(error: &str) -> Option<(String, String)> {
+    let rest = error.strip_prefix("Model not found: ")?.trim();
+    let (provider, id) = rest.split_once('/')?;
+    if provider.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some((provider.to_string(), id.to_string()))
+}
+
+#[cfg(test)]
+mod stale_model_tests {
+    use super::stale_model_from_error;
+
+    #[test]
+    fn parses_not_found_with_slashed_model_id() {
+        // openrouter 模型 id 自带 `/`：商取第一段，其余全归模型 id
+        let got =
+            stale_model_from_error("Model not found: openrouter/thinkingmachines/inkling-2-small");
+        assert_eq!(
+            got,
+            Some((
+                "openrouter".into(),
+                "thinkingmachines/inkling-2-small".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_not_found_with_plain_id() {
+        assert_eq!(
+            stale_model_from_error("Model not found: zai/glm-5.3-flash"),
+            Some(("zai".into(), "glm-5.3-flash".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_auth_and_other_errors() {
+        // auth 缺失：重绑救不了，不兜底
+        assert_eq!(stale_model_from_error("No API key for openrouter/x"), None);
+        assert_eq!(stale_model_from_error(""), None);
+        assert_eq!(stale_model_from_error("Model not found: noprov"), None);
+        assert_eq!(stale_model_from_error("Model not found: /id"), None);
     }
 }

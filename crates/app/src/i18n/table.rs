@@ -125,6 +125,8 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("ask.no_preview", "（无预览）", "（無預覽）", "(no preview)"),
     ("model.select_placeholder", "select model", "select model", "select model"),
     ("model.select_title", "选择模型", "選擇模型", "Select model"),
+    ("model.switch_failed", "切换模型失败", "切換模型失敗", "Model switch failed"),
+    ("model.switch_stale_respawn", "模型目录已过期，正在重连会话完成切换…", "模型目錄已過期，正在重連會話完成切換…", "Model catalog is stale; reconnecting the session to apply the switch…"),
     ("action.filter_models", "过滤模型...", "過濾模型...", "filter models..."),
     ("action.select_project", "选择项目", "選擇項目", "Select project"),
     ("action.no_models_match", "no models match", "no models match", "no models match"),

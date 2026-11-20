@@ -114,6 +114,13 @@
 
 切回 flush 两段式（`switch_to`）：fire-and-forget 全部立即兑现（此刻 active_key 已切到本会话，on_ext_ui 写的 self.rt() 就是本 runtime）；阻塞件只浮队首供作答，其余回队。新增 ExtUiMethod 变体时同步复核 is_blocking 归类。
 
+## set_model 拒绝与目录快照时效（2026-11-20，pi-flash 切模型「点了没反应」）
+
+`rpc set_model` 的模型查找域 = **本进程可用快照**（rpc-mode.js `session.modelRuntime.getAvailableSnapshot()`，provider+id 精确匹配），查无即回错 `"Model not found: p/id"`；`session.setModel` 还会 `checkAuth` 失败抛 `"No API key for p/i"`（rpc-mode 兜底捕获转 error 回执）。两个陷阱：
+
+- **活进程目录快照永不刷新**：pi 只在 spawn 时读一次 models.dev 目录缓存（`models-store.json`，TTL 过期才在新 spawn 重取），长驻进程的新 spawn 之后上架的模型**永远不存在**于其快照——而 PF 菜单目录来自 `models_by_cwd`（同 cwd 后写进程覆盖）与 PF 自有缓存（启动即刷），可能比目标进程的新。于是菜单里有、点击被 pi 拒、旧版 PF 只落 catch-all 状态行（`set_model failed: …`，用户感知即「点了没反应」）。PF 兜底（response.rs set_model 错误臂）：识别 `Model not found` 串 → 空闲（`!agent_running && !compacting`）时记 `pending_model` + `spawn_attached` 重绑（spawn 重读磁盘目录，`--model` 必可解析；`--session` 复接不丢消息）；运行中/其余错误只 toast。**升级复核点**：`"Model not found: "` 前缀串变了兜底就退化成只报错（无害），在 rpc-mode.js `case "set_model"` 处复核文案。
+- **错误串解析唯一落点** = response.rs `stale_model_from_error`（商 id 不含 `/`，模型 id 可含——openrouter `thinkingmachines/inkling-2-small`，`split_once` 取商）。
+
 ## 调试
 
 - `PI_FLASH_RPC_LOG` 开线缆日志。
