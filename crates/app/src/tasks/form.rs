@@ -28,6 +28,7 @@ pub(crate) fn form_head(
     // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 flex_1 + 保存。
     // 立即运行/停用/移除已挪列表行 hover 显影（2026-11-22 用户令，子代理行
     // 同款）——表头只剩保存，名称输入与脚本输入基本等宽
+    // 保存钮 ml 12 + 行 gap 8 = 输入↔保存 20（SP8 口径，与脚本行一致）
     div()
         .flex()
         .items_center()
@@ -35,7 +36,7 @@ pub(crate) fn form_head(
         .flex_shrink_0()
         .child(field_label("task.name"))
         .child(div().flex_1().min_w_0().child(name))
-        .child(config_button(
+        .child(div().ml(px(space::SP6)).child(config_button(
             "task-save",
             weak,
             tr("task.save"),
@@ -43,7 +44,7 @@ pub(crate) fn form_head(
             true,
             false,
             |c, cx| c.task_save_form(cx),
-        ))
+        )))
         .into_any_element()
 }
 
@@ -599,7 +600,11 @@ fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
     vec![
         field(
             "task.script",
+            // 中转层必须 flex_1：field 控件区是 flex 行，本层不 flex_1 就按
+            // 内容收缩，里面 picker 的 flex_1 无空间可分（真机缩成细条实锤）
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .items_center()
                 // 输入↔浏览 间距 20（SP8，2026-11-22 用户令）；浏览贴详情列右缘
