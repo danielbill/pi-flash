@@ -122,7 +122,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.sum_daily", "每天 {t}", "每天 {t}", "Daily at {t}"),
     ("task.sum_weekly", "每周{w} {t}", "每週{w} {t}", "Weekly on {w} {t}"),
     ("task.sum_monthly", "每月 {d} 号 {t}", "每月 {d} 號 {t}", "Monthly on day {d} {t}"),
-    ("task.desc_ph", "输入要 Agent 做的事", "輸入要 Agent 做的事", "Describe what the agent should do"),
+    ("task.desc_ph", "录入任务需求", "录入任务需求", "Describe what the agent should do"),
     ("task.project", "项目", "專案", "Project"),
     ("task.tools", "工具权限", "工具權限", "Tools preset"),
     ("task.model", "模型", "模型", "Model"),
