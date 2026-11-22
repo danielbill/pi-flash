@@ -411,7 +411,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 侧栏基座 `sidebar_shell` | 默认 w**240**，但**现有五页（扩展/模型/技能/MCP/子代理）一律 `.w(LIST_W=400)` 覆盖**——新建分栏页照 **400** 抄，240 只当兜底默认值；`h_full`、右边 1px `t.border`、**不刷底色**（列表区与详情同底） |
 | 列表容器 `sidebar_list` | `px 6 / pt 8`，滚动容器；**列表页统一 `px 7`**（扩展/技能/MCP） |
 | 列表行 `sidebar_item` | h**30**、`px 8`、`mb 1`、r**5**、gap **8**、ui(12)；激活 `bg_selected`+SEMIBOLD+`t.text`，否则 `bg_panel`+`text_muted`，hover `bg_hover` |
-| 组头 `group_header` | `px 8 / pt 8 / pb 3`、ui(10) SEMIBOLD `text_dim`，右侧 aside（计数 + 三态开关） |
+| 组头 `group_header` | `px 8 / pt 8 / pb 13`（2026-11-22 用户令：标题栏↔列表条目距离 +10，原 pb 3）、ui(10) SEMIBOLD `text_dim`，右侧 aside（计数 + 三态开关） |
 | 详情区 `detail_shell` | `p 20`、`gap 16`（`gap_4`）、ui(12)、纵向滚动 |
 | 详情内区块 | 常见 `p 15`（技能/MCP/自定义模型/子代理表单）；区块内行距 **8**、次级行距 **12** |
 | 列宽常量 | `LIST_W = 400`、主导航列 160、侧栏 240、工具定义左列 200 |

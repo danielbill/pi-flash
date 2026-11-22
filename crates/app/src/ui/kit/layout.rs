@@ -63,6 +63,8 @@ pub(crate) fn sidebar_item(id: impl Into<SharedString>, active: bool) -> gpui::S
 }
 
 /// ConfigSidebarGroupLabel：10px 大写组标题，右侧 aside（计数+开关）。
+/// pb 13（2026-11-22 用户令：标题栏↔列表条目距离 +10，原 pb 3；设置页
+/// 五列表与模型/插件选择弹层组头同源共享）。
 pub(crate) fn group_header(label: &str, aside: Option<AnyElement>) -> AnyElement {
     let t = T();
     div()
@@ -70,7 +72,7 @@ pub(crate) fn group_header(label: &str, aside: Option<AnyElement>) -> AnyElement
         .items_center()
         .px(px(8.))
         .pt(px(8.))
-        .pb(px(3.))
+        .pb(px(13.))
         .child(
             div()
                 .flex_1()
