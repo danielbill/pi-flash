@@ -147,8 +147,13 @@ pub fn vlist(
                     box_.h(px(h)).child(list_el)
                 }
             }
-            // Fill：壳填父容器，内层 wrapper 已带列表与滚动条
-            None => box_.flex_1().min_h_0().child(list_el),
+            // Fill：壳填父容器，内层 wrapper 已带列表与滚动条。壳必须自转
+            // flex 容器——gpui div 默认 display: Block，wrapper 的 flex_1 在
+            // block 布局下不生效、高度塌 0（absolute 列表不占流），一行都
+            // 不渲染只剩空壳卡。首个 Fill+shell 调用点 = 任务日志列表翻的车
+            //（2026-11-22）；此前 Fill 调用点全走无壳路径，父容器都是显式
+            // flex，踩不到这条。
+            None => box_.flex().flex_col().flex_1().min_h_0().child(list_el),
         };
     box_.into_any_element()
 }

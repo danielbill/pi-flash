@@ -38,11 +38,12 @@ pub(crate) struct LineSpec {
 }
 
 impl LineSpec {
-    /// 竖直分隔线（全高贴缘，不缩进）。
-    pub(crate) fn vertical() -> Self {
+    /// 竖直分隔线：上下两端缩进 `inset`（壳级全高贴缘传 0；页面级分区线
+    /// 传页边距值，2026-11-22 任务页用户令「竖隔条也要上下留白」）。
+    pub(crate) fn vertical(inset: f32) -> Self {
         Self {
             axis: Axis::V,
-            inset: 0.,
+            inset,
             band: 0.,
         }
     }

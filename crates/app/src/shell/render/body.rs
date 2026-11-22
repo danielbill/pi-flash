@@ -159,7 +159,7 @@ impl Chat {
                 // 不占布局 = hover 零推挤。
                 .when(!panes_hidden, |d| {
                     d.child(crate::ui::divider::line(
-                        crate::ui::divider::LineSpec::vertical(),
+                        crate::ui::divider::LineSpec::vertical(0.),
                         slp_hovered || slp_dragging,
                         t,
                     ))

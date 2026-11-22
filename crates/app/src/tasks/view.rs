@@ -10,7 +10,7 @@
 use chrono::TimeZone as _;
 use std::path::PathBuf;
 
-use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb, rgba};
+use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use pf_context::domain::tasks::{Outcome, TaskKind, TaskRun};
 
@@ -56,14 +56,15 @@ pub(crate) fn page(
         .bg(rgb(t.bg))
         .child(list)
         // 列表 ⇆ 右列竖分隔线：§5.12 统一实现（常驻 1px 细线灰，比 0x45
-        // 自调灰重一档，2026-11-22 用户令：页面分割线统一左面板样式）
+        // 自调灰重一档，2026-11-22 用户令：页面分割线统一左面板样式）。
+        // 上下端缩进 15 对齐页边距（同日用户令：竖隔条也要上下留白）
         .child(
             div()
                 .relative()
                 .w(px(crate::ui::tokens::divider::LINE))
                 .flex_none()
                 .child(crate::ui::divider::line(
-                    crate::ui::divider::LineSpec::vertical(),
+                    crate::ui::divider::LineSpec::vertical(15.),
                     false,
                     t,
                 )),
@@ -402,8 +403,8 @@ fn tasks_list(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme)
         .w(gpui::relative(0.4))
         .min_w(px(400.))
         .flex_none()
-        .border_r_1()
-        .border_color(rgba(theme::border_alpha(t, 0x45)))
+        // 右缘分隔线已由页装配的 §5.12 竖 divider band 承担（2026-11-22），
+        // 这里不再叠 0x45 旧 border——双线会并肩出 1px 错位
         .overflow_y_scroll()
         .px(px(6.))
         .pt(px(8.))

@@ -293,13 +293,14 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 **唯一实现**：`ui::divider`（`LineSpec::{vertical,horizontal}` + `line`）。新增可拖拽分隔线一律调它，禁止就地手画。常驻线/highlight 颜色也由该函数按主题语义 token 统一取（细线灰 `border_alpha(0x99)` / accent），调用方不各传一种灰。
 
-高亮态一律用布尔状态位（`hovered || dragging`）驱动，**不得用 gpui 的 `hover`/`group_hover` 改粗细**。现有三处：
+高亮态一律用布尔状态位（`hovered || dragging`）驱动，**不得用 gpui 的 `hover`/`group_hover` 改粗细**。现有四处（末一处为静态分区线，不接交互）：
 
 | 分隔线 | 位置 | 感应带 | 两端缩进 | 高亮状态位 |
 |---|---|---|---|---|
 | 内容区 ⇆ 左面板（竖） | content-col 左缘 | 12px（板内 3 + 内容侧 9） | 0（全高贴缘） | `LayoutUi::slp_hover` / `slp_drag` |
 | dock 上下分区（横） | 会话列表 ⇆ 文件树之间 | 12px | 10（对齐列表右线） | `LayoutUi::split_hover` / `split_drag` |
 | 插件面板分区（横） | 快捷面板各 section 之间 | 12px | 0 | `PluginEntry::split_hover` / `split_drag` |
+| 任务页分区（静态，2026-11-22） | 左列表⇆右列（竖）/ 详情⇆日志（横） | —（无交互） | 15（对齐页边距，横竖同值） | 无（`active` 恒 false） |
 
 横线在感应带内垂直居中（`(band - thick) / 2`）= 粗细变化中线不动；拖拽跟踪各自在壳层/面板层做（内容区在 `app-body`、dock 在 `app-body`、插件在面板透明覆层），不进本组件。代码落点 `tokens::divider`（LINE / HOVER / HIT，数值唯一落点，勿在此复写）。
 
