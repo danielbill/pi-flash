@@ -193,7 +193,8 @@ pub(crate) fn request_tick() {
     TICK_REQUESTED.store(true, Ordering::SeqCst);
 }
 
-/// 启动泵（startup/pumps.rs 拉起）：recover 编排 → 20s timer 循环。
+/// 启动泵（startup/pumps.rs 拉起）：recover 编排 → 首轮 tick 即刻 →
+/// 20s timer 循环。
 pub(crate) fn spawn(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         // 启动时序：先跑全部 source 的 recover，再开 timer
@@ -201,25 +202,42 @@ pub(crate) fn spawn(cx: &mut gpui::Context<Chat>) {
         if !ok {
             return; // 实体已亡（窗口秒关）
         }
+        // 首轮 tick 不等 timer 即刻跑（2026-11-22 修：原来任务状态面要等
+        // 满 20s 第一 tick 才有数据——任务页开屏「全部任务 0」十几秒的根
+        // 因）。tick 本身 µs 级（缓存 ≤20 行），claim/派发语义与首轮 timer
+        // 完全一致，无额外成本。
+        if !tick_round(&this, cx).await {
+            return;
+        }
         loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(TICK_SECS))
                 .await;
-            // 合并去重：tick 进行中到来的唤醒不丢弃，本轮结束立即补跑
-            loop {
-                let mut again = false;
-                let ok = this
-                    .update(cx, |chat, cx| {
-                        again = tick(chat, cx);
-                    })
-                    .is_ok();
-                if !ok || !again {
-                    break;
-                }
+            if !tick_round(&this, cx).await {
+                return;
             }
         }
     })
     .detach();
+}
+
+/// 一轮合并去重 tick（tick 进行中到来的唤醒不丢弃，本轮结束立即补跑）。
+/// 返回 false = 实体已亡。
+async fn tick_round(this: &gpui::WeakEntity<Chat>, cx: &mut gpui::AsyncApp) -> bool {
+    loop {
+        let mut again = false;
+        let ok = this
+            .update(cx, |chat, cx| {
+                again = tick(chat, cx);
+            })
+            .is_ok();
+        if !ok {
+            return false;
+        }
+        if !again {
+            return true;
+        }
+    }
 }
 
 /// 启动 recover：逐 source 自清上个实例残留。
