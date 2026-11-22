@@ -411,15 +411,17 @@ fn tasks_list(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme)
         .flex()
         .flex_col();
     // 标题栏（空库也出——「新增」是唯一建任务入口）：全部任务 [n] + 右缘
-    // 新增。字号/配色与下方「任务日志」标题同档（2026-11-22 用户令：12
-    // SEMIBOLD text_muted，group_header 的 10 大写组头形制不适用本页）
+    // 新增。pb 13（2026-11-22 用户令：栏下 padding +10）；pr 8 对齐行内容
+    // 缩进——新建钮右缘与任务行时间戳右缘同一竖线（行内容吃 sidebar_item
+    // 的 px8，标题栏原来只 pl 不 pr，钮比时间戳探出 8px）
     list = list.child(
         div()
             .flex()
             .items_center()
             .pl(px(8.))
+            .pr(px(8.))
             .pt(px(8.))
-            .pb(px(3.))
+            .pb(px(13.))
             .child(
                 div()
                     .flex_1()
@@ -657,7 +659,8 @@ fn run_log_panel(
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
-        // 标题：任务日志 + 数量（2026-11-22 用户令）
+        // 标题：任务日志 + 数量（2026-11-22 用户令：不加粗不变色，正常
+        // 字体——此行只是分区标题，不是组头）
         .child(
             div()
                 .flex_none()
@@ -670,15 +673,13 @@ fn run_log_panel(
                 .child(
                     div()
                         .text_size(ui_size(12.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text_muted))
+                        .text_color(rgb(t.text))
                         .child(tr("task.log_title").to_string()),
                 )
                 .child(
                     div()
                         .text_size(ui_size(12.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text_muted))
+                        .text_color(rgb(t.text))
                         .child(SharedString::from(rows.len().to_string())),
                 ),
         )
