@@ -166,9 +166,19 @@ impl Chat {
         let key = path.to_string_lossy().to_string();
         let rt = match self.pool.runtimes.get(&key).cloned() {
             Some(rt) if rt.read(cx).observer => Some(rt),
+            // 任务会话（046）在跑：驱动 runtime 让出路径 key 给观察窗（identity
+            // = 会话路径），进程照跑——abort/shutdown 会杀运行中任务（2026-11-22
+            // 用户报障：运行中日志行点击开不了/不敢开）
+            Some(rt)
+                if rt.read(cx).task_owned && self.tasks.pending.contains_key(&rt.read(cx).key) =>
+            {
+                crate::tasks::run::task_driver_rekey(self, &rt, &key, cx);
+                self.build_observer_rt(&path, cx)
+            }
             // 同 key 被当普通会话开着（进程内不应发生——open_session 有防
             // 呆闸改道；留着是防自动化/外部直开的历史态）：拆掉重建，保住
-            // 「子会话文件 ⟹ 观察窗 runtime」不变量
+            // 「子会话文件 ⟹ 观察窗 runtime」不变量。任务会话已结算的静置
+            // 驱动体也走这里收尸（进程闲置，杀了正好清账）
             Some(rt) => {
                 rt.update(cx, |r, _| {
                     r.rpc(&Command::Abort);

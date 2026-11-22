@@ -88,17 +88,25 @@ impl Chat {
                     let key = rt.read(cx).key.clone();
                     match preview {
                         Some(p) => {
-                            let p = p.clone();
-                            let cwd = rt.read(cx).cwd.to_string_lossy().to_string();
-                            if let Some(e) = chat.psp.pending_tabs.iter_mut().find(|e| e.key == key)
-                            {
-                                e.preview = p;
-                            } else {
-                                chat.psp.pending_tabs.push(PendingTab {
-                                    key,
-                                    preview: p,
-                                    cwd,
-                                });
+                            // 任务会话（046）不进用户会话口径——伪标签同样
+                            // 不挂（2026-11-22 用户报障：任务运行先闪现一条
+                            // 伪标签，FileBound 真标签被 type 过滤撤下后又
+                            // 「消失」；伪标签机制不知 task_owned，守卫挂这里）。
+                            // 撤路径照常幂等（本就挂不上）。
+                            if !rt.read(cx).task_owned {
+                                let p = p.clone();
+                                let cwd = rt.read(cx).cwd.to_string_lossy().to_string();
+                                if let Some(e) =
+                                    chat.psp.pending_tabs.iter_mut().find(|e| e.key == key)
+                                {
+                                    e.preview = p;
+                                } else {
+                                    chat.psp.pending_tabs.push(PendingTab {
+                                        key,
+                                        preview: p,
+                                        cwd,
+                                    });
+                                }
                             }
                         }
                         None => {
