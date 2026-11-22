@@ -328,6 +328,7 @@ fn task_act_btn(
     let weak = weak.clone();
     div()
         .id(SharedString::from(id))
+        // ui-raw: ok 046 行尾动作钮 IB_SM 22 槽逐值复刻（§10.8 登记）
         .size(px(22.))
         .rounded(px(crate::ui::tokens::radius::INLINE))
         .flex()

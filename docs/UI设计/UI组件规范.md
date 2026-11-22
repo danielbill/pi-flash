@@ -492,6 +492,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `tasks/form.rs::ghost_btn` | px 8 / py 3 / rounded 6 | 046 表单行内 ghost 文字钮（py 3 非 2px 网格，HTML 拍板；px/圆角已 token 化） |
 | `tasks/popup.rs` time_pick 时/分行 | h 36 | 046 HTML `tpick` 双列拾取行逐值复刻（点选不关卡连续调时刻） |
 | `tasks/popup.rs::plus_row` | h 32 / gap 8 / px 10 / r 5 | InputPanel `slash_menu_view` 条目卡逐值复刻（2026-11-17 拍板「+ 弹层和 InputPanel 对齐」） |
+| `tasks/view.rs::task_act_btn` | 22×22（icon 12） | 046 行尾动作钮 IB_SM 22 槽逐值复刻（§5.2 拍板；queue_cards icon_btn 同款，其 2 处 22 已冻结基线待收编） |
 
 ---
 
