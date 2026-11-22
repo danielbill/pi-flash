@@ -8,6 +8,8 @@
 //! 轮询）。
 
 use chrono::TimeZone as _;
+use std::path::PathBuf;
+
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb, rgba};
 
 use pf_context::domain::tasks::{Outcome, TaskKind, TaskRun};
@@ -171,6 +173,8 @@ fn run_tip(r: &TaskRun) -> String {
 /// 点行 = 详情回填，不再开话）+ 结果槽 + 右缘 mono 时间。`select` =
 /// Some(def_id) 时行点击 = 详情回填（任务列表行），且行尾 hover 显影动作钮
 /// （立即运行/停用/移除，2026-11-22 用户令从详情表头挪来，子代理行同款）。
+/// `open_path` = Some(session_path) 时行点击 = open_session（日志行专属：
+/// 任务会话已从用户列表隐身，这里是唯一入口；与 select 互斥使用）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
@@ -183,6 +187,7 @@ fn task_row(
     selected: bool,
     weak: &gpui::WeakEntity<Chat>,
     select: Option<String>,
+    open_path: Option<PathBuf>,
     running: bool,
     t: &'static Theme,
 ) -> AnyElement {
@@ -202,6 +207,10 @@ fn task_row(
         .child(SharedString::from(title));
     let weak_row = weak.clone();
     sidebar_item(row_id, selected)
+        // 046 任务行规格（2026-11-22 用户令）：行高 36 + 行间 4（§5.8 新档
+        // row::TASK；基座 30/mb1 按后写覆盖）
+        .h(px(crate::ui::tokens::row::TASK))
+        .mb(px(crate::ui::tokens::space::SP2))
         // subagent 列表同款：列表区与详情区同底，只留分组头与右分隔线
         .bg(rgb(t.bg))
         .when_some(select, |d, def_id| {
@@ -214,8 +223,27 @@ fn task_row(
                     });
                 })
         })
-        // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间
-        .children(tico.map(|name| icon(name, crate::ui::tokens::icon::SM, t.text_dim)))
+        // 日志行开话（任务会话从用户列表隐身后的唯一入口；点行不选中）
+        .when_some(open_path, |d, sp| {
+            let weak_open = weak.clone();
+            d.cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_open.update(cx, |c, cx| {
+                        c.open_session(sp.clone(), false, cx);
+                    });
+                })
+        })
+        // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间。046 行首 tico
+        // 改状态图标（2026-11-22 用户令：icon 对应状态，不再反着）——列表页
+        // 可执行=rotate-clock / 暂停=pause；日志页保留类型图标（file-code /
+        // bot）。尺寸统一走规范 MD；停用行随灰名取 faint。
+        .children(tico.map(|name| {
+            icon(
+                name,
+                crate::ui::tokens::icon::MD,
+                if gray { t.text_faint } else { t.text_dim },
+            )
+        }))
         .child(
             div()
                 .id(dot_id)
@@ -402,7 +430,7 @@ fn tasks_body(
                 .child(tr("task.empty").to_string()),
         );
     } else {
-        for DefRow { def, spec, .. } in &chat.tasks.defs {
+        for DefRow { def, .. } in &chat.tasks.defs {
             let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
             let running = chat.tasks.running.iter().any(|k| *k == def.id);
             let (slot, tip) = if running {
@@ -415,12 +443,9 @@ fn tasks_body(
             };
             let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
             let id = def.id.clone();
-            // 设计 HTML tico：脚本行 file-code / Agent 行 bot
-            let tico: &'static str = if matches!(spec.kind, TaskKind::Agent) {
-                "bot"
-            } else {
-                "file-code"
-            };
+            // 046 行首 tico = 状态图标（2026-11-22 用户令）：可执行态
+            // rotate-clock / 暂停态 pause——icon 与状态对应，不再反着
+            let tico: &'static str = if def.enabled { "rotate-clock" } else { "pause" };
             list = list.child(task_row(
                 SharedString::from(format!("task-sp-{id}")),
                 def.title.clone(),
@@ -432,6 +457,7 @@ fn tasks_body(
                 sel.as_deref() == Some(id.as_str()),
                 weak,
                 Some(id.clone()),
+                None,
                 chat.tasks.running.iter().any(|k| k.as_str() == id),
                 t,
             ));
@@ -485,6 +511,9 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                 .unwrap_or(false);
             let skipped = r.outcome == Outcome::Skipped;
             let gray = gray_task || skipped;
+            // 任务会话已从用户列表隐身（2026-11-22 拍板）：日志行点击 = 开
+            // 该次会话（唯一入口；脚本 run 无 session_path 不出）
+            let open_path = r.session_path.as_deref().map(PathBuf::from);
             let slot = run_slot(r, t);
             let tip = Some(run_tip(r));
             let stamp = fmt_stamp(r.started_at);
@@ -509,7 +538,7 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                     }
                 });
             task_row(
-                id, title, gray, tico, slot, tip, stamp, false, weak, None, false, t,
+                id, title, gray, tico, slot, tip, stamp, false, weak, None, open_path, false, t,
             )
         })
         .collect();

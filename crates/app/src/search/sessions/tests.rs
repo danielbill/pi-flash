@@ -1,5 +1,5 @@
 use super::results::{group_hits, project_name};
-use pi_link::sessions::SearchHit;
+use pi_link::sessions::{SearchHit, SessionKind};
 use std::time::SystemTime;
 
 fn hit(path: &str, name: Option<&str>, ts: i64) -> SearchHit {
@@ -15,6 +15,7 @@ fn hit(path: &str, name: Option<&str>, ts: i64) -> SearchHit {
         match_text: "needle".into(),
         after: " bbb".into(),
         subagent: false,
+        kind: SessionKind::User,
     }
 }
 

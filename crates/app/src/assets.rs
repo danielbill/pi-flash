@@ -125,6 +125,10 @@ assets! {
     "icons/star-filled.svg",
     // 042 可用模型【获取模型】图标钮：lucide rotate-ccw（逆时针刷新）
     "icons/rotate-ccw.svg",
+    // 046 自动任务列表状态图标（2026-11-22 用户令）：lucide rotate-clock
+    // （可执行）/ pause（暂停）——行首 tico 按 enabled 态取用
+    "icons/rotate-clock.svg",
+    "icons/pause.svg",
     // v54 UI: lucide additions
     "icons/sliders-horizontal.svg",
     // 「更多」唯一图标：lucide ellipsis 裸三点（2026-10-13 用户定夺，

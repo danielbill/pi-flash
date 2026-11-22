@@ -116,6 +116,8 @@ pub mod row {
     /// 上下各内缩 1px = 32（相邻色条间留 2px 空隙，见 psp_row_views）。
     pub const MAIN: f32 = 34.;
     pub const PICKER: f32 = 40.;
+    /// 046 任务列表行（2026-11-22 用户定夺 36）：行间另加 SP2=4 间距。
+    pub const TASK: f32 = 36.;
 }
 
 /// §7 图标对齐线（px）：topbar 收放钮图标与 psp 列表行图标（项目 folder /
@@ -290,8 +292,8 @@ mod tests {
         );
         // §5.8 行高 / §5.9 滚动条
         assert_eq!(
-            [row::TREE, row::STD, row::MAIN, row::PICKER],
-            [24., 30., 34., 40.]
+            [row::TREE, row::STD, row::MAIN, row::PICKER, row::TASK],
+            [24., 30., 34., 40., 36.]
         );
         assert_eq!(
             [scrollbar::W, scrollbar::THUMB, scrollbar::THUMB_ACTIVE],
