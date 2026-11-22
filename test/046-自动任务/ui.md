@@ -231,7 +231,7 @@ RESULT: fail=0。
 
 RESULT: 功能链 fail=0；**视觉层发现 1 个 bug（见下）**。
 
-### ✗ BUG：行尾动作钮显影失效（icon 恒 opacity 0，纯视觉层）
+### ✗→✓ BUG：行尾动作钮显影失效（icon 恒 opacity 0）——当轮已修
 
 - 现象：hover 列表行时 tip（立即运行）正常弹出、22px 钮可点击命中
   （trash 点击 → 确认浮层弹出），但三颗 icon **从不渲染**（play/eye-off/trash
@@ -242,9 +242,11 @@ RESULT: 功能链 fail=0；**视觉层发现 1 个 bug（见下）**。
   `GroupHitboxes::push`（div.rs:1846）→ 自引用 group 永远查不到 hitbox，
   opacity(1) refinement 永不生效。settings agents 行同款显影正常 = group 在
   **祖先行**上（agents/view.rs:104 group / :131 group_hover 分离两元素）。
-- 修法：`.group(reveal.clone())` 挪到任务列表行容器（task_row_actions 的
-  调用方），icons div 只留 `.group_hover(reveal, |s| s.opacity(1.))`。
-- 验证：修后 hover 行 → 三 icon 显影（像素裁切）+ tip + 点击链复测。
+- 修法：`.group("task-row-act-{def_id}")` 挪到 task_row 的 sidebar_item 行
+  容器（when_some(select) 分支），icons div 只留 group_hover。
+- 修后复测（实例 tmp/ui-test-046c）：建任务 defs=1 → hover 行 (866,168) →
+  **三 icon 显影**（▷/眼斜杠/垃圾桶像素裁切）+ trash tip「移除」→ 点击
+  确认删除 defs=0；app 534 全绿。陷阱落 docs/agents/gpui.md。
 
 ## 陷阱回填（本轮新增 2 条）
 

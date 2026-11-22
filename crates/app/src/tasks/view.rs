@@ -239,11 +239,14 @@ fn task_row(
         // subagent 列表同款：列表区与详情区同底，只留分组头与右分隔线
         .bg(rgb(t.bg))
         .when_some(select, |d, def_id| {
-            d.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let _ = weak_row.update(cx, |c, cx| {
-                    c.task_select(&def_id, cx);
-                });
-            })
+            // 显影 group 挂行容器（gpui 陷阱：group 与 group_hover 同元素
+            // 永不生效——compute_style 先于自身 push，见 docs/agents/gpui.md）
+            d.group(SharedString::from(format!("task-row-act-{def_id}")))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_row.update(cx, |c, cx| {
+                        c.task_select(&def_id, cx);
+                    });
+                })
         })
         // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间
         .children(tico.map(|name| icon(name, crate::ui::tokens::icon::SM, t.text_dim)))
@@ -290,6 +293,8 @@ fn task_row_actions(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
 ) -> AnyElement {
+    // group 在行容器（task_row），此处只挂 group_hover——同元素自引用永不
+    // 显影（docs/agents/gpui.md「group/group_hover 必须两元素分离」）
     let reveal = SharedString::from(format!("task-row-act-{def_id}"));
     let weak_run = weak.clone();
     let id_run = def_id.to_string();
@@ -304,7 +309,6 @@ fn task_row_actions(
         .items_center()
         .gap(px(crate::ui::tokens::space::SP2))
         .opacity(0.)
-        .group(reveal.clone())
         .group_hover(reveal, |s| s.opacity(1.))
         .font_weight(gpui::FontWeight::NORMAL)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
