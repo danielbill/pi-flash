@@ -26,16 +26,17 @@ pub(crate) fn form_head(
         .name
         .clone()
         .expect("page open ensures inputs");
-    // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 w250 +
-    // 弹性段 + 动作钮（运行中「立即运行」置灰；删除走确认浮层）
+    // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 flex_1 +
+    // 动作钮（运行中「立即运行」置灰；删除走确认浮层）。输入 flex_1 自适应
+    // 延长（2026-11-22 用户令：与脚本输入同步延长，不再 w250 定宽）——
+    // 编辑态右侧动作钮多，会把名称输入挤短一截，物理极限如此
     div()
         .flex()
         .items_center()
         .gap(px(8.))
         .flex_shrink_0()
         .child(field_label("task.name"))
-        .child(div().w(px(250.)).flex_shrink_0().child(name))
-        .child(div().flex_1())
+        .child(div().flex_1().min_w_0().child(name))
         .when(editing, |d| {
             let running = chat
                 .tasks
@@ -623,9 +624,9 @@ fn agent_block(
 
 /// 脚本块（field 行 + 说明行）：只读 input 形态展示框 + 浏览…，note 带
 /// 扩展名校验错误。展示框与名称输入统一样式（TextInput 单行同款：h30 /
-/// w250 / bg_panel / border / INLINE 圆角，2026-11-22 用户令），纯只读、
-/// 无内部提示文案、**无点击行为**（2026-11-22 用户重申：点击不得开文件
-/// 选择器，选文件唯一入口 = 浏览…钮）。
+/// bg_panel / border / INLINE 圆角，2026-11-22 用户令），flex_1 与名称输入
+/// 同步延长，纯只读、无内部提示文案、**无点击行为**（2026-11-22 用户重申：
+/// 点击不得开文件选择器，选文件唯一入口 = 浏览…钮）。
 fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> Vec<AnyElement> {
     let page = &chat.tasks.page;
     let script_text = page
@@ -635,7 +636,8 @@ fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
         .unwrap_or_default();
     let picker = div()
         .id("task-sel-script")
-        .w(px(250.))
+        .flex_1()
+        .min_w_0()
         .h(px(input::H))
         .px(px(space::SP4))
         .border_1()
@@ -673,7 +675,8 @@ fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
             div()
                 .flex()
                 .items_center()
-                .gap(px(space::SP4))
+                // 输入↔浏览 间距 20（SP8，2026-11-22 用户令）；浏览贴详情列右缘
+                .gap(px(space::SP8))
                 .child(picker)
                 .child(config_button(
                     "task-browse",
