@@ -939,8 +939,8 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.model_inherit", "继承新会话默认", "繼承新會話預設", "Session default"),
     ("task.thinking", "思考强度", "思考強度", "Thinking"),
     ("task.script", "脚本", "腳本", "Script"),
-    ("task.browse", "浏览…", "瀏覽…", "Browse…"),
-    ("task.script_note", "运行目录=脚本所在目录;超时 30 分钟自动终止", "執行目錄=腳本所在目錄;逾時 30 分鐘自動終止", "Runs in the script's folder; killed after 30 min"),
+    ("task.browse", "浏览", "瀏覽", "Browse"),
+    ("task.script_note", "脚本执行超过30分钟将无条件终止", "執行目錄=腳本所在目錄;逾時 30 分鐘自動終止", "Runs in the script's folder; killed after 30 min"),
     ("task.script_err_ext", "不支持的脚本扩展名", "不支援的腳本副檔名", "Unsupported script extension"),
     ("task.create", "创建", "建立", "Create"),
     // 2026-11-17 拍板：按钮对齐子代理页（agents.save「保存」紧排同款，
