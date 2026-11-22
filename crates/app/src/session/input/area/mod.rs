@@ -81,6 +81,10 @@ pub(crate) fn input_area(
                     .unwrap_or_else(|| tr("model.select_title").to_string())
             }
         };
+        // 模型信息限 30 字（2026-11-22 用户令：任务详情列窄，NVIDIA 之类
+        // 长前缀整串撑爆控件行；超长截断补 …，与 tab_title「30 字 + …」同形）。
+        // 只整形 pill 显示——菜单 ✓ 匹配读 page.model 原始 provider/id，不受影响
+        let model_label = elide_chars(&model_label, 30);
         (
             model_label,
             page.thinking.to_string(),
@@ -368,4 +372,37 @@ pub(crate) fn input_area(
             ),
         );
     composer_wrap(inner, hero || task_form, show_scroll_btn, weak, t)
+}
+
+/// pill 文案限宽整形：超 `max` 字截断补 …（「30 字 + …」，pool::tab_title 同形，
+/// 仓库统一口径）。任务页模型 pill 专用——只动显示串，不碰数据源。
+pub(crate) fn elide_chars(s: &str, max: usize) -> String {
+    let mut out: String = s.chars().take(max).collect();
+    if s.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+#[cfg(test)]
+mod elide_chars_tests {
+    use super::elide_chars;
+
+    #[test]
+    fn keeps_short_name() {
+        assert_eq!(elide_chars("claude-opus-4", 30), "claude-opus-4");
+        assert_eq!(elide_chars("", 30), "");
+        // 恰 30 字不补 …
+        assert_eq!(elide_chars(&"字".repeat(30), 30).chars().count(), 30);
+    }
+
+    #[test]
+    fn truncates_over_30_chars() {
+        let long = format!("NVIDIA: {} (free)", "很长的模型名".repeat(10));
+        let out = elide_chars(&long, 30);
+        assert_eq!(out.chars().count(), 31); // 30 字 + …
+        let expect: String = long.chars().take(30).collect();
+        assert!(out.starts_with(&expect));
+        assert!(out.ends_with('…'));
+    }
 }
