@@ -8,6 +8,8 @@ impl Chat {
     /// 子会话 tab 标题（044-0：任务名）。pi-flash-9eck：descriptor/catalog
     /// 已删——标题从主会话消息反查（agent 调用 args 的 label → profile →
     /// prompt 首行），查不到给占位名「子代理」（零读盘、零后台任务）。
+    /// 任务会话（046）先查 session_names 台账（run.rs TurnSettled 写「⏱
+    /// 任务名」；⏱ 是会话列表口径，tab 不带前缀）——2026-11-22 用户令。
     pub(crate) fn subagent_tab_label(
         &mut self,
         child: &Path,
@@ -15,6 +17,9 @@ impl Chat {
         cx: &mut Context<Self>,
     ) -> String {
         let placeholder = || tr("subagent.tab").to_string();
+        if let Some(name) = pi_link::session_names::get(child) {
+            return name.strip_prefix("⏱ ").unwrap_or(&name).to_string();
+        }
         self.label_for_child(cx, child).unwrap_or_else(placeholder)
     }
 

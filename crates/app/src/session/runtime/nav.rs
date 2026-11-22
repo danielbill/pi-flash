@@ -28,6 +28,10 @@ impl SessionRuntime {
                     return; // 重绑/换身份/已退出观察态：陈旧快照作废
                 }
                 r.messages = msgs;
+                // 磁盘链是观察窗唯一真相：装载完即放行（2026-11-22 修——
+                // 任务会话 tail 读空时 loading 页永挂，子代理窗全靠 tail
+                // 非空的首帧置位侥幸工作）；空文件出空列表，语义正确
+                r.messages_loaded = true;
                 r.sync_disk_baseline();
                 r.notify_list(cx);
                 r.status = "observer: synced from disk".into();
