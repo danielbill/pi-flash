@@ -219,6 +219,11 @@ impl Chat {
             if hidden.hides(s.name.as_deref(), &s.path) {
                 continue;
             }
+            // 会话 type 口径（2026-11-22 拍板）：用户会话列表只收 user——
+            // sub（子代理）与 task（046 自动任务）不进侧栏。
+            if s.kind != pi_link::sessions::SessionKind::User {
+                continue;
+            }
             let cwd = PathBuf::from(s.cwd.clone());
             // 应用自有目录（载荷目录/npm 包根）不建组：污染期落在 payload
             // 的历史脏会话不得把安装目录钉成常驻项目组（注册表已由 boot

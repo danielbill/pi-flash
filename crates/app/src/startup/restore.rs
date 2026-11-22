@@ -52,6 +52,9 @@ pub(crate) fn restorable_session(cwd: &str) -> Option<PathBuf> {
         // 父 pi；旧版 open_session 曾把子会话写进 last-open（已修），这里
         // 把历史污染一并挡住——落新会话页
         .filter(|p| !pi_link::sessions::is_subagent_session(p))
+        // 任务会话（046）永不做恢复目标（2026-11-22 拍板）：type 口径与
+        // 侧栏一致——历史遗留指针（如手工把任务会话设过 last-open）一并挡住
+        .filter(|p| pi_link::sessions::session_kind(p) != pi_link::sessions::SessionKind::Task)
         .filter(|p| {
             let name = p
                 .file_name()

@@ -336,6 +336,45 @@ mod tests {
     }
 
     #[test]
+    fn hit_kind_marks_task_and_sub_sessions() {
+        // 046（2026-11-22 拍板）：搜索层不排除（命中要能跳转的语义保留给
+        // 调用方），但 hit 必须携带 kind——消费侧（083 面板）只显 User。
+        let root = temp_root("search-kind");
+        let task_body = concat!(
+            "{\"type\":\"custom\",\"customType\":\"pf/session-type\",\"id\":\"m0\",\"data\":{\"type\":\"task\"}}
+",
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123456,\"content\":[{\"type\":\"text\",\"text\":\"needle kind task\"}]}}
+"
+        );
+        write_session(&root, r"D:\proj-k", "tk", task_body);
+        let sub_body = concat!(
+            "{\"type\":\"custom\",\"customType\":\"subagent/child\",\"id\":\"m0\",\"data\":{}}
+",
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123999,\"content\":[{\"type\":\"text\",\"text\":\"needle kind sub\"}]}}
+"
+        );
+        write_session(&root, r"D:\proj-k", "sk", sub_body);
+        let user_body = concat!(
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454124000,\"content\":[{\"type\":\"text\",\"text\":\"needle kind user\"}]}}
+"
+        );
+        write_session(&root, r"D:\proj-k", "uk", user_body);
+        let group = root.join(group_name_for_cwd(r"D:\proj-k"));
+        let resp = search_sessions_in_dir(&group, "needle");
+        assert_eq!(resp.hits.len(), 3, "搜索层不排除");
+        for h in &resp.hits {
+            if h.session_path.to_string_lossy().contains("tk") {
+                assert_eq!(h.kind, SessionKind::Task);
+            } else if h.session_path.to_string_lossy().contains("sk") {
+                assert!(h.subagent && h.kind == SessionKind::Sub);
+            } else {
+                assert_eq!(h.kind, SessionKind::User);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn all_projects_search_spans_groups() {
         // 2026-10-21 用户定案：会话查询搜**全部**会话，不只看当前项目
         let root = temp_root("all");

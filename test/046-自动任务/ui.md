@@ -248,6 +248,35 @@ RESULT: 功能链 fail=0；**视觉层发现 1 个 bug（见下）**。
   **三 icon 显影**（▷/眼斜杠/垃圾桶像素裁切）+ trash tip「移除」→ 点击
   确认删除 defs=0；app 534 全绿。陷阱落 docs/agents/gpui.md。
 
+## 执行记录 9（2026-11-22 会话 type 属性：任务会话从用户会话口径隐身）
+
+拍板：会话 type = user/sub/task 三态，事实源 = pi 会话文件 custom entry
+`pf/session-type`（spawn env `PF_SESSION_TYPE=task` + PF 扩展
+tasks/session_type.ts 落盘；sub 复用 subagent/child marker 派生；无 marker
+= user）。psp 侧栏 / 恢复闸 / 全局搜索按 `SessionInfo.kind == User` 过滤；
+052 过期删除不区分 type 全删（现状即然）。显示层 hack（⏱ 名字前缀 +
+hidden 注入，执行记录 8 时代）废弃未提交即拆。
+
+```
+✓ 会话文件头含 pf/session-type entry（grep = 1；turn 落盘后即查）
+✓ psp 侧栏无任务会话（新任务会话是组内最新文件，顶部行仍是旧用户会话）
+✓ 每 1 分钟任务连跑 8 次全部正常（调度/台账不受 type 改动影响）
+✓ 日志行点击 = content_view chat（会话以普通 tab 打开；session_path 台账）
+✓ 搜索层 hit.kind 单测（task/sub/user 三态 + 搜索层不排除、消费侧过滤）
+✓ pi-link 300 / app 536 全绿
+```
+
+RESULT: fail=0。
+
+### 执行中修掉的盲区：cwd_for_session 对隐身会话失效
+
+日志行点击最初不动：open_session 的 `cwd_for_session` 三路回退
+（pool.sessions / psp.projects 组 / ws.cwd）对任务会话全落空——kind 过滤后
+不在 psp 组、无项目态 ws.cwd=None → 静默 return（handler 有 eprintln 实证
+触发但 switch_to 未达）。修：回退链尾加
+`pi_link::sessions::session_header_cwd(path)`（读文件首行头部 cwd）——
+「按路径开会话但不在任何已扫清单」的通用兜底（open.rs）。
+
 ## 陷阱回填（本轮新增 2 条）
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；

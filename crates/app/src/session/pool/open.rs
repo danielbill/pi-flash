@@ -235,6 +235,9 @@ impl Chat {
                     .map(|g| g.path.clone())
             })
             .or_else(|| self.ws.cwd.clone())
+            // 046（2026-11-22）：任务会话按 type 从 psp 组滤掉，日志行开话
+            // 时上面三路全落空（无项目态 ws.cwd=None）——直接读文件头部 cwd
+            .or_else(|| pi_link::sessions::session_header_cwd(path).map(PathBuf::from))
     }
 
     /// 尾段秒开素材：缓存命中直取，未命中读盘入缓存。空 tail 不入缓存

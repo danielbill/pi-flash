@@ -138,7 +138,13 @@ impl Chat {
                 }
                 c.psp.search_running = false;
                 c.psp.search_truncated = resp.truncated;
-                c.psp.search_hits = resp.hits;
+                // 会话 type 口径（2026-11-22 拍板）：搜索只搜用户会话——
+                // sub（子代理）与 task（046 自动任务）不进结果。
+                c.psp.search_hits = resp
+                    .hits
+                    .into_iter()
+                    .filter(|h| h.kind == pi_link::sessions::SessionKind::User)
+                    .collect();
                 cx.notify();
             });
         })

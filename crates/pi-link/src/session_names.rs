@@ -246,6 +246,7 @@ mod tests {
             preview: "首条消息".into(),
             message_count: 3,
             name: name.map(str::to_string),
+            kind: crate::sessions::SessionKind::User,
         }
     }
 

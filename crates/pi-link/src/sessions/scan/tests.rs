@@ -179,6 +179,72 @@ fn list_for_cwd_paths_are_on_disk_form() {
 }
 
 #[test]
+fn scan_kinds_task_sub_user_and_priority() {
+    // 046（2026-11-22 拍板）：会话 type 三态——task entry（pf/session-type）、
+    // sub marker（subagent/child）、无 marker = user；task 优先同口径。
+    let root = temp_root("kinds");
+    let task = group_file(&root, "D:\\proj-t", "task1");
+    std::fs::write(
+        &task,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"task1\",\"cwd\":\"D:\\\\proj-t\"}}\n{{\"type\":\"custom\",\"customType\":\"pf/session-type\",\"id\":\"m1\",\"data\":{{\"type\":\"task\"}}}}\n{}",
+            BODY
+        ),
+    )
+    .unwrap();
+    let sub = group_file(&root, "D:\\proj-t", "sub1");
+    std::fs::write(
+        &sub,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"sub1\",\"cwd\":\"D:\\\\proj-t\"}}\n{{\"type\":\"custom\",\"customType\":\"subagent/child\",\"id\":\"m2\",\"data\":{{}}}}\n{}",
+            BODY
+        ),
+    )
+    .unwrap();
+    let user = write_session(&root, "D:\\proj-t", "user1", BODY);
+
+    let mut s = Scanner::open(&root);
+    let listed = s.list_for_cwd("D:\\proj-t", 10);
+    let kind_of = |id: &str, listed: &[SessionInfo]| {
+        listed
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| i.kind)
+            .unwrap_or_else(|| panic!("{id} 未上行"))
+    };
+    assert_eq!(kind_of("task1", &listed), SessionKind::Task);
+    assert_eq!(kind_of("user1", &listed), SessionKind::User);
+    // sub 本就不上行（045 既有排除：子会话只经父会话呈现，不做 peer 行）——
+    // kind=Sub 在 IndexEntry/头扫层成立即可，列表断言只防回归「误上行」。
+    assert!(
+        !listed.iter().any(|i| i.id == "sub1"),
+        "sub 会话不应出现在列表"
+    );
+
+    // 直接路径判：session_kind（64KB 头扫，同 is_subagent_session 形制）
+    assert_eq!(
+        crate::sessions::session_kind(&task),
+        crate::sessions::SessionKind::Task
+    );
+    assert_eq!(
+        crate::sessions::session_kind(&sub),
+        crate::sessions::SessionKind::Sub
+    );
+    assert_eq!(
+        crate::sessions::session_kind(&user),
+        crate::sessions::SessionKind::User
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// group 目录下的会话文件路径（write_session 之外的裸写场景用）。
+fn group_file(root: &std::path::Path, cwd: &str, id: &str) -> std::path::PathBuf {
+    let group = root.join(crate::sessions::group_name_for_cwd(cwd));
+    std::fs::create_dir_all(&group).unwrap();
+    group.join(format!("2026-09-26T00-00-09-000Z_{id}.jsonl"))
+}
+
+#[test]
 fn list_skips_child_sessions_but_keeps_forks() {
     // 045：子代理会话靠自体内的 `subagent/child` marker 排除；pi 原生 fork
     // 分支（header 带 parentSession 但无 marker）是用户会话，必须上行。
@@ -424,6 +490,7 @@ fn index_cap_keeps_newest_entries() {
         message_count: 0,
         count_bytes: 0,
         child_marker: false,
+        task_marker: false,
     };
     for sec in 0..(INDEX_ENTRY_CAP as u64 + 10) {
         sc.entries
@@ -470,6 +537,7 @@ fn full_prune_once_clears_dead_rows_outside_scanned_groups() {
             message_count: 0,
             count_bytes: 0,
             child_marker: false,
+            task_marker: false,
         },
     );
     sc.list(10);
@@ -494,6 +562,7 @@ fn full_prune_once_clears_dead_rows_outside_scanned_groups() {
             message_count: 0,
             count_bytes: 0,
             child_marker: false,
+            task_marker: false,
         },
     );
     sc.list(10);

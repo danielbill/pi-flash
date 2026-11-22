@@ -193,6 +193,20 @@ pub fn canonical_session_path(p: &Path) -> PathBuf {
     }
 }
 
+/// 会话文件头部的 `cwd`（首行 `{"type":"session","cwd":...}`；首行读不出/
+/// 解析失败 → None）。给「按路径开会话但该会话不在任何已扫清单」的场景
+/// 兜底——046 任务会话已按 type 从 psp 组里滤掉（2026-11-22），日志行
+/// 开话只剩这一条 cwd 来源。
+pub fn session_header_cwd(path: &Path) -> Option<String> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; 4096];
+    let n = f.read(&mut buf).ok()?;
+    let head = &buf[..n];
+    let line = head.split_inclusive(|b| *b == b'\n').next()?;
+    let v: Value = serde_json::from_slice(line.trim_ascii()).ok()?;
+    v["cwd"].as_str().map(str::to_string)
+}
+
 /// Home-relative sessions root (`~/.pi/agent/sessions`), honoring
 /// `PI_CODING_AGENT_SESSION_DIR` / `--session-dir` is left to callers that
 /// spawn pi; discovery here covers the default location.
