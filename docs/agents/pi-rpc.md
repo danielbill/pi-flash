@@ -64,6 +64,17 @@
 - 行为变化（不破 wire，app 可见）：steer/followUp 排队消息的图片现在会缩放归一（`_normalizeQueuedMessageImages` #11738，与空闲 prompt 一致）；bash 超时错误附带 shell 退出码；find/grep/ls `limit<1` 收敛为 1；find Windows 路径模式跨 fd 版本一致（`src\**\*.ts` 可用，利好本仓 Windows 用户）；read 工具流式读大文件（内存利好）；Anthropic 官方端点默认 message threads（只发增量消息，上游请求形态变化，PF 透明）。
 - pi 侧新键（PF 只读透传，无需动）：`compat.promptCacheKeyMode`/`requiresNonNullAssistantContent`/`supportsMessageThreads`、`qwen-token-plan-individual-cn` provider、Copilot classifier、模型目录默认值更新（anthropic 默认 `claude-opus-5-5` 等）。pi-link 298 测试全绿；`PI_VENDOR_VERSION`（lib.rs）已同步 1.5.2。
 
+## 1.6.0 升级复核（2026-11-22，npm tarball dist diff）
+
+- **wire 层零变化**：`rpc-types.js`/`jsonl.js`/`rpc-client.js` 与 1.5.2 **逐字节一致**；`rpc-mode.js` 仅三处——启动诊断改写 stderr（新 `diagnostics-stderr.js`）、事件订阅前移到 bind 之前、`rebindSession` 调用点内移，方法/事件面零增删；`agent-session.js` 事件字符串集零增删；`AgentSessionEvent` 联合类型无新事件；内置工具名仍 8 个；`get_commands` 实现未触碰（catalog.rs 不动）；`image-resize.js`/`core/auth-storage.js`/`index.js`/`model-runtime.js` 全 SAME（坐标标注剥除、ReadOnlyAuthStorage 只读闸、registry dump 照旧）；`session-manager.js` 只有 #11956 abort 修复（PF catalog.rs 直读不受影响）；pi-ai `utils/transcript.js` SAME（transcript.rs 照旧）；`"Model not found: "` 文案原样（rpc-mode.js:392，set_model 兜底安全）。protocol.rs 未动。pi-link 300 测试全绿；`PI_VENDOR_VERSION`（lib.rs）已同步 1.6.0。
+- **RPC 行为变化（#10470）**：`new_session`/`switch_session`/`fork` 的扩展 `session_start`/`resources_discover` **不再跑两次**；且 session_start 期间产生的事件（`entry_appended` 等）现在转发给 RPC 客户端（订阅前移）——PF 忽略臂已覆盖；full_activate 免双跑，纯利好。
+- **启动诊断进 stderr**（`takeUnreportedDiagnostics`）：`Could not restore model <p>/<m>. Using <fallback>`、`enabledModels` 警告等 RPC 模式现在也写 stderr——PF 只在进程死亡时展示 stderr tail，诊断增益，无需处理。
+- **`get_last_assistant_text` skip 语义扩展（#12119）**：aborted/failed/纯工具调用轮不再算「最后回答」，回退上一正常回答——PF 消费方 `session/runtime/actions.rs`，行为利好，无需改代码。
+- **可重试名单扩大（pi-ai retry.js）**：`Connection closed.`（#12064）+ 裸 socket 错误码 `ECONNRESET`/`EPIPE`/`ETIMEDOUT` 等（#12128）也走自动重试——auto_retry 泛化消费照旧，NON-RETRYABLE 限额名单未变。
+- **find 工具路径模式改相对搜索目录（#12066，用户可见）**：`src/*.ts` 不再匹配 `pkg/src/a.ts`，跨上层目录匹配 bug 同修；无 `/` 的模式仍按文件名任意深度匹配。Esc 批量工具调用未启动者补 `Operation aborted` 结果（#9986，悬空工具卡更少）。
+- **模型目录（只读透传）**：GPT-6.2 Astra/Sol 上架 openai/azure/openai-codex 且 Sol 成默认；GPT-6.2 系拒 `off`/`minimal` 思考档（thinking clamp 泛化已覆盖）；Qwen Token Plan 网关切换 + `deepseek-v4.1-flash`/`qwen4-max-preview` 上架 + `deepseek-v3.2`/`deepseek-v4-flash` 移除；Anthropic message threads 扩大到所有 api.anthropic.com baseUrl；OpenAI 兼容商（非 OpenAI）收 `system` 角色消息（#10741）——请求形态变化，PF 透明。
+- **唯一上游 breaking：扩展组件 `render()` 返回 `readonly string[]`（#9549）**——PF 自有扩展 full_activate.ts 无 UI 组件不碰；市场里写 UI 组件的第三方扩展需各自跟进（PF 宿主侧无感）。undici 安全升 8.12.4；兄弟包 pi-ai/pi-agent-core/pi-mcp/pi-tui/pi-codemode 锁步 1.6.0。
+
 ## transcript 重放
 
 - 系统提示词与工具声明在 transcript 的 `role:"system"` 消息里（content 追加 + sections 补丁 + toolsAdded/Removed），重放对齐 pi-ai `utils/transcript.js`。
