@@ -449,10 +449,11 @@ fn tasks_body(
         .into_any_element()
 }
 
-/// 下方运行日志区（2026-11-22 用户令）：整宽 40% 高，只呈现选中任务的
-/// 运行记录（原日志 tab 收编，不再混杂全部任务）。行 = task_row（点击开
-/// 该次会话——任务会话已从用户列表隐身，这里是唯一入口）。未选中任务时
-/// 整区空态。
+/// 下方任务日志区（2026-11-22 用户令）：45% 高，内容列 70% 居中，只呈现
+/// 选中任务的运行记录（原日志 tab 收编，不再混杂全部任务）。行 = task_row
+/// （点击开该次会话——任务会话已从用户列表隐身，这里是唯一入口）。行名 =
+/// 任务名（def title，2026-11-22 用户令：不出 def_id）。未选中任务时整区
+/// 空态。
 fn run_log_panel(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -492,20 +493,15 @@ fn run_log_panel(
                         "file-code"
                     }
                 });
+            let title = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| d.def.id == r.def_id)
+                .map(|d| d.def.title.clone())
+                .unwrap_or_else(|| r.def_id.clone());
             task_row(
-                id,
-                r.def_id.clone(),
-                gray,
-                tico,
-                slot,
-                tip,
-                stamp,
-                false,
-                weak,
-                None,
-                open_path,
-                false,
-                t,
+                id, title, gray, tico, slot, tip, stamp, false, weak, None, open_path, false, t,
             )
         })
         .collect();
@@ -518,25 +514,20 @@ fn run_log_panel(
             .iter()
             .find(|d| Some(&d.def.id) == sel.as_ref())
             .is_none();
-    // 标题：运行日志 · 任务名
-    let title = sel
-        .as_deref()
-        .and_then(|id| chat.tasks.defs.iter().find(|d| d.def.id == id))
-        .map(|d| d.def.title.clone());
 
     div()
         .id("task-log-panel")
-        .h(gpui::relative(0.4))
+        .h(gpui::relative(0.45))
         .flex_none()
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
+        // 标题：任务日志（2026-11-22 用户令改名，任务名后缀删）
         .child(
             div()
                 .flex_none()
                 .flex()
                 .items_center()
-                .gap(px(crate::ui::tokens::space::SP2))
                 .px(px(20.))
                 .pt(px(10.))
                 .pb(px(6.))
@@ -546,14 +537,7 @@ fn run_log_panel(
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text_muted))
                         .child(tr("task.log_title").to_string()),
-                )
-                .children(title.map(|n| {
-                    div()
-                        .text_size(ui_size(12.))
-                        .text_color(rgb(t.text_faint))
-                        .truncate()
-                        .child(n)
-                })),
+                ),
         )
         .child(if has_rows {
             div()
@@ -561,11 +545,18 @@ fn run_log_panel(
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(px(6.))
                 .pb(px(10.))
                 .flex()
                 .flex_col()
-                .children(rows)
+                // 内容列 70% 居中（2026-11-22 用户令）
+                .child(
+                    div()
+                        .w(gpui::relative(0.7))
+                        .mx_auto()
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                )
                 .into_any_element()
         } else {
             div()

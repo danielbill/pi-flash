@@ -251,13 +251,13 @@ pub(crate) fn input_area(
     // 编辑区：真输入组件（多行 AutoGrow，超出 max 出纵向滚动条）；右键
     // 弹输入菜单（031，事件从组件冒泡上来——vendored 组件右键只做
     // 「无选区时移动光标」，不吞事件）。压缩锁期间整块是提示占位、无
-    // 可编辑对象，不弹。任务嵌入态最小高 300（2026-11-17 用户令：+100）
+    // 可编辑对象，不弹。任务嵌入态最小高 160（2026-11-22 用户令：−40）
     let weak_menu = weak.clone();
     capsule = capsule.child(
         div()
             .id("composer-editor")
             .w_full()
-            .min_h(px(if task_form { 200. } else { 60. }))
+            .min_h(px(if task_form { 160. } else { 60. }))
             .pt(px(2.))
             .pb(px(2.))
             .px(px(6.))
@@ -309,16 +309,16 @@ pub(crate) fn input_area(
     let cap_w = (!task_form).then(|| px(content_w));
     // 任务嵌入态统一菜单限高：菜单挂详情滚动列内，全高既会顶出窗口上沿
     // 又被列顶裁剪（用户实测）——按上一帧胶囊 bounds 测距：胶囊顶缘 −
-    // 列顶净空(130 = topbar+页头+8缝) 即列内可用高，上限 670（2026-11-19
-    // 用户令：再 +50）；未就绪退 470 兜底
+    // 列顶净空(130 = topbar+页头+8缝) 即列内可用高，上限 700（2026-11-22
+    // 用户令：再 +30）；未就绪退 500 兜底
     let menu_max_h = if task_form {
         chat.tasks
             .page
             .anchors
             .composer
             .borrow()
-            .map(|b| (b.origin.y - px(85.)).min(px(670.)).max(px(160.)))
-            .unwrap_or(px(470.))
+            .map(|b| (b.origin.y - px(85.)).min(px(700.)).max(px(160.)))
+            .unwrap_or(px(500.))
     } else {
         px(520.)
     };

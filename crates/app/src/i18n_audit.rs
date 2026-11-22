@@ -1,7 +1,8 @@
 // i18n 审计（语义键版）——三道防线，全部源码级静态检查。
 //
-// 迁移后（2026-10-12）键 = `<域>.<主语>[.<限定>]` 语义标识，TABLE 行为
-// `(key, zh-CN, zh-TW, en)`。风险面随之改变：
+// 迁移后（2026-10-12）键 = `<域>.<主语>[.<限定>]` 语义标识；2026-11-22 起
+// 数据落在 i18n/table/ 分表（按前缀分域），行为 `(key, zh-CN, zh-TW, en)`。
+// 风险面随之改变：
 //
 // ① **键必须在表里**：`tr("拼错的键")` 编译期零检查，运行期会把裸键名
 //    直接显示在界面上（比旧方案的"显示中文"更显眼也更难看）。扫源码里
@@ -91,31 +92,37 @@ mod audit {
         out.join("\n")
     }
 
-    /// TABLE 行 → (key, zh, tw, en)
-    fn table_rows(i18n_src: &str) -> Vec<(String, String, String, String)> {
-        let Some((_, after)) = i18n_src.split_once("const TABLE") else {
-            panic!("i18n/table.rs 里找不到 TABLE");
-        };
+    /// 各分表行 → (key, zh, tw, en)。扫 i18n/table/ 目录全部 .rs，逐文件按
+    /// 数据常量声明锚点解析聚合；mod.rs（聚合视图）无锚点自动跳过——新增
+    /// 分表零登记自动收录。
+    fn table_rows(root: &Path) -> Vec<(String, String, String, String)> {
+        let mut files = Vec::new();
+        walk(&root.join("i18n/table"), &mut files);
         let mut rows = Vec::new();
-        let started = after.contains("&[");
-        assert!(started, "i18n/table.rs 的 TABLE 声明格式变了");
-        for line in after.lines() {
-            let t = line.trim();
-            if !(t.starts_with('(')) {
-                continue;
-            }
-            let inner = t
-                .trim_start_matches('(')
-                .trim_end_matches("),")
-                .trim_end_matches(')');
-            let parts: Vec<String> = split_args(inner);
-            if parts.len() == 4 {
-                rows.push((
-                    parts[0].clone(),
-                    parts[1].clone(),
-                    parts[2].clone(),
-                    parts[3].clone(),
-                ));
+        for f in &files {
+            let src = read(f);
+            let Some((_, after)) = src.split_once("const TABLE") else {
+                continue; // mod.rs 只聚合不落数据，无锚点
+            };
+            assert!(after.contains("&["), "{} 的分表声明格式变了", f.display());
+            for line in after.lines() {
+                let t = line.trim();
+                if !(t.starts_with('(')) {
+                    continue;
+                }
+                let inner = t
+                    .trim_start_matches('(')
+                    .trim_end_matches("),")
+                    .trim_end_matches(')');
+                let parts: Vec<String> = split_args(inner);
+                if parts.len() == 4 {
+                    rows.push((
+                        parts[0].clone(),
+                        parts[1].clone(),
+                        parts[2].clone(),
+                        parts[3].clone(),
+                    ));
+                }
             }
         }
         rows
@@ -170,9 +177,13 @@ mod audit {
         walk(root, &mut files);
         let mut found = BTreeSet::new();
         for f in files {
+            // i18n/table/ = 数据表本身；i18n.rs = tr/tf 元数据；本文件源码里
+            // 有 `["tr(", "tf("]` 字样
+            if f.parent() == Some(&root.join("i18n/table")) {
+                continue;
+            }
             match f.file_name().and_then(|s| s.to_str()) {
-                // i18n.rs/table.rs = 元数据与数据表；本文件源码里有 `["tr(", "tf("]`
-                Some("i18n.rs") | Some("i18n_audit.rs") | Some("table.rs") => continue,
+                Some("i18n.rs") | Some("i18n_audit.rs") => continue,
                 _ => {}
             }
             let txt = code_of(&f);
@@ -247,8 +258,8 @@ mod audit {
     #[test]
     fn keys_and_translations_are_complete() {
         let root = src_root();
-        let rows = table_rows(&read(&root.join("i18n/table.rs")));
-        assert!(rows.len() > 300, "TABLE 解析异常，只读到 {} 行", rows.len());
+        let rows = table_rows(&root);
+        assert!(rows.len() > 300, "分表解析异常，只读到 {} 行", rows.len());
 
         // 键唯一（撞键 = find 永远取第一条，另一条成死数据）
         let mut seen = std::collections::BTreeSet::new();
