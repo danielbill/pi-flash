@@ -322,15 +322,15 @@ pub fn dev_flag_enabled(key: &str) -> bool {
 /// subagent 功能总闸（开发旗标，默认开（044-0）；dev-flags.json /
 /// PI_FLASH_SUBAGENTS 可强关）。只管设置页导航可见性；运行时生效开关 =
 /// 本旗标 && 用户面开关（`subagent_module_active`）。
-/// 046 自动任务总开关（默认关；dev-flags.json / env `PI_FLASH_AUTO_TASKS`
-/// 显式开）。门三处同源：psp 入口钮 / 任务大卡 / tasks source 注册——共有
-/// 泵不受其管（046-0）。
-pub fn auto_tasks_enabled() -> bool {
-    dev_flag_enabled("auto_tasks")
-}
-
 pub fn subagents_enabled() -> bool {
     dev_flag_enabled("subagents")
+}
+
+/// 046 自动任务总开关（0.6.0 起正式开放默认开；dev-flags.json / env
+/// `PI_FLASH_AUTO_TASKS` 可强关）。门三处同源：psp 入口钮 / 任务页 /
+/// tasks source 注册——共有泵不受其管（046-0）。
+pub fn auto_tasks_enabled() -> bool {
+    dev_flag_enabled("auto_tasks")
 }
 
 /// topbar「菜单」三横钮是否渲染：**恒显**（2026-10-23 用户禁令：不许删菜单 icon）。

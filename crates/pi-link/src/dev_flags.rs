@@ -8,8 +8,8 @@
 //!
 //! 键约定：
 //! - 键名 = 模块名 snake_case，注册在 [`KNOWN`]（后续模块在此加键即接入）；
-//! - 值 bool，缺省 = [`default_for`] 默认值（subagents **默认开** 044-0；
-//!   其余发版排除语义默认关）；
+//! - 值 bool，缺省 = [`default_for`] 默认值（subagents 默认开 044-0；
+//!   auto_tasks 默认开 046，0.6.0 正式开放；其余发版排除语义默认关）；
 //! - 环境变量覆盖最高优先：`PI_FLASH_<键大写>`，`1`/`true` 强开、`0`/`false`
 //!   强关（如 `subagents` → `PI_FLASH_SUBAGENTS`）；
 //! - 本模块**不缓存**（调用频率 = spawn 级）；app 渲染侧用
@@ -20,14 +20,15 @@ use serde_json::Value;
 /// 已知旗标键（模块发版排除注册表）。新增可配置模块 = 在此加一个键。
 pub const KNOWN: &[&str] = &["subagents", "pi_native_market", "auto_tasks"];
 
-/// 键默认值（044-0 拍板：subagents 模块**默认开**——发布包子代理可见；
-/// 其余重型模块维持发版排除语义默认关）。dev-flags.json 显式值 / env
-/// 覆盖仍可翻转。
+/// 键默认值（044-0 拍板 subagents 默认开——发布包子代理可见；046 任务管理
+/// 0.6.0 起正式开放默认开；其余重型模块维持发版排除语义默认关）。
+/// dev-flags.json 显式值 / env 覆盖仍可翻转。
 fn default_for(key: &str) -> bool {
-    key == "subagents"
+    key == "subagents" || key == "auto_tasks"
 }
 
-/// 某模块旗标是否开启：env 覆盖 > dev-flags.json 键值 > 默认值（subagents 开）。
+/// 某模块旗标是否开启：env 覆盖 > dev-flags.json 键值 > 默认值（subagents /
+/// auto_tasks 开）。
 pub fn enabled(key: &str) -> bool {
     let env_name = format!("PI_FLASH_{}", key.to_uppercase());
     if let Ok(flag) = std::env::var(&env_name) {
@@ -120,11 +121,13 @@ mod tests {
     #[test]
     fn file_keys_and_summary_all_paths() {
         let _g = DirGuard::new("all");
-        // 缺文件 = 默认值（subagents 默认开，044-0 拍板；其余键默认关）
+        // 缺文件 = 默认值（subagents/auto_tasks 默认开；其余键默认关）
         assert!(from_file("subagents"));
+        assert!(from_file("auto_tasks"));
         assert!(!from_file("pi_native_market"));
         let empty = summary();
         assert!(empty.contains("subagents=on"), "{empty}");
+        assert!(empty.contains("auto_tasks=on"), "{empty}");
         assert!(empty.contains("pi_native_market=off"), "{empty}");
         // true（注释与尾逗号都认）/ false / 缺键 = 默认；未知键进 summary 提示
         let path = crate::paths::dev_flags_file().unwrap();
