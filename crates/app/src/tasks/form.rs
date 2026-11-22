@@ -162,11 +162,12 @@ pub(crate) fn field(label: &'static str, control: AnyElement, top_align: bool) -
 }
 
 /// 任务类型 seg 分段【脚本|Agent】（HTML segType）。
-/// 视觉（2026-11-22 用户拍板「凸/凹」）：轨道 = 凹槽（bg_panel 沉底 + 边框），
-/// 选中段 = 凸起（t.bg 浮出槽底 + SEMIBOLD 加粗），未选段 = 凹陷（透明底 +
-/// text_dim）。左右等宽：两段同取两标签排版宽的较大者（见
-/// [`seg_label_w`]）+ §5.1 MD 档水平 padding，文本居中——「脚本/Agent」
-/// 内容宽差不再让两段一宽一窄。
+/// 视觉（2026-11-22 用户拍板「凸/凹」）：轨道 = 凹槽（bg_panel 沉底 + 边框 +
+/// SP1 内衬），选中段 = 凸起（t.bg 浮出槽底 + t.border 描边 + SEMIBOLD 加粗，
+/// 圆角 INLINE 不被轨道裁切），未选段 = 凹陷（透明底/透明描边 + text_muted）。
+/// 左右等宽：两段同取两标签排版宽的较大者（见 [`seg_label_w`]）+ §5.1 SM 档
+/// 水平 padding，文本居中——「脚本/Agent」内容宽差不再让两段一宽一窄。
+/// 芯片走 SM_H 24：SP1 内衬×2 + 边框×2 后轨道总高仍 30，与行内 sel-btn 对齐。
 pub(crate) fn type_seg(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -184,7 +185,7 @@ pub(crate) fn type_seg(
         .iter()
         .map(|l| seg_label_w(l, window))
         .fold(0.0_f32, f32::max)
-        + btn::MD_PX * 2.;
+        + btn::SM_PX * 2.;
     div()
         .flex_none()
         .flex()
@@ -193,6 +194,7 @@ pub(crate) fn type_seg(
         .rounded(px(radius::CTRL))
         .overflow_hidden()
         .bg(rgb(t.bg_panel))
+        .p(px(space::SP1))
         .children([false, true].iter().map(|&agent| {
             let on = cur_agent == agent;
             let weak = weak.clone();
@@ -202,17 +204,22 @@ pub(crate) fn type_seg(
                 .flex()
                 .items_center()
                 .justify_center()
-                .h(px(btn::MD_H))
-                .px(px(btn::MD_PX))
+                .h(px(btn::SM_H))
+                .px(px(btn::SM_PX))
                 .text_size(ui_size(12.))
+                .rounded(px(radius::INLINE))
+                // 描边两态都占位（透明 vs 实线），选中切换不推挤文字
+                .border_1()
                 .cursor_pointer()
                 .when(on, |d| {
                     d.bg(rgb(t.bg))
+                        .border_color(rgb(t.border))
                         .text_color(rgb(t.text))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                 })
                 .when(!on, |d| {
-                    d.text_color(rgb(t.text_dim))
+                    d.border_color(gpui::transparent_black())
+                        .text_color(rgb(t.text_muted))
                         .hover(|h| h.text_color(rgb(t.text)))
                 })
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
