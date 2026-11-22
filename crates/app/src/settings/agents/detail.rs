@@ -42,7 +42,7 @@ pub(super) fn agent_detail(
     let readonly = builtin; // 内置只读灰化
     let broken = agent.as_ref().and_then(|a| a.error.clone());
 
-    let mut head = div()
+    let head = div()
         .flex()
         .items_center()
         .gap(px(8.))
@@ -74,7 +74,9 @@ pub(super) fn agent_detail(
             }
         })
         .child(div().flex_1())
-        // 删除已挪列表行尾 icon 钮（2026-11-22 用户令）；表单头只留保存
+        // 删除已挪列表行尾 icon 钮（2026-11-22 用户令）；表单头只留保存。
+        // 保存钮 dirty 门控（2026-11-22 用户令，任务详情保存钮同款）：
+        // 内容未改动 disable、有改动才点亮；改动小点提示同步取消
         .when(is_new || !builtin, |d| {
             d.child(config_button(
                 "ag-save",
@@ -82,19 +84,10 @@ pub(super) fn agent_detail(
                 &tr("agents.save"),
                 Btn::Primary,
                 true,
-                false,
+                !*ag_dirty,
                 |c, cx| c.mc_agent_save(cx),
             ))
         });
-
-    let dirty_dot = div()
-        .size(px(6.))
-        .rounded_full()
-        .flex_shrink_0()
-        .bg(rgb(t.accent));
-    if *ag_dirty && !readonly {
-        head = head.child(dirty_dot);
-    }
 
     let mut form = div().flex().flex_col().gap(px(16.)).mt(px(16.)).flex_1();
 
