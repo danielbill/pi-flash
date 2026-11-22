@@ -233,10 +233,9 @@ fn task_row(
                     });
                 })
         })
-        // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间。046 行首 tico
-        // 改状态图标（2026-11-22 用户令：icon 对应状态，不再反着）——列表页
-        // 可执行=rotate-clock / 暂停=pause；日志页保留类型图标（file-code /
-        // bot）。尺寸统一走规范 MD；停用行随灰名取 faint。
+        // 设计 HTML sp-li 行序：tico → 名 → 结果槽 → 时间。行首 tico =
+        // 类型图标（脚本 file-code / Agent bot，2026-11-22 用户澄清：状态
+        // 图标在行尾动作钮，不在此处）；尺寸走规范 MD。
         .children(tico.map(|name| {
             icon(
                 name,
@@ -277,8 +276,8 @@ fn task_row(
 /// 行尾 hover 显影动作钮（2026-11-22 用户令：立即运行/停用/移除从详情表头
 /// 挪来）。显影 = settings agents 行 hover「复制」同款 group 显影；钮 =
 /// queue_cards icon_btn 同款 22px hover 底小图标钮。运行中「立即运行」置灰
-/// （原表头同守卫）；停用/启用按 def.enabled 翻图标（eye-off/eye）；移除走
-/// 确认浮层（confirm_del）。
+/// （原表头同守卫）；停用/启用钮图标 = 当前状态（rotate-clock /
+/// pause，2026-11-22 用户令：状态与 icon 对应）；移除走确认浮层（confirm_del）。
 fn task_row_actions(
     def_id: &str,
     title: &str,
@@ -317,7 +316,9 @@ fn task_row_actions(
         ))
         .child(task_act_btn(
             format!("task-act-toggle-{id_tog}"),
-            if enabled { "eye-off" } else { "eye" },
+            // 图标 = 当前状态（2026-11-22 用户令：状态与 icon 对应，不反着）
+            // ：可执行态 rotate-clock / 暂停态 pause；点击翻状态
+            if enabled { "rotate-clock" } else { "pause" },
             if enabled {
                 "task.disable"
             } else {
@@ -374,7 +375,7 @@ fn task_act_btn(
             }
             let _ = weak.update(cx, |c, cx| on_click(c, cx));
         })
-        .child(icon(name, crate::ui::tokens::icon::XS, t.text_muted))
+        .child(icon(name, crate::ui::tokens::icon::MD, t.text_muted))
 }
 
 // ---------------------------------------------------------------------------
@@ -430,7 +431,7 @@ fn tasks_body(
                 .child(tr("task.empty").to_string()),
         );
     } else {
-        for DefRow { def, .. } in &chat.tasks.defs {
+        for DefRow { def, spec, .. } in &chat.tasks.defs {
             let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
             let running = chat.tasks.running.iter().any(|k| *k == def.id);
             let (slot, tip) = if running {
@@ -443,9 +444,13 @@ fn tasks_body(
             };
             let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
             let id = def.id.clone();
-            // 046 行首 tico = 状态图标（2026-11-22 用户令）：可执行态
-            // rotate-clock / 暂停态 pause——icon 与状态对应，不再反着
-            let tico: &'static str = if def.enabled { "rotate-clock" } else { "pause" };
+            // 设计 HTML tico：脚本行 file-code / Agent 行 bot（状态图标在
+            // 行尾动作钮，2026-11-22 用户澄清）
+            let tico: &'static str = if matches!(spec.kind, TaskKind::Agent) {
+                "bot"
+            } else {
+                "file-code"
+            };
             list = list.child(task_row(
                 SharedString::from(format!("task-sp-{id}")),
                 def.title.clone(),
