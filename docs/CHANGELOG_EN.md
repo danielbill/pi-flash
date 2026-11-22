@@ -2,6 +2,44 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.0] - 2026-11-22
+
+Highlights of this release:
+1. Task management: scheduled automation — script tasks / Agent tasks, with a dedicated Tasks page in the left dock
+2. File tree multi-select: group drag / delete / copy paths
+3. Bundled pi 1.5.2 → 1.6.0
+4. A batch of stability fixes (two crashes, one freeze, lost input, etc.)
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and update
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively download the zip portable build, extract it and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **Task management**: new "Tasks" entry in the left dock for scheduling two kinds of automated tasks — **script tasks** (run a script on a schedule; output tail and exit code are recorded) and **Agent tasks** (deliver a prompt to an Agent session on a schedule; model / tools tier / thinking tier configurable); five schedule modes (every N minutes / hourly / daily / weekly / monthly) plus a 5-minute misfire grace period; run logs are kept for review and a running Agent task opens as a read-only observer window; the Tasks page lives as a content-area tab with run / enable / remove buttons revealed on row hover; task sessions stay out of the user session list. (046: e2a32dc5, c77b7083, 79dd4c15, 0419e622, 5b52c929)
+- **File tree multi-select**: Shift selects a range, Ctrl adds / removes single items; with multiple selected, drag-move, delete (confirmation card lists entries) and copy paths operate on the whole group; selecting an ancestor prunes its descendants. (8036cfa8)
+
+### Bug fixes
+- Switching an old session to a newly available model silently did nothing: the session now re-binds automatically when its model catalog is stale (new models appear in the menu but were missing from the long-running session's snapshot). (1c436106)
+- Occasional whole-window freeze when switching projects: session scanning moved off the UI thread so it no longer contends on the scanner lock. (db0c56e4)
+- Crash when clicking "Replace All" in a Markdown file while scrolled. (a47194a0)
+- Crash when pressing Enter in Markdown source view. (0e019415)
+- Unsent composer input was wiped when returning to a session after running a command from the quick panel. (ede8b88e)
+- Global search: clicking a result for an already-open session did not jump to it. (079a71a0)
+- "Files written this turn" chips at the end of a reply failed to open (relative paths resolved against the install directory). (941aa585)
+- Subagent cards stuck at "running" after restart: orphans are reconciled to a final state at startup. (acc0ac80)
+- Markdown list numbers / bullets misaligned and soft-wrapped lines collapsed into single spaces. (3e9b49b7, b3282a91, 28be07e4)
+- Search & replace box: Tab / Shift+Tab now cycle between fields; Ctrl+H expands and focuses the replace box. (c3731c32)
+- Subagent / task settings save button was marked dirty right after loading (vendored set_value unconditionally reporting changes). (448978b3)
+
+### Improvements
+- Bundled pi 1.5.2 → 1.6.0. (eebac21d)
+- Larger unified group-header spacing in settings lists and model / plugin pickers; subagent list rows now match task-row sizing with trailing copy / delete icon buttons. (4efffe3c, ca4c700d)
+- Subagent / task save buttons: disabled when unchanged, lit up on change. (394e108f)
 ## [0.5.2] - 2026-11-15
 
 Highlights of this release:
