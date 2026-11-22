@@ -55,15 +55,6 @@ pub(crate) fn mc_agents_view(
     for a in &customs {
         list = list.child(agent_item(weak, a, section == a.id));
     }
-    if customs.is_empty() {
-        list = list.child(
-            div()
-                .p(px(12.))
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(tr("agents.empty")),
-        );
-    }
 
     let sidebar = sidebar_shell("mc-sidebar-agents")
         .w(px(LIST_W))

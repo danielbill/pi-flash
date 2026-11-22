@@ -42,7 +42,6 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.name_taken", "名称已存在（子代理禁止同名）", "名稱已存在（子代理禁止同名）", "Name already exists (subagent names must be unique)"),
     ("agents.broken", "此定义已损坏，无法解析", "此定義已損毀，無法解析", "This definition is broken and cannot be parsed"),
     ("agents.open_fix", "打开文件修复", "開啟檔案修復", "Open file to fix"),
-    ("agents.empty", "还没有自定义子代理——点上方「新建」创建一个", "還沒有自訂子代理——點上方「新增」建立一個", "No custom subagents yet — click New above to create one"),
     ("agents.saved", "已保存", "已儲存", "Saved"),
     ("agents.name_invalid", "名称不能为空", "名稱不能為空", "Name is required"),
     // -- 子代理面板（044-1 §1）
