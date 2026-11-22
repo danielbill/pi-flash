@@ -53,6 +53,11 @@ impl Chat {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = id;
+                // 装载基线（见 SettingsPanel::ag_name_baseline 注）：三个文本
+                // 字段的 set_value 都会 emit Change，on_change 靠基线比对免误脏
+                s.ag_name_baseline = name.clone();
+                s.ag_desc_baseline = desc.clone();
+                s.ag_prompt_baseline = prompt.clone();
                 s.ag_name.update(cx, |ti, cx| ti.set_value(name, cx));
                 s.ag_desc.update(cx, |ti, cx| ti.set_value(desc, cx));
                 s.ag_prompt.update(cx, |ti, cx| ti.set_value(prompt, cx));
@@ -78,14 +83,19 @@ impl Chat {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = AG_NEW.into();
+                // 装载基线（见 SettingsPanel::ag_name_baseline 注）：名称预填
+                // 默认显示名也算装载值，不算编辑
+                let new_default = tr("agents.new_default").to_string();
+                s.ag_name_baseline = new_default.clone();
+                s.ag_desc_baseline = String::new();
+                s.ag_prompt_baseline = String::new();
                 // 名称预填一个占位显示名（id 在保存时按名称/序号生成）
-                s.ag_name.update(cx, |ti, cx| {
-                    ti.set_value(tr("agents.new_default").to_string(), cx)
-                });
+                s.ag_name.update(cx, |ti, cx| ti.set_value(new_default, cx));
                 s.ag_desc
                     .update(cx, |ti, cx| ti.set_value(String::new(), cx));
                 s.ag_prompt
                     .update(cx, |ti, cx| ti.set_value(String::new(), cx));
+                s.ag_prompt_baseline = String::new();
                 s.ag_model = None;
                 s.ag_thinking = "auto".into();
                 s.ag_tools = "inherit".into();
@@ -402,7 +412,7 @@ impl Chat {
 }
 
 /// 新建态的 section 哨兵（同 MCP 页 `__mcp_add__`）。
-const AG_NEW: &str = "__agents_new__";
+pub(crate) const AG_NEW: &str = "__agents_new__";
 
 /// label 96px 上沿对齐的横排行（原型 `.row`）。`field()` 是竖排，不适用。
 fn agent_row(label: &str, control: impl gpui::IntoElement, top_align: bool) -> gpui::AnyElement {

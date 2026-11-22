@@ -3,7 +3,7 @@
 //! 不绕过任何保存/测速链路。
 
 use gpui::Context;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{OpResult, bad, ok};
 use crate::Chat;
@@ -26,6 +26,59 @@ pub(super) fn dispatch(
             chat.dlg.settings = None;
             cx.notify();
             ok()
+        }
+        // 044 子代理表单（2026-11-22 保存钮 dirty 门控验收）：新建态直调
+        // mc_agent_new，与「新建」钮同链
+        method::SETTINGS_AG_NEW => {
+            chat.mc_agent_new(cx);
+            ok()
+        }
+        // 点名选中：display_name 或 id 均可点名（UUID 不外露，自动化按名）
+        method::SETTINGS_AG_SELECT => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"name\": \"子代理显示名或 id\"}"))?;
+            let id = chat
+                .cfg
+                .mc_agents
+                .iter()
+                .find(|a| a.display_name() == name || a.id == name)
+                .map(|a| a.id.clone())
+                .ok_or_else(|| bad(format!("找不到子代理 {name}")))?;
+            chat.mc_agent_select(id, cx);
+            ok()
+        }
+        // 状态读取：dirty + 保存钮渲染/禁用（口径 = agent_detail 装配：
+        // 渲染 = is_new || 非内置；禁用 = !dirty）
+        method::SETTINGS_AG_STATE => {
+            let Some(st) = chat.dlg.settings.clone() else {
+                return Err(bad("设置面板未打开（先 settings.open）"));
+            };
+            let (section, dirty) = {
+                let s = st.read(cx);
+                (s.section.clone(), s.ag_dirty)
+            };
+            let prompt_baseline = st.read(cx).ag_prompt_baseline.clone();
+            let prompt_value = st.read(cx).ag_prompt.read(cx).value().to_string();
+            let custom = chat
+                .cfg
+                .mc_agents
+                .iter()
+                .find(|a| a.id == section)
+                .map(|a| a.origin.is_custom());
+            let is_new = section == crate::settings::agents::AG_NEW;
+            Ok(json!({
+                "ok": true,
+                "section": section,
+                "is_new": is_new,
+                "builtin": custom == Some(false),
+                "dirty": dirty,
+                "save_rendered": is_new || custom == Some(true),
+                "save_disabled": !dirty,
+                "prompt_baseline": prompt_baseline,
+                "prompt_value": prompt_value,
+            }))
         }
         // 040 扩展页安装直调：走与安装按钮完全相同的 mc_install_package 链路
         method::SETTINGS_INSTALL_EXT => {

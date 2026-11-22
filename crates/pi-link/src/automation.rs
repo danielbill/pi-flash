@@ -107,6 +107,11 @@ pub mod method {
     /// 040 扩展页：弹卸载确认浮层 / 应答确认（UI 测试用）
     pub const SETTINGS_REMOVE_EXT: &str = "settings.remove_ext";
     pub const SETTINGS_PKG_REMOVE_CONFIRM: &str = "settings.pkg_remove_confirm";
+    /// 044 子代理表单（UI 测试用）：新建态 / 按 display_name 或 id 点名选中 /
+    /// 状态读取（dirty + 保存钮渲染/禁用，保存钮 dirty 门控验收 2026-11-22）
+    pub const SETTINGS_AG_NEW: &str = "settings.ag_new";
+    pub const SETTINGS_AG_SELECT: &str = "settings.ag_select";
+    pub const SETTINGS_AG_STATE: &str = "settings.ag_state";
     pub const THEME_SET: &str = "theme.set";
     pub const LANG_SET: &str = "lang.set";
     pub const DIALOG_CLOSE: &str = "dialog.close";

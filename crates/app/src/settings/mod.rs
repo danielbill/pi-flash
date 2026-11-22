@@ -115,6 +115,14 @@ pub(crate) struct SettingsPanel {
     pub ag_skills_scroll: gpui::ScrollHandle,
     /// 有未保存改动（表单头黄点 + 保存键可用）
     pub ag_dirty: bool,
+    /// 文本字段装载基线（名称/简介/定制指令）：vendored `set_value` 走
+    /// `replace_text_in_range`，末尾**无条件** emit Change（silent 标志只拦
+    /// 补全触发，2026-11-22 实测）——on_change 若无脑置脏，每次选中/新建
+    /// 子代理都被 deferred 事件误置脏 = 保存钮未改动也常亮（用户报障根因）。
+    /// 三个 on_change 与基线比对，只有偏离装载值的编辑才置脏。
+    pub ag_name_baseline: String,
+    pub ag_desc_baseline: String,
+    pub ag_prompt_baseline: String,
     pub error: Option<String>,
     /// 界面页：打开的字体下拉（槽位 ix；None=全关）
     pub font_popup: Option<usize>,
@@ -155,6 +163,10 @@ fn panel_live_input(
             }))
     })
 }
+
+// 注：panel_live_input 的「置脏变体」已撤销（2026-11-22）——vendored
+// `set_value` 无条件 emit Change，无差别置脏会把装载也当编辑；名称/简介/
+// 定制指令三字段改行内「装载基线比对」构造（见 SettingsPanel::ag_name_baseline 注）。
 
 impl SettingsPanel {
     pub(crate) fn new(cx: &mut gpui::Context<Self>) -> Self {
@@ -219,18 +231,52 @@ impl SettingsPanel {
                 })
             },
             mcp_name: panel_live_input(tr("mcp.field_name"), cx),
-            ag_name: panel_live_input("", cx),
-            ag_desc: panel_live_input("", cx),
+            ag_name: {
+                let weak_an = cx.weak_entity();
+                cx.new(|cx| {
+                    TextInput::new(cx).on_change(Box::new(move |text, cx| {
+                        if let Some(p) = weak_an.upgrade() {
+                            p.update(cx, |s, cx| {
+                                // 装载基线比对（见 ag_name_baseline 注）
+                                if text != s.ag_name_baseline.as_str() {
+                                    s.ag_dirty = true;
+                                }
+                                cx.notify();
+                            });
+                        }
+                    }))
+                })
+            },
+            ag_desc: {
+                let weak_ad = cx.weak_entity();
+                cx.new(|cx| {
+                    TextInput::new(cx).on_change(Box::new(move |text, cx| {
+                        if let Some(p) = weak_ad.upgrade() {
+                            p.update(cx, |s, cx| {
+                                // 装载基线比对（见 ag_name_baseline 注）
+                                if text != s.ag_desc_baseline.as_str() {
+                                    s.ag_dirty = true;
+                                }
+                                cx.notify();
+                            });
+                        }
+                    }))
+                })
+            },
             ag_prompt: {
                 let weak_ag = cx.weak_entity();
                 cx.new(|cx| {
                     TextInput::new(cx)
                         .placeholder(tr("agents.prompt_ph"))
                         .multiline()
-                        .on_change(Box::new(move |_, cx| {
+                        .on_change(Box::new(move |text, cx| {
                             if let Some(p) = weak_ag.upgrade() {
                                 p.update(cx, |s, cx| {
-                                    s.ag_dirty = true;
+                                    // 装载基线比对（见 ag_prompt_baseline 注）：
+                                    // 只有偏离装载值的编辑才置脏
+                                    if text != s.ag_prompt_baseline.as_str() {
+                                        s.ag_dirty = true;
+                                    }
                                     cx.notify();
                                 });
                             }
@@ -275,6 +321,9 @@ impl SettingsPanel {
             ag_mcp_scroll: gpui::ScrollHandle::new(),
             ag_skills_scroll: gpui::ScrollHandle::new(),
             ag_dirty: false,
+            ag_name_baseline: String::new(),
+            ag_desc_baseline: String::new(),
+            ag_prompt_baseline: String::new(),
             error: None,
             font_popup: None,
             font_dd: cx.new(|_| DropdownState::new()),
