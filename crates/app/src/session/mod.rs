@@ -148,9 +148,11 @@ pub(crate) fn main_column(
     let chat_entity = entity.clone();
     let rt_entity = rt.clone();
     let rt_list = rt.read(cx).pager.state();
-    // 只读观察窗（044-0）：子代理子会话 tab —— composer/操作栏全隐，
-    // 底部换只读提示条
+    // 只读观察窗（044-0）：子代理子会话/任务会话 tab —— composer/操作栏
+    // 全隐，底部换只读提示条（措辞按会话类型，2026-11-22 任务日志行点名
+    // 开任务会话观察窗）
     let observer = rt.read(cx).observer;
+    let observer_task = rt.read(cx).session_type == Some("task");
 
     let sf = crate::appearance::session_font();
 
@@ -223,19 +225,28 @@ pub(crate) fn main_column(
                             // token/抢占并发槽——子代理由主agent独占管理），
                             // 换只读提示条。
                             .children(ext_widget_rows(chat, t, true))
-                            .child(if observer {
-                                observer_notice(t)
+                            .children(if observer {
+                                // 任务会话观察窗：composer 与提示条都不出
+                                //（2026-11-22 用户令：简单去掉 InputPanel，
+                                // 不补冗余信息）；子代理观察窗维持原提示条
+                                if observer_task {
+                                    None
+                                } else {
+                                    Some(observer_notice(t))
+                                }
                             } else {
-                                input::input_area(
-                                    chat,
-                                    weak,
-                                    streaming,
-                                    input_focused,
-                                    false,
-                                    false,
-                                    cx,
+                                Some(
+                                    input::input_area(
+                                        chat,
+                                        weak,
+                                        streaming,
+                                        input_focused,
+                                        false,
+                                        false,
+                                        cx,
+                                    )
+                                    .into_any_element(),
                                 )
-                                .into_any_element()
                             })
                             .children(ext_widget_rows(chat, t, false))
                             // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap

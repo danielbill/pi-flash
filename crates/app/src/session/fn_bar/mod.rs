@@ -186,7 +186,8 @@ pub(crate) fn scroll_to_bottom_button(
 
 /// 只读观察窗底部提示条（044-0）：composer 不渲染，换一条居中的浅色提示
 /// ——子代理由主会话管理，此处只观察。高 40px（占住 PAD_BOTTOM 让位区的
-/// 观感），无交互。
+/// 观感），无交互。（任务会话观察窗不出此条——2026-11-22 用户令：简单
+/// 去掉 InputPanel，不补冗余信息。）
 pub(crate) fn observer_notice(t: &crate::appearance::theme::Theme) -> gpui::AnyElement {
     div()
         .h(px(40.))

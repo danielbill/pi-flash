@@ -122,8 +122,9 @@ fn run_tip(r: &TaskRun) -> String {
 /// 点行 = 详情回填，不再开话）+ 结果槽 + 右缘 mono 时间。`select` =
 /// Some(def_id) 时行点击 = 详情回填（任务列表行），且行尾 hover 显影动作钮
 /// （立即运行/停用/移除，2026-11-22 用户令从详情表头挪来，子代理行同款）。
-/// `open_path` = Some(session_path) 时行点击 = open_session（日志行专属：
-/// 任务会话已从用户列表隐身，这里是唯一入口；与 select 互斥使用）。
+/// `open_path` = Some(session_path) 时行名可点 = 开该次会话的只读观察窗
+/// （日志行专属：任务会话已从用户列表隐身，这里是唯一入口；Agent 任务
+/// 才落 session_path，脚本行自然不可点；与 select 互斥使用）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
@@ -145,7 +146,10 @@ fn task_row(
     let select_act = select.clone();
     let title_act = title.clone();
     // 颜色继承 sidebar_item（active text / 非活动 text_muted，subagent 行同款）；
-    // 仅停用/跳过灰名覆盖。纯文本不可点（点行由行容器 task_select 接管）
+    // 仅停用/跳过灰名覆盖。日志行（open_path Some）名可点 = 开该次会话的
+    // 只读观察窗（2026-11-22 用户令：点名开话；不可发送、无 InputPanel
+    // ——open_subagent_session_window 观察者态自带这两条）
+    let weak_open = weak.clone();
     let name_el = div()
         .id(SharedString::from(format!("{row_id}-name")))
         .flex_1()
@@ -153,6 +157,15 @@ fn task_row(
         .truncate()
         .text_size(ui_size(12.))
         .when(gray, |d| d.text_color(rgb(t.text_faint)))
+        .when_some(open_path, |d, sp| {
+            d.cursor_pointer()
+                .hover(|h| h.text_color(rgb(t.accent)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_open.update(cx, |c, cx| {
+                        c.open_subagent_session_window(sp.clone(), cx);
+                    });
+                })
+        })
         .child(SharedString::from(title));
     let weak_row = weak.clone();
     sidebar_item(row_id, selected)
@@ -169,16 +182,6 @@ fn task_row(
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_row.update(cx, |c, cx| {
                         c.task_select(&def_id, cx);
-                    });
-                })
-        })
-        // 日志行开话（任务会话从用户列表隐身后的唯一入口；点行不选中）
-        .when_some(open_path, |d, sp| {
-            let weak_open = weak.clone();
-            d.cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_open.update(cx, |c, cx| {
-                        c.open_session(sp.clone(), false, cx);
                     });
                 })
         })

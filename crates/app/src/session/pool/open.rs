@@ -205,6 +205,13 @@ impl Chat {
             );
             r.default_model = services::workspace::default_model_pref();
             r.observer = true;
+            // 会话类型随文件判（任务日志行点名开任务会话 2026-11-22：观察
+            // 窗提示条按类型措辞）；user 落 None 同默认
+            r.session_type = match pi_link::sessions::session_kind(path) {
+                pi_link::sessions::SessionKind::Task => Some("task"),
+                pi_link::sessions::SessionKind::Sub => Some("sub"),
+                pi_link::sessions::SessionKind::User => None,
+            };
             r.messages = tail;
             r.messages_loaded = !r.messages.is_empty();
             r.pager.reload(r.messages.len());
