@@ -431,3 +431,13 @@ TextView 码块），图段走 `diagram_element`（自带 LRU），文本段逐�
 TextView、**id 必须逐段唯一**（`{id}#m{ix}`，use_keyed_state 按全局 id
 存解析树，同 id 撞树）。缩进围栏不抽——留给 TextView 兑底，与旧行为
 一致，别试图在拆段器里做完整嵌套解析。
+
+## group/group_hover 必须两元素分离（自引用永不显影，2026-11-22）
+
+`.group(x)` 与 `.group_hover(x, …)` 挂**同一个 div** 上永远不生效：paint 期
+`compute_style_internal`（div.rs:1798，查 GroupHitboxes 栈）先于本元素自身
+`GroupHitboxes::push`（div.rs:1846），自引用查不到 hitbox，refinement 永不
+refine——症状是 hover 事件层全部正常（tip 弹、可点击命中、hover 底生效），
+纯视觉显影（opacity 0→1）不动。修法照 settings agents 行（agents/view.rs:
+104 行容器 group / :131 icons div group_hover）：group 挂**祖先容器**。
+046 任务列表行尾动作钮踩过（buglist 2026-11-22 条目）。

@@ -4,6 +4,22 @@
 > 与 `docs/agents/*.md`。`待复验` 条目 = 当前待跑的手工清单。2026-11-11 全文压缩：过程
 > 叙事与返工史删去，需要时查 git 历史。
 
+## 未修（2026-11-22 发现）——046 任务列表行尾动作钮显影失效：icon 恒不可见（tip/点击正常）
+
+- 现象：hover 任务列表行，「立即运行」tip 正常弹出、22px 动作钮可点击
+  （trash → 确认浮层 → 删除成功），但 play/eye-off/trash 三颗 icon 全程
+  不渲染（pif-ui 多帧多坐标像素裁切确认）。
+- 根因：`task_row_actions`（crates/app/src/tasks/view.rs）把 `.group(reveal)`
+  与 `.group_hover(reveal)` 挂在同一 div；gpui paint 时
+  `compute_style_internal`（div.rs:1798，查 GroupHitboxes）先于本元素自身
+  `GroupHitboxes::push`（div.rs:1846）→ 自引用 group 查不到 hitbox，
+  opacity(1) refinement 永不生效。settings agents 行同款显影正常，因其
+  group 挂在祖先行容器（agents/view.rs:104/:131 两元素分离）。
+- 修法：`.group(reveal.clone())` 挪到任务列表行容器（task_row_actions
+  调用方），icons div 只留 group_hover。
+- 验证：修后 hover → 三 icon 显影（像素裁切）+ tip + 点击链复测；复测脚本
+  见 `test/046-自动任务/ui.md` 执行记录 8。
+
 ## 待复验（2026-11-15 修复）——轮末文件 chips 点击「读取失败 D:\softwares\...\文章/7 前沿论文\x.md」：相对路径接到安装目录 + 正反斜杠混写
 
 - 根因：`turn_written_files`（messages/diff_view.rs）把 write/edit/apply_patch 工具参数

@@ -208,7 +208,45 @@ TaskAnchors 四槽 + composer 槽 + plus_menu 四件 + pill_row/model_menu_body
 
 RESULT: fail=0。
 
-## 陷阱回填
+## 执行记录 8（2026-11-22 五条拍板回归：行尾动作钮/脚本框只读/浏览钮/删除链）
+
+覆盖 11-22 五连提交（b8a5ce60/52f77f84/4c50c3f7/bb0fe759/6e0f9571）。
+单实例（`PI_FLASH_AUTO_TASKS=1`，tmp/ui-test-046b）；坐标全部逻辑 px
+（=物理/1.5），关键锚：脚本 seg (1037,157)、Agent seg (1096,157)、名称框
+(1006,95,610×32)、保存 (1664,111)、指令胶囊 (1006,309,686×247)、列表行 y168、
+行尾三钮 ≈x795–877（play/eye-off/trash 22px + gap）。
+
+```
+✓ 脚本 seg 表单：名称/类型/定时/脚本文件 + note「脚本执行超过30分钟将无条件终止」
+✓ 脚本框只读：点脚本框 (1300,229) → tasks.popup=null 且无 dialog（b8a5ce60 回归）
+✓ 浏览钮在位：像素裁切 =「浏览」两字紧排无省略号（6e0f9571 zh 档）
+✓ en 档 lang.set name=English → 浏览钮像素裁切 =「Browse」（无省略号）
+✓ 建任务链：名称/指令注入（ASCII 逐键）→ 项目 chip → ProjectPicker → Enter
+  选中 → 保存 defs=1 sel 回填，组头【脚本任务 0】【Agent 任务 1】，项目 chip
+  显「20观宏知微」
+✓ 行尾动作钮 hover：行 (401,168) → 「立即运行」tip 弹出（with_tip 350ms）+
+  trash 点击 (866,168) 命中 → 确认浮层「删除任务「1」?运行中的会先中止。」
+✓ 确认删除 (960,475) → defs=0 sel 清空（4c50c3f7 移除链回归）
+```
+
+RESULT: 功能链 fail=0；**视觉层发现 1 个 bug（见下）**。
+
+### ✗ BUG：行尾动作钮显影失效（icon 恒 opacity 0，纯视觉层）
+
+- 现象：hover 列表行时 tip（立即运行）正常弹出、22px 钮可点击命中
+  （trash 点击 → 确认浮层弹出），但三颗 icon **从不渲染**（play/eye-off/trash
+  全程不可见，多帧多坐标像素裁切确认）。
+- 根因：`task_row_actions`（tasks/view.rs）把 `.group(reveal)` 和
+  `.group_hover(reveal)` 挂在**同一个 div** 上。gpui 求值顺序 = paint 里
+  `compute_style_internal`（div.rs:1798，查 GroupHitboxes）先于本元素自身
+  `GroupHitboxes::push`（div.rs:1846）→ 自引用 group 永远查不到 hitbox，
+  opacity(1) refinement 永不生效。settings agents 行同款显影正常 = group 在
+  **祖先行**上（agents/view.rs:104 group / :131 group_hover 分离两元素）。
+- 修法：`.group(reveal.clone())` 挪到任务列表行容器（task_row_actions 的
+  调用方），icons div 只留 `.group_hover(reveal, |s| s.opacity(1.))`。
+- 验证：修后 hover 行 → 三 icon 显影（像素裁切）+ tip + 点击链复测。
+
+## 陷阱回填（本轮新增 2 条）
 
 - `pif-ui exec` 位置参数 `k=v` 不解析，必须 `--arg k=v`；
 - `snapshot --only` 输出 pretty JSON，grep 键要带冒号后空格；
@@ -216,4 +254,13 @@ RESULT: fail=0。
 - **dev_flags::summary 原版只看 dev-flags.json**，env 开的旗标日志显 off
   误导排障——已修为 enabled 同语义（env 覆盖计入）；
 - `--arg keys=t` 单字符到不了 handler（bad_params 需 `{"keys":…}`）——用
-  `--params-file` 传合法 JSON（本记录 type_key helper 即此法）。
+  `--params-file` 传合法 JSON（本记录 type_key helper 即此法）；
+- **文本注入坐标锚定**：`snapshot` 面没有 tasks 表单字段，坐标从 `shot` PNG
+  读——pif-ui 坐标是逻辑 px（物理/scale_factor 1.5），从显示图直接量会偏
+  （本记录显示图:逻辑 ≈ 1.269:1）；精确定位用 `ui.hit_probe` 找最小 hovered
+  hitbox 的 bounds；
+- **合成 click 不夺焦，必须拆 down/up**：`action=click` 点输入框焦点不动
+  （上一框保持焦点、按键继续进旧框——名称框连吞 composer 的键）；改发
+  `down`+sleep 0.1+`up` 后焦点才迁移。按钮/seg 等非焦点类用 click 正常；
+- bash printf 写 `--params-file` JSON：`\a` 类转义会被 printf 吃掉（
+  "ctrl-a" 变非法 JSON）——用 python `json.dumps` 写文件。

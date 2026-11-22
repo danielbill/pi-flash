@@ -35,6 +35,12 @@
 - `tasks.open` op + `snapshot dialogs` 面的 `tasks` 键：三 tab 结构断言、
   空态、表单字段、flag 关时 tasks 键缺席（按钮/弹窗/source 三处同源）。
 - 执行记录见 `ui.md`（回填实际运行输出）。
+- 2026-11-22 五条拍板回归（执行记录 8）：脚本框只读（点框不开选择器）、
+  浏览钮 zh「浏览」/en「Browse」无省略号（6e0f9571）、建任务端到端（名称/
+  指令注入 + 项目 picker + 保存 defs=1）、行尾动作钮链（tip + trash →
+  确认浮层 → 删除 defs=0）。**发现 bug：行尾 icon 显影失效**（self-group +
+  group_hover 同 div，gpui compute_style 先于自身 push——修法 = group 挪
+  行容器，详见 ui.md 执行记录 8 与 docs/buglist.md）。
 
 ## 人工验收（真机项）
 
