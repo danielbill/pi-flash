@@ -23,7 +23,7 @@ use crate::services::format::fmt_msg_time;
 use crate::tasks::DefRow;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::ui::icon;
-use crate::ui::kit::{Btn, config_button, group_header, sidebar_item, status_dot};
+use crate::ui::kit::{Btn, config_button, sidebar_item, status_dot};
 use crate::ui::overlay;
 use crate::ui::spark_spinner;
 use crate::ui::tooltip::WithTip;
@@ -162,7 +162,9 @@ fn task_row(
         .text_size(ui_size(12.))
         .when(gray, |d| d.text_color(rgb(t.text_faint)))
         .when_some(open_path, |d, sp| {
-            d.cursor_pointer()
+            // 日志行名正常色（2026-11-22 用户令：不出 muted——可点即正名）
+            d.when(!gray, |d| d.text_color(rgb(t.text)))
+                .cursor_pointer()
                 .hover(|h| h.text_color(rgb(t.accent)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_open.update(cx, |c, cx| {
@@ -384,19 +386,39 @@ fn tasks_body(
         .pt(px(8.))
         .flex()
         .flex_col();
-    // 标题栏（空库也出——「新增」是唯一建任务入口）：全部任务 [n] + 右缘新增
-    list = list.child(group_header(
-        &format!("{} {}", tr("task.filter_all"), chat.tasks.defs.len()),
-        Some(config_button(
-            "task-list-new",
-            weak,
-            &tr("task.new"),
-            Btn::Primary,
-            true,
-            false,
-            |c, cx| c.task_new_form(cx),
-        )),
-    ));
+    // 标题栏（空库也出——「新增」是唯一建任务入口）：全部任务 [n] + 右缘
+    // 新增。字号/配色与下方「任务日志」标题同档（2026-11-22 用户令：12
+    // SEMIBOLD text_muted，group_header 的 10 大写组头形制不适用本页）
+    list = list.child(
+        div()
+            .flex()
+            .items_center()
+            .pl(px(8.))
+            .pt(px(8.))
+            .pb(px(3.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(ui_size(12.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text_muted))
+                    .child(SharedString::from(format!(
+                        "{} {}",
+                        tr("task.filter_all"),
+                        chat.tasks.defs.len()
+                    ))),
+            )
+            .child(config_button(
+                "task-list-new",
+                weak,
+                &tr("task.new"),
+                Btn::Primary,
+                true,
+                false,
+                |c, cx| c.task_new_form(cx),
+            )),
+    );
     if chat.tasks.defs.is_empty() {
         list = list.child(
             div()
