@@ -888,6 +888,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.entry", "任务", "任務", "Tasks"),
     ("task.manager", "任务管理", "任務管理", "Task Manager"),
     ("task.new", "新建", "新建", "New"),
+    ("task.filter_all", "全部任务", "全部任務", "All tasks"),
     ("task.group_script", "脚本任务", "腳本任務", "Script tasks"),
     ("task.group_agent", "Agent 任务", "Agent 任務", "Agent tasks"),
     ("task.empty", "暂无任务", "暫無任務", "No tasks yet"),

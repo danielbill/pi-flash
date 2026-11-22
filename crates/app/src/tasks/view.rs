@@ -7,8 +7,6 @@
 //! ⑤ 空列表提示「暂无任务」。数据面读 `chat.tasks`（泵/CRUD 刷新，不自建
 //! 轮询）。
 
-use std::path::PathBuf;
-
 use chrono::TimeZone as _;
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb, rgba};
 
@@ -56,25 +54,8 @@ pub(crate) fn page(
         .items_center()
         .pl(px(16.))
         .pr(px(15.))
-        .child(pipe_tabs(page.tab, &weak_tab, t))
-        .child(
-            div()
-                .ml_auto()
-                .h_full()
-                .flex()
-                .items_center()
-                .child(config_button(
-                    // 子代理页「新建」同款主按钮（2026-11-17 拍板：按钮样式
-                    // 对齐 settings/agents——同 Btn::Primary 纯文字钮）
-                    "task-page-new",
-                    weak,
-                    &tr("task.new"),
-                    Btn::Primary,
-                    true,
-                    false,
-                    |c, cx| c.task_new_form(cx),
-                )),
-        );
+        // 2026-11-22 拍板：页头只留【任务 | 日志】，「新增」挪列表标题栏右缘
+        .child(pipe_tabs(page.tab, &weak_tab, t));
 
     let body = match page.tab {
         PAGE_TAB_LOG => log_body(chat, weak, t),
@@ -186,16 +167,15 @@ fn run_tip(r: &TaskRun) -> String {
 
 /// 行装配（两 tab 共用，subagent list 同款 30px sidebar_item）：类型 icon
 /// （2026-11-17 拍板：icon 用设计 HTML 的 tico——脚本=file-code、
-/// Agent=bot，None = 不出）+ 名（可点下划线开话；停用/跳过灰名）+
-/// 结果槽 + 右缘 mono 时间。`select` = Some(def_id) 时行点击 = 详情回填
-/// （任务列表行），且行尾 hover 显影动作钮（立即运行/停用/移除，
-/// 2026-11-22 用户令从详情表头挪来，子代理行同款）。
+/// Agent=bot，None = 不出）+ 名（纯文本；2026-11-22 拍板：去下划线链接态，
+/// 点行 = 详情回填，不再开话）+ 结果槽 + 右缘 mono 时间。`select` =
+/// Some(def_id) 时行点击 = 详情回填（任务列表行），且行尾 hover 显影动作钮
+/// （立即运行/停用/移除，2026-11-22 用户令从详情表头挪来，子代理行同款）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
     title: String,
     gray: bool,
-    link: Option<PathBuf>,
     tico: Option<&'static str>,
     slot: Option<AnyElement>,
     tip: Option<String>,
@@ -211,8 +191,8 @@ fn task_row(
     let select_act = select.clone();
     let title_act = title.clone();
     // 颜色继承 sidebar_item（active text / 非活动 text_muted，subagent 行同款）；
-    // 仅停用/跳过灰名覆盖
-    let mut name_el = div()
+    // 仅停用/跳过灰名覆盖。纯文本不可点（点行由行容器 task_select 接管）
+    let name_el = div()
         .id(SharedString::from(format!("{row_id}-name")))
         .flex_1()
         .min_w_0()
@@ -220,20 +200,6 @@ fn task_row(
         .text_size(ui_size(12.))
         .when(gray, |d| d.text_color(rgb(t.text_faint)))
         .child(SharedString::from(title));
-    if let Some(sp) = link.clone() {
-        let weak_link = weak.clone();
-        name_el = name_el
-            .cursor_pointer()
-            .underline()
-            .hover(|h| h.text_color(rgb(t.accent)))
-            .with_tip("task.open_session_tip")
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = weak_link.update(cx, |c, cx| {
-                    c.open_session(sp.clone(), false, cx);
-                });
-            });
-    }
     let weak_row = weak.clone();
     sidebar_item(row_id, selected)
         // subagent 列表同款：列表区与详情区同底，只留分组头与右分隔线
@@ -395,8 +361,8 @@ fn tasks_body(
 ) -> AnyElement {
     let sel = chat.tasks.page.sel.clone();
 
-    // 左列表（40% 最小宽 400，2026-11-16 拍板）：上【脚本任务】下
-    // 【Agent 任务】两组（subagent list 同款：group_header + 30px 行）；
+    // 左列表（40% 最小宽 400，2026-11-16 拍板）：单一标题「全部任务 [n]」+
+    // 右缘「新增」钮（2026-11-22 拍板：不再分脚本/Agent 两组，页头新建钮撤）；
     // 空库整列「暂无任务」。
     let mut list = div()
         .id("task-sp-list")
@@ -410,6 +376,19 @@ fn tasks_body(
         .pt(px(8.))
         .flex()
         .flex_col();
+    // 标题栏（空库也出——「新增」是唯一建任务入口）：全部任务 [n] + 右缘新增
+    list = list.child(group_header(
+        &format!("{} {}", tr("task.filter_all"), chat.tasks.defs.len()),
+        Some(config_button(
+            "task-list-new",
+            weak,
+            &tr("task.new"),
+            Btn::Primary,
+            true,
+            false,
+            |c, cx| c.task_new_form(cx),
+        )),
+    ));
     if chat.tasks.defs.is_empty() {
         list = list.child(
             div()
@@ -422,49 +401,39 @@ fn tasks_body(
                 .child(tr("task.empty").to_string()),
         );
     } else {
-        for (agent, group_key) in [(false, "task.group_script"), (true, "task.group_agent")] {
-            let defs: Vec<&DefRow> = chat
-                .tasks
-                .defs
-                .iter()
-                .filter(|d| matches!(d.spec.kind, TaskKind::Agent) == agent)
-                .collect();
-            list = list.child(group_header(
-                &format!("{} {}", tr(group_key), defs.len()),
-                None,
+        for DefRow { def, spec, .. } in &chat.tasks.defs {
+            let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
+            let running = chat.tasks.running.iter().any(|k| *k == def.id);
+            let (slot, tip) = if running {
+                (Some(spark_spinner(12., t.accent)), None)
+            } else {
+                match last {
+                    Some(r) => (run_slot(r, t), Some(run_tip(r))),
+                    None => (None, None),
+                }
+            };
+            let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
+            let id = def.id.clone();
+            // 设计 HTML tico：脚本行 file-code / Agent 行 bot
+            let tico: &'static str = if matches!(spec.kind, TaskKind::Agent) {
+                "bot"
+            } else {
+                "file-code"
+            };
+            list = list.child(task_row(
+                SharedString::from(format!("task-sp-{id}")),
+                def.title.clone(),
+                !def.enabled,
+                Some(tico),
+                slot,
+                tip,
+                stamp,
+                sel.as_deref() == Some(id.as_str()),
+                weak,
+                Some(id.clone()),
+                chat.tasks.running.iter().any(|k| k.as_str() == id),
+                t,
             ));
-            for DefRow { def, .. } in defs {
-                let last = chat.tasks.runs.iter().find(|r| r.def_id == def.id);
-                let running = chat.tasks.running.iter().any(|k| *k == def.id);
-                let (slot, tip) = if running {
-                    (Some(spark_spinner(12., t.accent)), None)
-                } else {
-                    match last {
-                        Some(r) => (run_slot(r, t), Some(run_tip(r))),
-                        None => (None, None),
-                    }
-                };
-                let stamp = last.map(|r| fmt_stamp(r.started_at)).unwrap_or_default();
-                let link = last.and_then(|r| r.session_path.clone()).map(PathBuf::from);
-                let id = def.id.clone();
-                // 设计 HTML tico：脚本行 file-code / Agent 行 bot（分组即类型）
-                let tico: &'static str = if agent { "bot" } else { "file-code" };
-                list = list.child(task_row(
-                    SharedString::from(format!("task-sp-{id}")),
-                    def.title.clone(),
-                    !def.enabled,
-                    link,
-                    Some(tico),
-                    slot,
-                    tip,
-                    stamp,
-                    sel.as_deref() == Some(id.as_str()),
-                    weak,
-                    Some(id.clone()),
-                    chat.tasks.running.iter().any(|k| k.as_str() == id),
-                    t,
-                ));
-            }
         }
     }
 
@@ -515,7 +484,6 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                 .unwrap_or(false);
             let skipped = r.outcome == Outcome::Skipped;
             let gray = gray_task || skipped;
-            let link = r.session_path.clone().map(PathBuf::from);
             let slot = run_slot(r, t);
             let tip = Some(run_tip(r));
             let stamp = fmt_stamp(r.started_at);
@@ -540,7 +508,7 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                     }
                 });
             task_row(
-                id, title, gray, link, tico, slot, tip, stamp, false, weak, None, false, t,
+                id, title, gray, tico, slot, tip, stamp, false, weak, None, false, t,
             )
         })
         .collect();
