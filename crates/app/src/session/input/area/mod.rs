@@ -81,10 +81,10 @@ pub(crate) fn input_area(
                     .unwrap_or_else(|| tr("model.select_title").to_string())
             }
         };
-        // 模型信息限 30 字（2026-11-22 用户令：任务详情列窄，NVIDIA 之类
-        // 长前缀整串撑爆控件行；超长截断补 …，与 tab_title「30 字 + …」同形）。
+        // 模型信息限 25 字（2026-11-22 用户令：30 再砍 5——30 字 + … 实测仍
+        // 顶到思考 pill，详情列窄；超长截断补 …，tab_title「30 字 + …」同形口径）。
         // 只整形 pill 显示——菜单 ✓ 匹配读 page.model 原始 provider/id，不受影响
-        let model_label = elide_chars(&model_label, 30);
+        let model_label = elide_chars(&model_label, 25);
         (
             model_label,
             page.thinking.to_string(),
