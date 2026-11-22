@@ -29,9 +29,12 @@ const TICK_SECS: u64 = 20;
 pub(crate) struct DueJob {
     pub key: String,
     /// 本轮理论触发时刻（runId / 台账语义用；misfire 判定已在 claim 内完成）。
-    /// 046-S3 落 run 行时消费。
     #[allow(dead_code)]
     pub scheduled_at: i64,
+    /// 手动派发标记（run_now 走 [`dispatch_manual`] 置 true）：落台账 trigger
+    /// 与结算语义（manual 不重排周期）。2026-11-22 修：此前 execute 不分来源
+    /// 恒记 Schedule——手动运行被误标 schedule 且结算污染 next_run。
+    pub manual: bool,
 }
 
 /// 作业执行结果（oneshot 送回；source 在 settle 里解释成自己的账）。

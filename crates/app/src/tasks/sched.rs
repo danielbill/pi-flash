@@ -186,6 +186,7 @@ pub(crate) fn claim_due(
         jobs.push(DueJob {
             key: def.id,
             scheduled_at: next,
+            manual: false,
         });
     }
     jobs
