@@ -359,6 +359,9 @@ pub(crate) struct PoolUi {
 /// composer 输入面板簇（4ea 字段重组，031）：草稿/附件/历史、输入实体
 /// 惰性槽、@·斜杠补全菜单状态、消息气泡渲染辅助。
 pub(crate) struct ComposerUi {
+    /// 会话侧输入镜像（新会话/会话共用）。任务页指令另有 tasks.page.desc
+    /// ——读写按前台视图分流（active_input / set_input / on_change），
+    /// 2026-11-22 用户令：两 view 缓冲不得互通
     pub(crate) input: String,
     pub(crate) pending_images: Vec<AttachedImage>,
     pub(crate) history_ix: Option<usize>,

@@ -133,8 +133,10 @@ pub(super) fn wire_composer_keys(
                     // 技能前缀 Esc = 尾追空格成 chip 形态（pi-web parity）；
                     // 其余类目 Esc = 只收起（token 原样保留，下一次输入
                     // 变化重新打开）
-                    if menu == Some(MenuKind::Skill) && !this.composer.input.is_empty() {
-                        let v = format!("{} ", this.composer.input);
+                    if menu == Some(MenuKind::Skill) && !this.active_input().is_empty() {
+                        // 读当前视图缓冲（任务页指令也能成 chip）；set_input
+                        // 写侧同口径分流
+                        let v = format!("{} ", this.active_input());
                         this.set_input(v, cx);
                     }
                     this.menu_dismiss(cx);
@@ -155,7 +157,12 @@ pub(super) fn wire_composer_keys(
             if this.menu_move(-1, cx) {
                 return;
             }
-            if this.composer.input.is_empty() && !this.composer.history.is_empty() {
+            // 历史回溯属会话输入语义（2026-11-22 两 view 缓冲分流）：任务页
+            // 嵌入态 ↑ 只走菜单导航，不把聊天历史灌进指令草稿
+            if this.layout.content_view != crate::ContentView::Tasks
+                && this.composer.input.is_empty()
+                && !this.composer.history.is_empty()
+            {
                 let ix = match this.composer.history_ix {
                     None => this.composer.history.len() - 1,
                     Some(i) => i.saturating_sub(1),
@@ -172,7 +179,10 @@ pub(super) fn wire_composer_keys(
             if this.menu_move(1, cx) {
                 return;
             }
-            if this.composer.input.is_empty() {
+            // 同 ComposerUp：任务页嵌入态不回溯/前溯聊天历史
+            if this.layout.content_view != crate::ContentView::Tasks
+                && this.composer.input.is_empty()
+            {
                 if let Some(i) = this.composer.history_ix {
                     if i + 1 < this.composer.history.len() {
                         this.composer.history_ix = Some(i + 1);
@@ -265,11 +275,23 @@ pub(super) fn ensure_composer(
         let mut f = ComposerInput::new(icx);
         f.set_on_change(Rc::new(move |v, cx| {
             let _ = weak_change.update(cx, |chat, cx| {
-                if chat.composer.input != v {
+                // 输入缓冲按前台视图分流（2026-11-22 用户令：任务指令与新
+                // 会话输入是两个 view，两份缓冲不得互通）：触发本回调的实体
+                // 必是当前前台挂载的那一个（另一份缓冲不挂载、无打字），
+                // 按视图分流即按来源分流。mem::take 全程独占一个 String，
+                // 末尾原路写回——容量随移动保留，「镜像写入复用已有容量」
+                // 的每键零分配约定不破。
+                let is_task = chat.layout.content_view == crate::ContentView::Tasks;
+                let mut buf = if is_task {
+                    std::mem::take(&mut chat.tasks.page.desc)
+                } else {
+                    std::mem::take(&mut chat.composer.input)
+                };
+                if buf != v {
                     // 赋值前快照旧值的派生界面态（**纯字符串**，不碰任何实体）
-                    let had_text = !chat.composer.input.is_empty();
-                    let was_bang = chat.composer.input.trim_start().starts_with('!');
-                    let had_menu_chars = has_menu_trigger(&chat.composer.input);
+                    let had_text = !buf.is_empty();
+                    let was_bang = buf.trim_start().starts_with('!');
+                    let had_menu_chars = has_menu_trigger(&buf);
                     // enter() 污染签名（原文尾追 \n）：组件 Enter 先插换行
                     // 触发本次 Change，随即 PressEnter → on_submit 用剥 \n 的
                     // 值覆盖回来。此间过滤集未变，不能复位 menu_ix——否则
@@ -278,13 +300,12 @@ pub(super) fn ensure_composer(
                     //
                     // 先比长度再全串比：只有「旧值 + 1 字节 \n」才可能命中，
                     // 否则立即短路（每键一次全串比较对长草稿是白付的 O(n)）
-                    let enter_pollution = v.len() == chat.composer.input.len() + 1
-                        && v.ends_with('\n')
-                        && &v[..v.len() - 1] == chat.composer.input;
+                    let enter_pollution =
+                        v.len() == buf.len() + 1 && v.ends_with('\n') && &v[..v.len() - 1] == buf;
                     // 写入镜像：**复用已有容量**，不每键分配一个新 String
                     // （长草稿每键一次全量分配 + 释放，是打字延迟的来源之一）
-                    chat.composer.input.clear();
-                    chat.composer.input.push_str(v);
+                    buf.clear();
+                    buf.push_str(v);
                     // 草稿页跨重启持久化（2026-11-07 用户令）：活跃 runtime
                     // 是未晋级草稿时节流落盘（≤3s 一次）；FileBound 会话
                     // 不落（输入属会话本体）
@@ -330,19 +351,26 @@ pub(super) fn ensure_composer(
                     //
                     // 整窗重绘的消费者只有三样：发送钮可用态（空↔非空）、
                     // `!` shell 边框（前导 ! 态）、slash/@ 菜单及其过滤（菜单
-                    // 列表由 Chat 渲）。宁可多 notify，不可漏。
-                    let has_text = !chat.composer.input.is_empty();
-                    let is_bang = chat.composer.input.trim_start().starts_with('!');
-                    let has_menu_chars = has_menu_trigger(&chat.composer.input);
+                    // 列表由 Chat 渲）。宁可多 notify，不可漏。任务页指令的
+                    // 变化也要整窗刷（保存钮 dirty 门控每帧读 page.desc）。
+                    let has_text = !buf.is_empty();
+                    let is_bang = buf.trim_start().starts_with('!');
+                    let has_menu_chars = has_menu_trigger(&buf);
                     if had_text != has_text
                         || was_bang != is_bang
                         || had_menu_chars
                         || has_menu_chars
                         // + 钮钉住的菜单开着时无触发字符，打字也要刷过滤
                         || chat.composer.menu_pinned.is_some()
+                        || is_task
                     {
                         cx.notify();
                     }
+                }
+                if is_task {
+                    chat.tasks.page.desc = buf;
+                } else {
+                    chat.composer.input = buf;
                 }
             });
         }));

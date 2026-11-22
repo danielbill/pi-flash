@@ -38,13 +38,38 @@ pub(crate) use queue_cards::*;
 // ---------------------------------------------------------------------------
 
 impl Chat {
-    /// chat.composer.input 唯一写入口：同步镜像进输入组件（组件是渲染真值源，
-    /// 手写 input 不再存在）。历史/草稿/清空/补全改写都走这里。
+    /// 当前前台视图的输入缓冲镜像（2026-11-22 用户令：任务指令与新会话
+    /// 输入是两个 view，两份缓冲不得互通）：任务页 = tasks.page.desc
+    /// （指令草稿），其余视图 = composer.input（会话/新会话输入）。读侧
+    /// 统一走这里（菜单触发/过滤、per-frame 实体同步）；写侧分流在
+    /// [`Self::set_input`] / [`Self::set_input_with_cursor`] / composer
+    /// on_change（compose.rs）。
+    ///
+    /// 编辑器实体只有共用的一份（ensure_composer 懒建）：input_area 每帧
+    /// 把本视图的镜像 set_value 进实体（同值跳过），切换视图后首帧自动
+    /// 对齐；on_change 只可能来自当前前台挂载的那个实体，按视图分流即按
+    /// 来源分流。
+    pub(crate) fn active_input(&self) -> &str {
+        if self.layout.content_view == crate::ContentView::Tasks {
+            &self.tasks.page.desc
+        } else {
+            &self.composer.input
+        }
+    }
+
+    /// 当前前台视图输入缓冲的唯一写入口：任务页写指令草稿，其余写
+    /// composer 镜像，并同步进输入组件（组件是渲染真值源，手写 input
+    /// 不再存在）。历史/草稿/清空/补全改写都走这里。
     pub(crate) fn set_input(&mut self, v: String, cx: &mut Context<Self>) {
-        self.composer.input = v;
+        if self.layout.content_view == crate::ContentView::Tasks {
+            self.tasks.page.desc = v;
+        } else {
+            self.composer.input = v;
+        }
         self.composer.menu_dismissed = false;
         if let Some(c) = &self.composer.composer {
-            c.update(cx, |f, fcx| f.set_value(&self.composer.input, fcx));
+            let v = self.active_input().to_string();
+            c.update(cx, |f, fcx| f.set_value(&v, fcx));
         }
         cx.notify();
     }
@@ -57,10 +82,14 @@ impl Chat {
         cursor_byte: usize,
         cx: &mut Context<Self>,
     ) {
-        self.composer.input = v;
+        if self.layout.content_view == crate::ContentView::Tasks {
+            self.tasks.page.desc = v;
+        } else {
+            self.composer.input = v;
+        }
         self.composer.menu_dismissed = false;
         if let Some(c) = &self.composer.composer {
-            let v = self.composer.input.clone();
+            let v = self.active_input().to_string();
             c.update(cx, |f, fcx| f.set_value_with_cursor(v, cursor_byte, fcx));
         }
         cx.notify();

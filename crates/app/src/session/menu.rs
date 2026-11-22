@@ -58,7 +58,8 @@ impl Chat {
 
     /// 当前触发 token（不看 menu_dismissed——确认补全需要区间本身）。
     fn menu_trigger(&self, cx: &gpui::App) -> Option<MenuTrigger> {
-        let input = &self.composer.input;
+        // 读当前视图缓冲（2026-11-22 两 view 缓冲分流：任务页菜单过滤指令草稿）
+        let input = self.active_input();
         // 廉价门：输入里没有 `@`/`&` 字节就跳过两次 token 扫描
         let has_token = input.as_bytes().iter().any(|b| *b == b'@' || *b == b'&');
         for (prefix, kind) in [('/', MenuKind::Skill), ('$', MenuKind::Command)] {
@@ -126,7 +127,8 @@ impl Chat {
 
     /// composer 光标字节位（取整到字符边界；组件未建 = 值末尾）。
     fn composer_cursor(&self, cx: &gpui::App) -> usize {
-        let input = &self.composer.input;
+        // 光标位相对当前视图缓冲取整（任务页 = 指令草稿，分流见 active_input）
+        let input = self.active_input();
         let mut cursor = self
             .composer
             .composer
@@ -317,7 +319,7 @@ impl Chat {
         let Some(tr) = self.menu_trigger(cx) else {
             return;
         };
-        let input = self.composer.input.clone();
+        let input = self.active_input().to_string();
         let before = &input[..tr.start];
         // 引号形态钻取：token 的闭引号悬在光标处（前次 accept 插入 `@"…/"`
         // 的形态，光标停在闭引号前）——替换须吃掉它，否则每钻一层残留一个
@@ -383,7 +385,7 @@ impl Chat {
                 return;
             }
             let cursor = self.composer_cursor(cx);
-            let mut v = self.composer.input.clone();
+            let mut v = self.active_input().to_string();
             v.replace_range(tr.start..tr.start + 1, &kind.prefix().to_string());
             self.set_input_with_cursor(v, cursor, cx);
         }
@@ -437,28 +439,30 @@ impl Chat {
                 .replace('\\', "/");
             text.push_str(&crate::services::at_file::build_at_insert_text(&rel, false, quoted).0);
         }
-        // 替换触发 token；菜单已收起/输入已变 = 追加到输入末尾
+        // 替换触发 token；菜单已收起/输入已变 = 追加到输入末尾。
+        // 读写都走当前视图缓冲（任务页 = 指令草稿，2026-11-22 分流）
+        let input = self.active_input().to_string();
         let (start, end) = match tr {
             Some(tr) => {
-                let mut e = tr.end.min(self.composer.input.len());
-                if tr.quoted && self.composer.input.as_bytes().get(e) == Some(&b'"') {
+                let mut e = tr.end.min(input.len());
+                if tr.quoted && input.as_bytes().get(e) == Some(&b'"') {
                     e += 1;
                 }
                 (tr.start, e)
             }
             None => {
-                let l = self.composer.input.len();
+                let l = input.len();
                 (l, l)
             }
         };
         let mut v = String::new();
-        v.push_str(&self.composer.input[..start]);
+        v.push_str(&input[..start]);
         if start == end && !v.is_empty() && !v.ends_with(' ') && !v.ends_with('\n') {
             v.push(' ');
         }
         let cursor = v.len() + text.len();
         v.push_str(&text);
-        v.push_str(&self.composer.input[end..]);
+        v.push_str(&input[end..]);
         self.set_input_with_cursor(v, cursor, cx);
         self.close_menu_common(cx);
     }

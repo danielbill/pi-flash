@@ -179,7 +179,7 @@ pub(crate) fn input_area(
     // 命令名同步只在 '/' 前缀时算（chip 派生只消费 '/' 前缀），普通打字
     // 每键不碰命令表；会话进程答案优先，否则启动装载的（项目 skill + 扩展
     // 缓存）。names 在 update 外先算好，避与 chat 的借用嵌套。
-    let names: Option<Vec<String>> = if chat.composer.input.starts_with('/') {
+    let names: Option<Vec<String>> = if chat.active_input().starts_with('/') {
         Some(
             chat.slash_commands(cx)
                 .iter()
@@ -194,7 +194,9 @@ pub(crate) fn input_area(
     // 打字不扫清单）。update 外先算好，避与 chat 的借用嵌套（同 names）。
     let session_token = chat.session_token_for_input();
     {
-        let input = &chat.composer.input;
+        // 每帧镜像 = 当前视图缓冲（2026-11-22 两 view 缓冲分流：任务页灌
+        // 指令草稿，会话侧灌 composer.input；实体共用一份，同值跳过）
+        let input = chat.active_input();
         composer.update(cx, |f, fcx| {
             f.set_placeholder(Some(ph));
             // 压缩锁：编辑器组件整块不挂载（无焦点/IME/粘贴），显示

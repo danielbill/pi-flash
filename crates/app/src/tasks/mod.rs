@@ -76,8 +76,9 @@ pub(crate) struct TasksState {
 pub(crate) struct TaskPage {
     /// 左列表选中 def（None = 新建空态，表单清空）。
     pub sel: Option<String>,
-    // ---- 表单字段（选中回填 / 新建清空共用一套）。指令不在此——
-    // 2026-11-17 拍板 InputPanel 直接嵌入，prompt 即 chat.composer.input
+    // ---- 表单字段（选中回填 / 新建清空共用一套）。指令编辑器 = 真
+    // InputPanel（2026-11-17 拍板嵌入，共用 composer 实体），但缓冲本页
+    // 自带（desc）——composer.input 只装会话侧输入，两 view 不得互通
     pub name: Option<Entity<TextInput>>,
     /// false = 脚本、true = Agent（HTML 原稿新建默认 Agent）。
     pub kind_agent: bool,
@@ -105,6 +106,12 @@ pub(crate) struct TaskPage {
     /// 保存钮 dirty 基线 = 载入/新建/保存成功时刻的表单快照；现值 ≠ 基线
     /// 才点亮保存钮（2026-11-22 用户令：内容未改动 disable、改动 accent）。
     pub origin: Option<FormSnap>,
+    /// 任务页【指令】自己的输入缓冲（2026-11-22 用户令：任务指令与新会话
+    /// 输入是两个 view，两份缓冲不得互通）。composer.input 从此只装会话侧
+    /// 输入——读写分流口径见 [`Chat::active_input`] / `set_input` /
+    /// composer on_change；渲染真值仍由 input_area 每帧把当前视图的镜像
+    /// set_value 进共用实体（同值跳过）。
+    pub desc: String,
 }
 
 /// 锚定菜单槽位号（[`TaskPage::popup`]）。
@@ -300,8 +307,9 @@ impl Chat {
                     .is_some_and(|c| c.read(cx).focus_handle_in(cx).is_focused(window)))
     }
 
-    /// 表单文本输入懒创建（aux.market 同款）。指令输入 = 真 composer
-    /// （ensure_composer 渲染期懒建），此处无实体要建。
+    /// 表单文本输入懒创建（aux.market 同款）。指令编辑器 = 真 composer
+    /// 实体（ensure_composer 渲染期懒建，共用），此处无实体要建——指令
+    /// 缓冲在 page.desc，分流口径见 active_input / set_input。
     pub(crate) fn tasks_ensure_inputs(&mut self, cx: &mut Context<Self>) {
         if self.tasks.page.name.is_none() {
             // subagent 表单头同款默认输入（2026-11-16 拍板；label 已带
@@ -380,7 +388,8 @@ impl Chat {
         if let Some(i) = &self.tasks.page.name {
             i.update(cx, |inp, icx| inp.set_value(row.def.title.clone(), icx));
         }
-        // 指令回填 = 真 composer（InputPanel 嵌入态的输入本体）
+        // 指令回填 = 本页缓冲（set_input 按前台视图分流，任务页写 page.desc；
+        // 编辑器实体共用，渲染帧会把缓冲灌回组件）
         self.set_input(desc, cx);
         // dirty 基线（2026-11-22 用户令：保存钮未改动即 disable）
         self.tasks.page.origin = Some(self.form_snap(cx));
@@ -429,8 +438,9 @@ impl Chat {
         let page = &self.tasks.page;
         FormSnap {
             name,
-            // 指令 = 真 composer 的当前值（InputPanel 嵌入态）
-            desc: self.composer.input.clone(),
+            // 指令 = 本页缓冲（2026-11-22 用户令两 view 缓冲分流，不读
+            // composer.input——那是会话侧的输入）
+            desc: page.desc.clone(),
             kind_agent: page.kind_agent,
             unit_ix: page.unit_ix,
             interval_ix: page.interval_ix,

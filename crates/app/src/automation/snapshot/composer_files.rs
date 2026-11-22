@@ -26,7 +26,9 @@ pub(super) fn composer_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         })
     };
     json!({
-        "text": truncate(&chat.composer.input, 2000),
+        // 当前视图缓冲（2026-11-22 两 view 缓冲分流）：任务页快照回指令
+        // 草稿，会话侧回 composer.input——断言对齐屏上可见文本
+        "text": truncate(chat.active_input(), 2000),
         "pending_images": chat.composer.pending_images.len(),
         "history_len": chat.composer.history.len(),
         "composer_open": chat.composer.composer.is_some(),

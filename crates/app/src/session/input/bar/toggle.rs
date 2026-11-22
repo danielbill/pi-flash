@@ -24,10 +24,13 @@ pub(crate) fn composer_bar(
     // `!` bash 执行中与模型流共用停止按钮形态（031）
     let bash_running = chat.rt().read(cx).bash_running;
     let running = streaming || bash_running;
-    // `!` shell 模式（与 input_area 边框同判定）：左组控件整组换成提示
-    let bash_mode = chat.composer.pending_images.is_empty()
-        && chat.composer.input.trim_start().starts_with('!');
-    let bash_excluded = chat.composer.input.trim_start().starts_with("!!");
+    // `!` shell 模式（与 input_area 边框同判定）：左组控件整组换成提示。
+    // 任务嵌入态不出（指令以 ! 开头是正文，不是 shell 触发）——与边框
+    // 同口径；文本读当前视图缓冲（2026-11-22 两 view 缓冲分流）
+    let bash_mode = !task_form
+        && chat.composer.pending_images.is_empty()
+        && chat.active_input().trim_start().starts_with('!');
+    let bash_excluded = !task_form && chat.active_input().trim_start().starts_with("!!");
     let thinking_open = chat.dlg.pill_menu == Some(PillMenu::Thinking);
     let tools_open = chat.dlg.pill_menu == Some(PillMenu::Tools);
     // 工具预设 = spawn 参数（--tools/--no-tools），换它要重绑会话进程 +

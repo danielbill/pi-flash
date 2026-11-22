@@ -69,7 +69,9 @@ impl Chat {
     /// parity）。title 口径与会话详情卡一致：会话名优先，空则预览/占位。
     /// 前缀门控：非路径形态（盘符/UNC 开头）不扫清单——普通打字零开销。
     pub(crate) fn session_token_for_input(&self) -> Option<(String, String)> {
-        let input = self.composer.input.as_str();
+        // 读当前视图缓冲（2026-11-22 两 view 缓冲分流）：任务页派生的是
+        // 指令草稿的 chip，不吃会话侧输入
+        let input = self.active_input();
         let b = input.as_bytes();
         let plausible = b.len() >= 2
             && ((b[0].is_ascii_alphanumeric() && b[1] == b':') || input.starts_with("//"));
@@ -97,6 +99,9 @@ impl Chat {
     /// 尾）。收卡 + 内容区切回会话，让插入可见。
     pub(crate) fn hover_card_at_insert(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.dlg.hover_card = None;
+        // 先切回会话视图再动输入（2026-11-22 两 view 缓冲分流）：set_input_*
+        // 按前台视图分流写缓冲——必须先落到 Chat，插入才会进 composer.input
+        self.set_content_view(ContentView::Chat);
         let full = path.to_string_lossy().replace('\\', "/");
         let mut base = std::mem::take(&mut self.composer.input);
         if !base.is_empty() && !base.ends_with(' ') && !base.ends_with('\n') {
@@ -106,7 +111,6 @@ impl Chat {
         let cursor = base.len() + 1;
         base.push(' ');
         self.set_input_with_cursor(base, cursor, cx);
-        self.set_content_view(ContentView::Chat);
     }
 
     /// 打开项目菜单的【打开文件夹】：目录选择器 → 切换工作区。`fresh`

@@ -162,6 +162,9 @@ impl Chat {
             .to_string_lossy()
             .replace('\\', "/");
         let (text, off) = crate::services::at_file::build_at_insert_text(&rel, is_dir, false);
+        // 先切回会话视图再动输入（2026-11-22 两 view 缓冲分流）：set_input_*
+        // 按前台视图分流写缓冲——必须先落到 Chat，插入才会进 composer.input
+        self.set_content_view(ContentView::Chat);
         let mut base = std::mem::take(&mut self.composer.input);
         if !base.is_empty() && !base.ends_with(' ') && !base.ends_with('\n') {
             base.push(' ');
@@ -169,6 +172,5 @@ impl Chat {
         let cursor = base.len() + off;
         base.push_str(&text);
         self.set_input_with_cursor(base, cursor, cx);
-        self.set_content_view(ContentView::Chat);
     }
 }
