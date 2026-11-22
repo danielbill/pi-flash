@@ -12,7 +12,7 @@ pub const LANG_LABELS: [&str; 3] = ["简体中文", "繁體中文", "English"];
 
 mod table;
 
-use self::table::TABLE;
+use self::table::PARTS;
 pub use self::table::{ABOUT_DESC, ABOUT_NOTE};
 
 pub fn set_lang(ix: usize) {
@@ -37,7 +37,7 @@ pub fn lang_ix() -> usize {
 /// - **译文为空 → 回落 zh-CN**（存量漏译的行为与迁移前一致：繁/英界面显示
 ///   中文，而不是空白、也不是裸键名。漏译清单由 src/i18n_audit.rs 盯着）
 pub fn tr<'a>(s: &'a str) -> &'a str {
-    let row = TABLE.iter().find(|e| e.0 == s);
+    let row = PARTS.iter().flat_map(|t| t.iter()).find(|e| e.0 == s);
     match lang_ix() {
         0 => row.map(|e| e.1).unwrap_or(s),
         ix => row
