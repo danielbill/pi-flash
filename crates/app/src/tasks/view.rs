@@ -514,7 +514,7 @@ fn tasks_detail(
         .p(px(15.))
         .flex()
         .flex_col()
-        .child(form_head(chat, weak, t))
+        .child(form_head(chat, weak, t, cx))
         .child(
             div()
                 .flex()

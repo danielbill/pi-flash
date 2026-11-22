@@ -18,6 +18,7 @@ pub(crate) fn form_head(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     _t: &'static Theme,
+    cx: &gpui::Context<Chat>,
 ) -> AnyElement {
     let name = chat
         .tasks
@@ -29,6 +30,9 @@ pub(crate) fn form_head(
     // 立即运行/停用/移除已挪列表行 hover 显影（2026-11-22 用户令，子代理行
     // 同款）——表头只剩保存，名称输入与脚本输入基本等宽
     // 保存钮 ml 12 + 行 gap 8 = 输入↔保存 20（SP8 口径，与脚本行一致）
+    // 保存钮 dirty 门控（2026-11-22 用户令）：内容未改动 disable、有改动
+    // accent；装配不出合法 spec（如缺脚本路径）同样 disable
+    let savable = chat.task_form_savable(cx);
     div()
         .flex()
         .items_center()
@@ -42,7 +46,7 @@ pub(crate) fn form_head(
             tr("task.save"),
             Btn::Primary,
             true,
-            false,
+            !savable,
             |c, cx| c.task_save_form(cx),
         )))
         .into_any_element()

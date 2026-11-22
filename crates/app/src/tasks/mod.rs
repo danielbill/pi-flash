@@ -102,6 +102,9 @@ pub(crate) struct TaskPage {
     pub anchors: TaskAnchors,
     /// 移除确认（overlay::confirm 槽：(def_id, title)）。
     pub confirm_del: Option<(String, String)>,
+    /// 保存钮 dirty 基线 = 载入/新建/保存成功时刻的表单快照；现值 ≠ 基线
+    /// 才点亮保存钮（2026-11-22 用户令：内容未改动 disable、改动 accent）。
+    pub origin: Option<FormSnap>,
 }
 
 /// 锚定菜单槽位号（[`TaskPage::popup`]）。
@@ -379,6 +382,8 @@ impl Chat {
         }
         // 指令回填 = 真 composer（InputPanel 嵌入态的输入本体）
         self.set_input(desc, cx);
+        // dirty 基线（2026-11-22 用户令：保存钮未改动即 disable）
+        self.tasks.page.origin = Some(self.form_snap(cx));
         cx.notify();
     }
 
@@ -407,12 +412,13 @@ impl Chat {
             i.update(cx, |inp, icx| inp.set_value(String::new(), icx));
         }
         self.set_input(String::new(), cx);
+        // dirty 基线（2026-11-22 用户令：新建空表单保存钮 disable）
+        self.tasks.page.origin = Some(self.form_snap(cx));
         cx.notify();
     }
 
-    /// 表单【保存】（新建 = 创建 / 选中 = 整行更新；改周期重锚在 save_edit 判定）。
-    pub(crate) fn task_save_form(&mut self, cx: &mut Context<Self>) {
-        self.tasks_ensure_inputs(cx);
+    /// 当前表单快照（保存装配与 dirty 判定共用同一装配）。
+    fn form_snap(&self, cx: &Context<Self>) -> FormSnap {
         let name = self
             .tasks
             .page
@@ -420,12 +426,11 @@ impl Chat {
             .as_ref()
             .map(|i| i.read(cx).value().to_string())
             .unwrap_or_default();
-        // 指令 = 真 composer 的当前值（InputPanel 嵌入态）
-        let desc = self.composer.input.clone();
         let page = &self.tasks.page;
-        let snap = FormSnap {
+        FormSnap {
             name,
-            desc,
+            // 指令 = 真 composer 的当前值（InputPanel 嵌入态）
+            desc: self.composer.input.clone(),
             kind_agent: page.kind_agent,
             unit_ix: page.unit_ix,
             interval_ix: page.interval_ix,
@@ -438,8 +443,23 @@ impl Chat {
             model: page.model.clone(),
             thinking: page.thinking,
             script_path: page.script_path.clone(),
-        };
-        let sel = page.sel.clone();
+        }
+    }
+
+    /// 保存钮可点判据（2026-11-22 用户令）：内容相对载入/新建/上次保存的
+    /// 基线有改动 **且** 能装配出合法 spec。form_head 每帧读一次——快照
+    /// = 14 个小字段 PartialEq + 一次名称输入读值，µs 级，热路径无碍。
+    pub(crate) fn task_form_savable(&self, cx: &Context<Self>) -> bool {
+        let snap = self.form_snap(cx);
+        let dirty = self.tasks.page.origin.as_ref() != Some(&snap);
+        dirty && build_spec(&snap).is_some()
+    }
+
+    /// 表单【保存】（新建 = 创建 / 选中 = 整行更新；改周期重锚在 save_edit 判定）。
+    pub(crate) fn task_save_form(&mut self, cx: &mut Context<Self>) {
+        self.tasks_ensure_inputs(cx);
+        let snap = self.form_snap(cx);
+        let sel = self.tasks.page.sel.clone();
         let Some(spec) = build_spec(&snap) else {
             return;
         };
@@ -459,6 +479,8 @@ impl Chat {
         match result {
             Ok(id) => {
                 self.tasks.page.sel = Some(id);
+                // 保存成功即新基线：保存钮回灰（dirty 清零），再改再亮
+                self.tasks.page.origin = Some(snap);
                 self.tasks_refresh();
                 scheduler::request_tick();
             }
@@ -582,8 +604,9 @@ impl Chat {
     }
 }
 
-/// 表单快照（保存装配用）。
-struct FormSnap {
+/// 表单快照（保存装配 + 保存钮 dirty 基线共用，防两处装配漂移）。
+#[derive(Clone, PartialEq)]
+pub(crate) struct FormSnap {
     name: String,
     desc: String,
     kind_agent: bool,
