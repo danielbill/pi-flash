@@ -368,7 +368,7 @@ fn tasks_body(
                 .gap(px(crate::ui::tokens::space::SP7))
                 .mt(px(crate::ui::tokens::space::SP7))
                 .flex_1()
-                .child(field("task.type", type_seg(chat, weak, t), false))
+                .child(field("task.type", type_seg(chat, weak, t, window), false))
                 .child(field("task.sched", sched_row(chat, weak, t), false))
                 .children(kind_block(chat, weak, t, window, cx)),
         );

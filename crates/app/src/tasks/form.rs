@@ -162,12 +162,29 @@ pub(crate) fn field(label: &'static str, control: AnyElement, top_align: bool) -
 }
 
 /// 任务类型 seg 分段【脚本|Agent】（HTML segType）。
+/// 视觉（2026-11-22 用户拍板「凸/凹」）：轨道 = 凹槽（bg_panel 沉底 + 边框），
+/// 选中段 = 凸起（t.bg 浮出槽底 + SEMIBOLD 加粗），未选段 = 凹陷（透明底 +
+/// text_dim）。左右等宽：两段同取两标签排版宽的较大者（见
+/// [`seg_label_w`]）+ §5.1 MD 档水平 padding，文本居中——「脚本/Agent」
+/// 内容宽差不再让两段一宽一窄。
 pub(crate) fn type_seg(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    window: &gpui::Window,
 ) -> AnyElement {
     let cur_agent = chat.tasks.page.kind_agent;
+    let labels = [
+        tr("task.type_script").to_string(),
+        tr("task.type_agent").to_string(),
+    ];
+    // 等宽基准按较重字重（SEMIBOLD）实测——选中态加粗不溢出，未选态
+    // NORMAL 更窄必装得下
+    let seg_w = labels
+        .iter()
+        .map(|l| seg_label_w(l, window))
+        .fold(0.0_f32, f32::max)
+        + btn::MD_PX * 2.;
     div()
         .flex_none()
         .flex()
@@ -181,19 +198,21 @@ pub(crate) fn type_seg(
             let weak = weak.clone();
             div()
                 .id(SharedString::from(format!("task-seg-{agent}")))
+                .min_w(px(seg_w))
                 .flex()
                 .items_center()
+                .justify_center()
                 .h(px(btn::MD_H))
-                .px(px(space::SP7))
+                .px(px(btn::MD_PX))
                 .text_size(ui_size(12.))
                 .cursor_pointer()
                 .when(on, |d| {
-                    d.bg(rgb(t.bg_selected))
+                    d.bg(rgb(t.bg))
                         .text_color(rgb(t.text))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                 })
                 .when(!on, |d| {
-                    d.text_color(rgb(t.text_muted))
+                    d.text_color(rgb(t.text_dim))
                         .hover(|h| h.text_color(rgb(t.text)))
                 })
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -206,12 +225,39 @@ pub(crate) fn type_seg(
                     });
                 })
                 .child(if agent {
-                    tr("task.type_agent").to_string()
+                    labels[1].clone()
                 } else {
-                    tr("task.type_script").to_string()
+                    labels[0].clone()
                 })
         }))
         .into_any_element()
+}
+
+/// seg 标签排版宽（两段等宽的基准）。家族 = 界面 chrome 默认族（panel_font，
+/// shell body 根容器同族），字号 = 渲染字号 ui_size(12)（与渲染同口径，
+/// psp_row_views 溢出测量同款）；字重取两态中较重的 SEMIBOLD。
+fn seg_label_w(label: &str, window: &gpui::Window) -> f32 {
+    let font = gpui::Font {
+        family: crate::appearance::panel_font().family.clone().into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: gpui::FontWeight::SEMIBOLD,
+        style: gpui::FontStyle::Normal,
+    };
+    let run = gpui::TextRun {
+        len: label.len(),
+        font,
+        color: rgb(0x000000).into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    f32::from(
+        window
+            .text_system()
+            .layout_line(label, ui_size(12.), &[run], None)
+            .width,
+    )
 }
 
 // ---------------------------------------------------------------------------
