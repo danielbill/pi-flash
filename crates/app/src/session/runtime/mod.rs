@@ -74,6 +74,11 @@ pub(crate) struct SessionRuntime {
     /// 不许捡走它（任务 prompt 不是用户的输入页）；FileBound 也不许清用户
     /// 同 cwd 草稿。置位点唯一：spawn_agent_turn。
     pub task_owned: bool,
+    /// 会话 type 属性（046，2026-11-22 拍板 user/sub/task）：spawn 期注入
+    /// env `PF_SESSION_TYPE`，session_type.ts 扩展据此落 pf/session-type
+    /// custom entry 进会话文件（显示口径的事实源在文件里）。None = user。
+    /// 置位点唯一：spawn_agent_turn。
+    pub session_type: Option<&'static str>,
     /// disk-side message count at open time — get_messages shorter than
     /// this means pi's restored leaf chain is truncated (mis-parented
     /// non-message entry) and the display rebuilds from the file instead
@@ -363,6 +368,7 @@ impl SessionRuntime {
             collapsed: std::collections::HashMap::new(),
             observer: false,
             task_owned: false,
+            session_type: None,
             phase_waiting: false,
             streaming_content: false,
             pending_echoes: Vec::new(),

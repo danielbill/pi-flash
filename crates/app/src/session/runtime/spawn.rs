@@ -195,6 +195,10 @@ impl SessionRuntime {
         // 计划模式扩展（031-1 P0）：全档位 `-e` 挂载——闸门在 pi 进程内
         // （tool_call 打回写操作，无工具集切换），机制与定位见 crate::mode。
         extra.extend(crate::mode::mount_args());
+        // 会话类型标记扩展（046）：全档位 `-e` 挂载，自身按 env 无值零动作
+        // ——task 会话（PF_SESSION_TYPE=task）落 pf/session-type entry，
+        // 见 crate::tasks::session_type。
+        extra.extend(crate::tasks::session_type::mount_args());
         // pi 原则：不逐次审批工具调用（vendor security.md），任何档位都
         // 不挂 permission 门禁；扩展自己的 ctx.ui.* 请求仍照常呈现（060 翻案）。
         // draft picks made before the process existed ride the spawn flags
@@ -236,6 +240,11 @@ impl SessionRuntime {
         // 044-0 模块设置传导：并发/深度从设置页到 pf-subagents（env 覆盖
         // 扩展默认值；模块开关关着 = 空 vec，委派停用无意义）。
         envs.extend(crate::services::workspace::subagent_envs());
+        // 046 会话 type（2026-11-22 拍板 user/sub/task）：session_type.ts
+        // 扩展据此落 pf/session-type custom entry；None = user 不传 env。
+        if let Some(t) = self.session_type {
+            envs.push(("PF_SESSION_TYPE".into(), t.to_string()));
+        }
         if let Some(base) = pi_link::paths::dir() {
             if let Some(cfg) = pi_link::service_ext::config_path_if_any(&base, &self.key) {
                 if cfg.is_file() {

@@ -12,6 +12,7 @@ pub(crate) mod form;
 pub(crate) mod popup;
 pub(crate) mod run;
 pub(crate) mod sched;
+pub(crate) mod session_type;
 pub(crate) mod store;
 pub(crate) mod view;
 

@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::info::{group_name_for_cwd, sessions_root};
+use super::info::{SessionKind, group_name_for_cwd, sessions_root};
 
 // ---------------------------------------------------------------------------
 // session content search (013; pi-web lib/session-search.ts parity)
@@ -38,6 +38,9 @@ pub struct SearchHit {
     /// 跳转；UI 据此路由只读观察窗（`open_subagent_session_window`），
     /// 不在打开层反推身份（2026-11-10 挤占主会话 tab 教训）。
     pub subagent: bool,
+    /// 会话类型（user/sub/task，2026-11-22 拍板）：搜索层不做排除，消费侧
+    /// （083 面板）只显 User——任务/子会话不进用户搜索口径。
+    pub kind: SessionKind,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -141,6 +144,7 @@ fn search_in_groups(groups: &[PathBuf], query: &str) -> SearchResponse {
         };
         // 子会话身份：文件已整读入内存，头部 marker 判定零额外 IO。
         let subagent = super::info::is_subagent_head(text.as_bytes());
+        let kind = super::info::head_kind(text.as_bytes());
         let mut session_name: Option<String> = None;
         // 项目 cwd：会话文件首行 `{"type":"session","cwd":...}`；老文件/截断
         // 时回落 group 目录名（`--D--ai_workspace-pi-flash--` → 去掉 `--` 外壳）
@@ -255,6 +259,7 @@ fn search_in_groups(groups: &[PathBuf], query: &str) -> SearchResponse {
                 match_text,
                 after,
                 subagent,
+                kind,
             });
         }
     }

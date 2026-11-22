@@ -31,8 +31,8 @@ mod search;
 pub(crate) mod testing;
 
 pub use info::{
-    SessionInfo, canonical_session_path, canonical_session_path_in, group_name_for_cwd,
-    is_subagent_session, sessions_root,
+    SessionInfo, SessionKind, canonical_session_path, canonical_session_path_in,
+    group_name_for_cwd, is_subagent_session, session_kind, sessions_root,
 };
 pub use read::{
     count_message_entries, list_sessions, list_sessions_excluding, list_sessions_for_cwd,

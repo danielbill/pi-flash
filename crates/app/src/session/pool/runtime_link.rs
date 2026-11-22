@@ -19,7 +19,12 @@ impl Chat {
                     // recents (003-session管理): message-level activity on
                     // this runtime is "recently updated" — promote its file
                     // in the recent-activity list (persist throttled)
-                    if let Some(f) = rt.read(cx).file.clone() {
+                    // 任务会话（046）不进最近活动台账（2026-11-22 拍板：
+                    // 不出现在用户会话口径；task_owned 守卫）
+                    if let Some(f) = (!rt.read(cx).task_owned)
+                        .then(|| rt.read(cx).file.clone())
+                        .flatten()
+                    {
                         pi_link::recents::touch_recent(&f);
                     }
                     if !is_active {

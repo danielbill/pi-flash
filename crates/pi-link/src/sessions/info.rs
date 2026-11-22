@@ -12,27 +12,59 @@ use std::time::SystemTime;
 /// 子会话自己）。侧栏过滤只认后者。
 pub(super) const SUBAGENT_CHILD_MARKER: &str = "subagent/child";
 
+/// 任务会话（046 自动任务）的会话类型标记：PF 扩展（tasks/session_type.ts）
+/// 在 spawn env `PF_SESSION_TYPE=task` 的会话 session_start 时 appendEntry
+/// 落盘 `{type:"custom",customType:"pf/session-type",data:{type:"task"}}`。
+/// 会话 type 属性（user/sub/task，2026-11-22 拍板）的 task 侧事实源——
+/// 随会话文件生死，PF 无独立台账。sub 复用 [`SUBAGENT_CHILD_MARKER`]。
+pub const SESSION_TYPE_MARKER: &str = "pf/session-type";
+
 /// 子会话头部判定窗口（[`is_subagent_session`]）：marker 由扩展在子会话
 /// session_start 时 appendEntry，位置紧随 header，必在头部几十行内——
 /// 按前 64KB 有界扫即可判，免整文件读（面板逐行点击热路径）。
 const SUBAGENT_HEAD_SCAN: u64 = 64 * 1024;
 
-/// 头部字节窗口内的 marker 判定（[`is_subagent_session`] 与会话搜索共用）。
-/// 按**行字节切**逐行解析，整段不做 UTF-8 解码：窗口末字节常切在多字节
-/// 字符中间（真机 2026-11-10：中文会话文件第 65536 字节落在汉字 3 字节
-/// 序列内部，整段解码失败曾被误判「不是子会话」→ 按普通会话抢占主会话
-/// tab）。marker 行是 ASCII JSON，不受窗口截断影响；被截断的末行解析
-/// 失败自然跳过。
-pub(super) fn is_subagent_head(bytes: &[u8]) -> bool {
+/// 会话类型（2026-11-22 拍板）：用户主动发起 / 子代理子会话 / 自动任务。
+/// 无任何 marker 的会话 = [`SessionKind::User`]（存量会话零迁移）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionKind {
+    /// 用户主动发起（默认；列表/恢复/搜索唯一可见类型）
+    #[default]
+    User,
+    /// 子代理子会话（subagent/child marker 派生）
+    Sub,
+    /// 自动任务会话（pf/session-type marker 派生）
+    Task,
+}
+
+/// 头部字节窗口内的会话类型判定（[`is_subagent_session`]、[`session_kind`]
+/// 与会话搜索共用）。按**行字节切**逐行解析，整段不做 UTF-8 解码：窗口末
+/// 字节常切在多字节字符中间（真机 2026-11-10：中文会话文件第 65536 字节
+/// 落在汉字 3 字节序列内部，整段解码失败曾被误判「不是子会话」→ 按普通
+/// 会话抢占主会话 tab）。marker 行是 ASCII JSON，不受窗口截断影响；被
+/// 截断的末行解析失败自然跳过。同一会话两种 marker 并存时 task 优先
+/// （实际不可能出现——spawn env 单值；防御性口径）。
+pub(super) fn head_kind(bytes: &[u8]) -> SessionKind {
     let head = &bytes[..bytes.len().min(SUBAGENT_HEAD_SCAN as usize)];
-    head.split_inclusive(|b| *b == b'\n').any(|line| {
-        serde_json::from_slice::<Value>(line.trim_ascii())
-            .ok()
-            .is_some_and(|v| {
-                v["type"].as_str() == Some("custom")
-                    && v["customType"].as_str() == Some(SUBAGENT_CHILD_MARKER)
-            })
-    })
+    let mut kind = SessionKind::User;
+    for line in head.split_inclusive(|b| *b == b'\n') {
+        let Ok(v) = serde_json::from_slice::<Value>(line.trim_ascii()) else {
+            continue;
+        };
+        if v["type"].as_str() == Some("custom") {
+            match v["customType"].as_str() {
+                Some(SESSION_TYPE_MARKER) => return SessionKind::Task,
+                Some(SUBAGENT_CHILD_MARKER) => kind = SessionKind::Sub,
+                _ => {}
+            }
+        }
+    }
+    kind
+}
+
+/// 头部字节窗口内的 marker 判定（[`is_subagent_session`] 与会话搜索共用）。
+pub(super) fn is_subagent_head(bytes: &[u8]) -> bool {
+    head_kind(bytes) == SessionKind::Sub
 }
 
 /// 该会话文件是否是子代理子会话（头部 marker 守卫）。仅两处合法用途，
@@ -43,16 +75,22 @@ pub(super) fn is_subagent_head(bytes: &[u8]) -> bool {
 /// header 的 parentSession 不可用作判定——pi 原生 fork 的分支同样带它。
 /// 文件不存在/读不了 → false（按普通会话开，行为不变）。
 pub fn is_subagent_session(path: &Path) -> bool {
+    session_kind(path) == SessionKind::Sub
+}
+
+/// 会话文件的 type 属性（64KB 有界头扫，同 [`is_subagent_session`] 形制；
+/// 文件不存在/读不了 → User——按普通会话处理，行为不变）。
+pub fn session_kind(path: &Path) -> SessionKind {
     let Ok(mut f) = std::fs::File::open(path) else {
-        return false;
+        return SessionKind::User;
     };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let take = len.min(SUBAGENT_HEAD_SCAN) as usize;
     let mut buf = vec![0u8; take];
     if f.read_exact(&mut buf).is_err() {
-        return false;
+        return SessionKind::User;
     }
-    is_subagent_head(&buf)
+    head_kind(&buf)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +105,9 @@ pub struct SessionInfo {
     /// session name (pi `session_info` entry; pi-web `session.name` — the
     /// row label prefers it over `preview` when set)
     pub name: Option<String>,
+    /// 会话类型（2026-11-22 拍板）：user/sub/task；头部 marker 派生，
+    /// 无 marker = User。用户会话口径（侧栏/恢复/搜索）只收 User。
+    pub kind: SessionKind,
 }
 
 /// Group directory name for a cwd: separators dashed, wrapped in `--`.

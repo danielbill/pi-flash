@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::info::{SUBAGENT_CHILD_MARKER, SessionInfo, canonical_group_dir, group_name_for_cwd};
+use super::info::{
+    SESSION_TYPE_MARKER, SUBAGENT_CHILD_MARKER, SessionInfo, SessionKind, canonical_group_dir,
+    group_name_for_cwd,
+};
 use super::read::{count_messages, preview_from_partial_line, read_prefix};
 
 /// Bounded prefix parsed for header + first user message (preview).
@@ -29,7 +32,7 @@ const INDEX_ENTRY_CAP: usize = 50_000;
 /// v4: 会话名不再来自尾窗（改名条目被后续聊天推出旧 1MB 上限后，侧栏
 /// 标题会"改回去"）；v3 缓存里这些文件的 name=None 是错的 → 丢一次
 /// 缓存全量重扫，从只追加的会话文件里找回真名。
-const INDEX_VERSION: u64 = 4;
+const INDEX_VERSION: u64 = 5;
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub(super) struct IndexEntry {
@@ -50,6 +53,10 @@ pub(super) struct IndexEntry {
     /// 判定——pi 原生 fork 的分支会话同样带它，那是要正常上侧栏的用户会话。
     #[serde(default)]
     child_marker: bool,
+    /// 任务会话标记（046）：`pf/session-type` custom entry（PF 扩展按 spawn
+    /// env 落盘）。v5 新增——旧索引无此字段 → 版本号递增触发全量重扫回填。
+    #[serde(default)]
+    task_marker: bool,
 }
 
 impl IndexEntry {
@@ -71,6 +78,18 @@ impl IndexEntry {
             preview: self.preview.clone(),
             message_count: self.message_count,
             name: self.name.clone(),
+            kind: self.kind(),
+        }
+    }
+
+    /// 会话类型（user/sub/task；task 优先——与 info::head_kind 同口径）。
+    fn kind(&self) -> SessionKind {
+        if self.task_marker {
+            SessionKind::Task
+        } else if self.child_marker {
+            SessionKind::Sub
+        } else {
+            SessionKind::User
         }
     }
 
@@ -358,6 +377,7 @@ fn scan_file(
     let mut id = String::new();
     let mut cwd = String::new();
     let mut child_marker = false;
+    let mut task_marker = false;
     let mut preview = String::new();
     for line in prefix.lines().take(PREVIEW_LINES) {
         let Ok(v) = crate::json::parse_value(line) else {
@@ -381,6 +401,11 @@ fn scan_file(
                 // 不可用作判定：pi 原生 fork 的分支同样带它。
                 if v["customType"].as_str() == Some(SUBAGENT_CHILD_MARKER) {
                     child_marker = true;
+                }
+                // 任务会话标记（046，2026-11-22 拍板）：PF 扩展按 spawn env
+                // 落盘，同窗口判定。
+                if v["customType"].as_str() == Some(SESSION_TYPE_MARKER) {
+                    task_marker = true;
                 }
             }
             Some("message") => {
@@ -452,6 +477,7 @@ fn scan_file(
         message_count,
         count_bytes,
         child_marker,
+        task_marker,
     })
 }
 

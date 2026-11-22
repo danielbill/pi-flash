@@ -166,6 +166,10 @@ fn spawn_agent_turn(
     let rt = cx.new(|_| {
         let mut r = SessionRuntime::new(key.clone(), cwd.clone(), None);
         r.task_owned = true;
+        // 会话 type（2026-11-22 拍板）：spawn env → session_type.ts 扩展落
+        // pf/session-type entry 进会话文件——任务会话不进用户会话口径的
+        // 事实源。置位点唯一（SessionRuntime.session_type 注释）。
+        r.session_type = Some("task");
         if let Some((p, m)) = &frozen_pair {
             r.pending_model = Some((p.clone(), m.clone()));
         }
@@ -382,6 +386,10 @@ pub(crate) fn on_turn_settled(
         if let Ok(store) = open_store() {
             let _ = store.bind_run(ctx.run_id, Some(&f.to_string_lossy()), None);
         }
+        // 任务会话不进用户会话口径（2026-11-22 拍板）：事实源 = 会话文件里的
+        // pf/session-type custom entry（spawn env + session_type.ts 扩展落盘，
+        // 见 spawn_agent_turn）；session_names 前缀方案已废弃——显示层过滤
+        // 统一走 SessionInfo.kind。
     }
     // 结局口径与三色点同源（turn_outcome_tests.rs）：error → failed、
     // length/aborted → failed（黄档语义在台账里归 failed 带原因；成功行
