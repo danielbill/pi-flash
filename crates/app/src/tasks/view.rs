@@ -145,6 +145,10 @@ fn task_row(
     // 行尾动作钮与行点击/行名各要一份 select/title（主体装配会按值吃掉）
     let select_act = select.clone();
     let title_act = title.clone();
+    // 显影组 id（hover 时 时间/动作钮 visibility 互斥，见右槽注释）
+    let reveal = select_act
+        .as_ref()
+        .map(|def_id| SharedString::from(format!("task-row-act-{def_id}")));
     // 颜色继承 sidebar_item（active text / 非活动 text_muted，subagent 行同款）；
     // 仅停用/跳过灰名覆盖。日志行（open_path Some）名可点 = 开该次会话的
     // 只读观察窗（2026-11-22 用户令：点名开话；不可发送、无 InputPanel
@@ -206,30 +210,47 @@ fn task_row(
                 .when_some(tip, |d, tip| d.with_tip_text(tip)),
         )
         .child(name_el)
-        .child(
-            div()
+        // 右槽（2026-11-22 用户令）：时间恒右对齐；列表行 hover 时三动作钮
+        // 盖在时间上——visibility 互斥（notification.rs 同款 invisible ⇄
+        // visible；invisible 不吃命中，时间区点击照常选中行）。槽 min_w =
+        // 三钮宽（22×3 + SP2×2，与 task_act_btn 尺寸同源），时间短于钮区时
+        // 名字也不被 hover 钮盖住。日志行无动作钮，恒显时间。
+        .child({
+            // 时间在 hover 组内反向隐身（reveal 组挂行容器，见上）
+            let stamp_el = div()
                 .flex_none()
                 .font_family(MONO_FAMILY)
                 // 活动行 SEMIBOLD 不下渗进时间戳
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_size(ui_size(11.))
                 .text_color(rgb(t.text_faint))
-                .child(SharedString::from(stamp)),
-        )
-        // 行尾 hover 显影动作钮（列表行专属；日志行 select=None 不出）
-        .when_some(select_act, |d, def_id| {
-            d.child(task_row_actions(
-                &def_id, &title_act, !gray, running, weak, t,
-            ))
+                .when_some(reveal, |d, r| d.group_hover(r, |s| s.invisible()))
+                .child(SharedString::from(stamp));
+            let mut slot = div()
+                .relative()
+                .h(px(crate::ui::tokens::row::TASK))
+                .flex_none()
+                .flex()
+                .items_center()
+                .child(stamp_el);
+            if let Some(def_id) = select_act {
+                slot = slot
+                    .justify_end()
+                    .min_w(px(22. * 3. + crate::ui::tokens::space::SP2 * 2.))
+                    .child(task_row_actions(
+                        &def_id, &title_act, !gray, running, weak, t,
+                    ));
+            }
+            slot
         })
         .into_any_element()
 }
 
 /// 行尾 hover 显影动作钮（2026-11-22 用户令：立即运行/停用/移除从详情表头
-/// 挪来）。显影 = settings agents 行 hover「复制」同款 group 显影；钮 =
-/// queue_cards icon_btn 同款 22px hover 底小图标钮。运行中「立即运行」置灰
-/// （原表头同守卫）；停用/启用钮图标 = 当前状态（rotate-clock /
-/// pause，2026-11-22 用户令：状态与 icon 对应）；移除走确认浮层（confirm_del）。
+/// 挪来；同日用户令：绝对定位盖时间——时间右对齐，hover 时钮/时间 visibility
+/// 互斥）。钮 = queue_cards icon_btn 同款 22px hover 底小图标钮。运行中
+/// 「立即运行」置灰（原表头同守卫）；停用/启用钮图标 = 当前状态（rotate-clock
+/// / pause，2026-11-22 用户令：状态与 icon 对应）；移除走确认浮层（confirm_del）。
 fn task_row_actions(
     def_id: &str,
     title: &str,
@@ -239,7 +260,9 @@ fn task_row_actions(
     t: &'static Theme,
 ) -> AnyElement {
     // group 在行容器（task_row），此处只挂 group_hover——同元素自引用永不
-    // 显影（docs/agents/gpui.md「group/group_hover 必须两元素分离」）
+    // 显影（docs/agents/gpui.md「group/group_hover 必须两元素分离」）。
+    // 显影 = visibility 互斥（invisible 默认 + hover visible，notification.rs
+    // 同款）——绝对定位盖在时间上（右槽见 task_row），invisible 不吃命中
     let reveal = SharedString::from(format!("task-row-act-{def_id}"));
     let weak_run = weak.clone();
     let id_run = def_id.to_string();
@@ -249,12 +272,15 @@ fn task_row_actions(
     let id_del = def_id.to_string();
     let title_del = title.to_string();
     div()
-        .flex_shrink_0()
+        .absolute()
+        .top(px(0.))
+        .bottom(px(0.))
+        .right(px(0.))
         .flex()
         .items_center()
         .gap(px(crate::ui::tokens::space::SP2))
-        .opacity(0.)
-        .group_hover(reveal, |s| s.opacity(1.))
+        .invisible()
+        .group_hover(reveal, |s| s.visible())
         .font_weight(gpui::FontWeight::NORMAL)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(task_act_btn(
