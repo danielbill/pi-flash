@@ -529,10 +529,11 @@ fn tasks_detail(
 
 /// 右列下方任务日志区（2026-11-22 用户令再改版）：50% 高，模型列表卡样式
 /// （vlist 壳同款：rounded 6 + 1px 边框 + 行间 1px 分隔线，settings/models
-/// list.rs 同语言），只呈现选中任务的运行记录。行 = 结果点 + 两行文（任务
-/// 名 11 / mono 时间 10 dim）；Agent 任务行名可点 = 开该次会话只读观察窗。
-/// 未选中任务/无记录出空态。列表 = vlist 组件（uniform_list + 滚动条 +
-/// 壳，settings/models 列表同件——滚动条不许再手滚丢，2026-11-22 用户令）。
+/// list.rs 同语言），只呈现选中任务的运行记录。行 = 结果点 + 任务名（**恒
+/// 正常色**——日志是已发生的历史，与任务启停态无关，2026-11-22 用户令：
+/// dim 只表无效/注释，日志不是注释）+ 右缘 mono 时间；Agent 任务行名可点
+/// = 开该次会话只读观察窗。未选中任务/无记录出空态。列表 = vlist 组件
+///（uniform_list + 滚动条 + 壳——滚动条不许再手滚丢）。
 fn run_log_panel(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -540,22 +541,14 @@ fn run_log_panel(
     sel: &Option<String>,
 ) -> AnyElement {
     // 行数据先行抽出（vlist 行闭包 'static：不借 chat——TaskRun Clone，
-    // 标题/灰名/开话路径全部预解析）
-    let rows: Vec<(TaskRun, String, bool, Option<PathBuf>)> = chat
+    // 标题/开话路径全部预解析）
+    let rows: Vec<(TaskRun, String, Option<PathBuf>)> = chat
         .tasks
         .runs
         .iter()
         // 只出选中任务的日志（2026-11-22 用户令：不再混杂）
         .filter(|r| sel.as_deref() == Some(r.def_id.as_str()))
         .map(|r| {
-            let gray_task = chat
-                .tasks
-                .defs
-                .iter()
-                .find(|d| d.def.id == r.def_id)
-                .map(|d| !d.def.enabled)
-                .unwrap_or(false);
-            let skipped = r.outcome == Outcome::Skipped;
             let title = chat
                 .tasks
                 .defs
@@ -566,7 +559,6 @@ fn run_log_panel(
             (
                 r.clone(),
                 title,
-                gray_task || skipped,
                 r.session_path.as_deref().map(PathBuf::from),
             )
         })
@@ -597,7 +589,7 @@ fn run_log_panel(
         empty_key,
         None,
         move |ix, _window, _cx| {
-            let (r, title, gray, open_path) = &rows_v[ix];
+            let (r, title, open_path) = &rows_v[ix];
             let id = SharedString::from(format!("task-log-{}-{}", r.def_id, r.started_at));
             let dot_id = SharedString::from(format!("{id}-dot"));
             let weak_open = weak_rows.clone();
@@ -623,7 +615,8 @@ fn run_log_panel(
                         .when_some(run_slot(r, t), |d, s| d.child(s))
                         .with_tip_text(run_tip(r)),
                 )
-                // 一行：名（可点开观察窗）+ 右对齐 mono 时间（2026-11-22 用户令）
+                // 一行：名恒正常色（日志=历史，不随任务启停变灰，2026-11-22
+                // 用户令）+ 右对齐 mono 时间
                 .child({
                     let mut name_el = div()
                         .flex_1()
@@ -631,7 +624,7 @@ fn run_log_panel(
                         .truncate()
                         .text_size(ui_size(12.))
                         .cursor_pointer()
-                        .text_color(rgb(if *gray { t.text_faint } else { t.text }))
+                        .text_color(rgb(t.text))
                         .when(open_path.is_some(), |d| {
                             d.hover(|h| h.text_color(rgb(t.accent)))
                         })
