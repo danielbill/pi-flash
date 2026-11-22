@@ -13,15 +13,12 @@ pub(super) fn dispatch(
     chat: &mut Chat,
     cx: &mut Context<Chat>,
     m: &str,
-    params: &Value,
+    _params: &Value,
 ) -> OpResult {
     match m {
         method::TASKS_OPEN => {
-            let tab = params.get("tab").and_then(Value::as_u64).unwrap_or(0) as u8;
+            // 二级 tab 已废（2026-11-22 用户令：单页三段式），TASKS_OPEN 不再读 params.tab
             chat.open_tasks_page(cx);
-            if tab > 0 {
-                chat.tasks.page.tab = tab.min(1);
-            }
             cx.notify();
             ok()
         }

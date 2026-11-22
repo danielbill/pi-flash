@@ -20,8 +20,8 @@ use crate::appearance::ui_size;
 use crate::editor::markdown::MONO_FAMILY;
 use crate::i18n::{tf, tr};
 use crate::services::format::fmt_msg_time;
+use crate::tasks::DefRow;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
-use crate::tasks::{DefRow, PAGE_TAB_LOG, PAGE_TAB_TASKS};
 use crate::ui::icon;
 use crate::ui::kit::{Btn, config_button, group_header, sidebar_item, status_dot};
 use crate::ui::overlay;
@@ -32,7 +32,9 @@ use crate::ui::tooltip::WithTip;
 // 页装配
 // ---------------------------------------------------------------------------
 
-/// 任务管理页主体（content.rs `ContentView::Tasks` 分支）。
+/// 任务管理页主体（content.rs `ContentView::Tasks` 分支）。2026-11-22 用户
+/// 令改版：二级 tab 删除，单页三段式——上 = 40/60 列表+详情，下 40% =
+/// 整宽运行日志（只呈现选中任务）。
 pub(crate) fn page(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -40,27 +42,10 @@ pub(crate) fn page(
     cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let t = theme();
-    let page = &chat.tasks.page;
+    let sel = chat.tasks.page.sel.clone();
 
-    // 页头：左【任务 | 日志】简易 tab + 右【新建】（子代理页同款 Primary）
-    let weak_tab = weak.clone();
-    let head = div()
-        .flex_none()
-        .h(px(40.))
-        .bg(rgb(t.nav))
-        .border_b_1()
-        .border_color(rgba(theme::border_alpha(t, 0x45)))
-        .flex()
-        .items_center()
-        .pl(px(16.))
-        .pr(px(15.))
-        // 2026-11-22 拍板：页头只留【任务 | 日志】，「新增」挪列表标题栏右缘
-        .child(pipe_tabs(page.tab, &weak_tab, t));
-
-    let body = match page.tab {
-        PAGE_TAB_LOG => log_body(chat, weak, t),
-        _ => tasks_body(chat, weak, t, window, cx),
-    };
+    let top = tasks_body(chat, weak, t, window, cx);
+    let log = run_log_panel(chat, weak, t, &sel);
 
     div()
         .id("task-page")
@@ -69,54 +54,16 @@ pub(crate) fn page(
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
-        .child(head)
-        .child(body)
-        .into_any_element()
-}
-
-/// 页头二级 tab（2026-11-22 用户令改版）：字号/选中样式与文件树项目标题
-/// 完全对齐——ui_size(12) + 选中 BOLD accent / 未选中 text_dim hover 回
-/// text；`|` 分隔保留。
-fn pipe_tabs(cur: u8, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
-    let tabs: [(u8, &'static str); 2] = [
-        (PAGE_TAB_TASKS, "task.tab_main"),
-        (PAGE_TAB_LOG, "task.tab_log"),
-    ];
-    let mut row = div().flex().items_center().gap(px(10.));
-    for &(ix, key) in &tabs {
-        if ix != PAGE_TAB_TASKS {
-            row = row.child(
-                div()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .text_color(rgb(t.text_faint))
-                    .child("|"),
-            );
-        }
-        let active = cur == ix;
-        let weak = weak.clone();
-        row = row.child(
+        .child(top)
+        // 上下段 1px 分隔
+        .child(
             div()
-                .id(SharedString::from(format!("task-page-tab-{ix}")))
-                .text_size(crate::appearance::ui_size(12.))
-                .cursor_pointer()
-                .font_weight(if active {
-                    gpui::FontWeight::BOLD
-                } else {
-                    gpui::FontWeight::NORMAL
-                })
-                .text_color(rgb(if active { t.accent } else { t.text_dim }))
-                .when(!active, |d| d.hover(|h| h.text_color(rgb(t.text))))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.tasks.page.tab = ix;
-                        c.tasks.page.popup = None;
-                        cx.notify();
-                    });
-                })
-                .child(tr(key).to_string()),
-        );
-    }
-    row.into_any_element()
+                .flex_none()
+                .h(px(1.))
+                .bg(rgba(theme::border_alpha(t, 0x45))),
+        )
+        .child(log)
+        .into_any_element()
 }
 
 // ---------------------------------------------------------------------------
@@ -502,12 +449,22 @@ fn tasks_body(
         .into_any_element()
 }
 
-/// 日志 tab：运行记录行（与任务列表行同语言）。
-fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
+/// 下方运行日志区（2026-11-22 用户令）：整宽 40% 高，只呈现选中任务的
+/// 运行记录（原日志 tab 收编，不再混杂全部任务）。行 = task_row（点击开
+/// 该次会话——任务会话已从用户列表隐身，这里是唯一入口）。未选中任务时
+/// 整区空态。
+fn run_log_panel(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    sel: &Option<String>,
+) -> AnyElement {
     let rows: Vec<AnyElement> = chat
         .tasks
         .runs
         .iter()
+        // 只出选中任务的日志（2026-11-22 用户令：不再混杂）
+        .filter(|r| sel.as_deref() == Some(r.def_id.as_str()))
         .map(|r| {
             let gray_task = chat
                 .tasks
@@ -518,20 +475,11 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                 .unwrap_or(false);
             let skipped = r.outcome == Outcome::Skipped;
             let gray = gray_task || skipped;
-            // 任务会话已从用户列表隐身（2026-11-22 拍板）：日志行点击 = 开
-            // 该次会话（唯一入口；脚本 run 无 session_path 不出）
             let open_path = r.session_path.as_deref().map(PathBuf::from);
             let slot = run_slot(r, t);
             let tip = Some(run_tip(r));
             let stamp = fmt_stamp(r.started_at);
             let id = SharedString::from(format!("task-log-{}-{}", r.def_id, r.started_at));
-            let title = chat
-                .tasks
-                .defs
-                .iter()
-                .find(|d| d.def.id == r.def_id)
-                .map(|d| d.def.title.clone())
-                .unwrap_or_else(|| r.def_id.clone());
             let tico: Option<&'static str> = chat
                 .tasks
                 .defs
@@ -545,27 +493,95 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                     }
                 });
             task_row(
-                id, title, gray, tico, slot, tip, stamp, false, weak, None, open_path, false, t,
+                id,
+                r.def_id.clone(),
+                gray,
+                tico,
+                slot,
+                tip,
+                stamp,
+                false,
+                weak,
+                None,
+                open_path,
+                false,
+                t,
             )
         })
         .collect();
 
+    let has_rows = !rows.is_empty();
+    let empty = sel.is_none()
+        || chat
+            .tasks
+            .defs
+            .iter()
+            .find(|d| Some(&d.def.id) == sel.as_ref())
+            .is_none();
+    // 标题：运行日志 · 任务名
+    let title = sel
+        .as_deref()
+        .and_then(|id| chat.tasks.defs.iter().find(|d| d.def.id == id))
+        .map(|d| d.def.title.clone());
+
     div()
-        .id("task-log-wrap")
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .pt(px(14.))
-        .px(px(20.))
-        .pb(px(20.))
+        .id("task-log-panel")
+        .h(gpui::relative(0.4))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .bg(rgb(t.bg))
         .child(
             div()
-                .max_w(px(860.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(crate::ui::tokens::space::SP2))
+                .px(px(20.))
+                .pt(px(10.))
+                .pb(px(6.))
+                .child(
+                    div()
+                        .text_size(ui_size(12.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text_muted))
+                        .child(tr("task.log_title").to_string()),
+                )
+                .children(title.map(|n| {
+                    div()
+                        .text_size(ui_size(12.))
+                        .text_color(rgb(t.text_faint))
+                        .truncate()
+                        .child(n)
+                })),
+        )
+        .child(if has_rows {
+            div()
+                .id("task-log-list")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(px(6.))
+                .pb(px(10.))
                 .flex()
                 .flex_col()
-                .gap(px(1.))
-                .children(rows),
-        )
+                .children(rows)
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(ui_size(12.))
+                .text_color(rgb(t.text_faint))
+                .child(tr(if empty {
+                    "task.log_none_sel"
+                } else {
+                    "task.log_empty"
+                }))
+                .into_any_element()
+        })
         .into_any_element()
 }
 

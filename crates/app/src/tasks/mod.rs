@@ -74,8 +74,6 @@ pub(crate) struct TasksState {
 /// 任务管理页 UI 状态（随页签存活；文本输入实体懒创建——aux.market 同款）。
 #[derive(Default)]
 pub(crate) struct TaskPage {
-    /// 页头横向 tab：0 = 任务、1 = 日志。
-    pub tab: u8,
     /// 左列表选中 def（None = 新建空态，表单清空）。
     pub sel: Option<String>,
     // ---- 表单字段（选中回填 / 新建清空共用一套）。指令不在此——
@@ -240,10 +238,6 @@ pub(crate) fn register() {
 // 页面动作（2026-11-15 拍板：内容区页签；HTML 原稿 selectTask/goNew 语义）
 // ---------------------------------------------------------------------------
 
-/// 页头横向 tab 槽位。
-pub(crate) const PAGE_TAB_TASKS: u8 = 0;
-pub(crate) const PAGE_TAB_LOG: u8 = 1;
-
 impl Chat {
     /// psp「任务」钮 / tasks.open op：打开内容区任务管理页签（复用既有
     /// PanelTab；open_pi_native_market 同款挂法）。
@@ -264,9 +258,14 @@ impl Chat {
         self.set_content_view(crate::ContentView::Tasks);
         let first_open = self.tasks.page.name.is_none();
         self.tasks_ensure_inputs(cx);
+        // 首开默认选中第一条任务（2026-11-22 用户令：开页即展示其详情+日志）；
+        // 空库才落新建空态（HTML clearForm：默认 Agent / 每天 09:00）
         if first_open {
-            // 首开 = 新建态（HTML clearForm：默认 Agent / 每天 09:00）
-            self.task_new_form(cx);
+            if let Some(first) = self.tasks.defs.first().map(|d| d.def.id.clone()) {
+                self.task_select(&first, cx);
+            } else {
+                self.task_new_form(cx);
+            }
         }
         cx.notify();
     }

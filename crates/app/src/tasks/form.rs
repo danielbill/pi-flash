@@ -541,9 +541,9 @@ fn agent_block(
 
     vec![
         field("task.project", proj_chip, false),
-        // 项目 ↔ 指令 间距拉大到 50（2026-11-19 用户令；容器 gap 16 + mt 34）
+        // 项目 ↔ 指令 间距缩回正常 20（2026-11-22 用户令；容器 gap 16 + mt 4）
         div()
-            .mt(px(34.))
+            .mt(px(crate::ui::tokens::space::SP2))
             .w_full()
             .child(field("task.instr", panel, true))
             .into_any_element(),
