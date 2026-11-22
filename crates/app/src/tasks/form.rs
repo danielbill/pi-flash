@@ -19,17 +19,15 @@ pub(crate) fn form_head(
     weak: &gpui::WeakEntity<Chat>,
     _t: &'static Theme,
 ) -> AnyElement {
-    let editing = chat.tasks.page.sel.is_some();
     let name = chat
         .tasks
         .page
         .name
         .clone()
         .expect("page open ensures inputs");
-    // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 flex_1 +
-    // 动作钮（运行中「立即运行」置灰；删除走确认浮层）。输入 flex_1 自适应
-    // 延长（2026-11-22 用户令：与脚本输入同步延长，不再 w250 定宽）——
-    // 编辑态右侧动作钮多，会把名称输入挤短一截，物理极限如此
+    // subagent 表单头同构（2026-11-16 拍板）：label w96 + 输入 flex_1 + 保存。
+    // 立即运行/停用/移除已挪列表行 hover 显影（2026-11-22 用户令，子代理行
+    // 同款）——表头只剩保存，名称输入与脚本输入基本等宽
     div()
         .flex()
         .items_center()
@@ -37,77 +35,6 @@ pub(crate) fn form_head(
         .flex_shrink_0()
         .child(field_label("task.name"))
         .child(div().flex_1().min_w_0().child(name))
-        .when(editing, |d| {
-            let running = chat
-                .tasks
-                .running
-                .iter()
-                .any(|k| Some(k.as_str()) == chat.tasks.page.sel.as_deref());
-            let enabled = chat
-                .tasks
-                .defs
-                .iter()
-                .find(|d| Some(d.def.id.as_str()) == chat.tasks.page.sel.as_deref())
-                .map(|d| d.def.enabled)
-                .unwrap_or(true);
-            let sel_run = chat.tasks.page.sel.clone();
-            let sel_toggle = chat.tasks.page.sel.clone();
-            let weak_run = weak.clone();
-            let weak_toggle = weak.clone();
-            let weak_del = weak.clone();
-            let sel_del = chat.tasks.page.sel.clone();
-            d.child(config_button(
-                "task-head-run",
-                &weak_run,
-                tr("task.run_now"),
-                Btn::Secondary,
-                true,
-                running,
-                move |c, cx| {
-                    if let Some(id) = &sel_run {
-                        c.task_run_now(id, cx);
-                    }
-                },
-            ))
-            .child(config_button(
-                "task-head-toggle",
-                &weak_toggle,
-                if enabled {
-                    tr("task.disable")
-                } else {
-                    tr("task.enable")
-                },
-                Btn::Secondary,
-                true,
-                false,
-                move |c, cx| {
-                    if sel_toggle.is_some() {
-                        c.task_toggle_from_page(cx);
-                    }
-                },
-            ))
-            .child(config_button(
-                "task-head-del",
-                &weak_del,
-                tr("task.remove"),
-                Btn::Danger,
-                true,
-                false,
-                move |c, cx| {
-                    if let Some(id) = &sel_del {
-                        let title = c
-                            .tasks
-                            .defs
-                            .iter()
-                            .find(|d| d.def.id == *id)
-                            .map(|d| d.def.title.clone())
-                            .unwrap_or_default();
-                        c.tasks.page.confirm_del = Some((id.clone(), title));
-                        cx.notify();
-                    }
-                },
-            ))
-        })
         .child(config_button(
             "task-save",
             weak,

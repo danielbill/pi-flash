@@ -459,19 +459,17 @@ impl Chat {
         cx.notify();
     }
 
-    /// 表单 ghost【停用/启用】。
-    pub(crate) fn task_toggle_from_page(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.tasks.page.sel.clone() else {
-            return;
-        };
+    /// 任务行 hover【停用/启用】（2026-11-22 用户令：动作钮从详情表头挪到
+    /// 列表行，子代理行 hover 显影同款；按 id 直操作，不依赖 page.sel）。
+    pub(crate) fn task_toggle(&mut self, def_id: &str, cx: &mut Context<Self>) {
         let enabled = self
             .tasks
             .defs
             .iter()
-            .find(|d| d.def.id == id)
+            .find(|d| d.def.id == def_id)
             .map(|d| !d.def.enabled)
             .unwrap_or(true);
-        if let Err(e) = store::set_enabled_task(&id, enabled, now_ms()) {
+        if let Err(e) = store::set_enabled_task(def_id, enabled, now_ms()) {
             tasks_err(&format!("启停失败: {e}"));
         }
         self.tasks_refresh();

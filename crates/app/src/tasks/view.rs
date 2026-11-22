@@ -188,7 +188,8 @@ fn run_tip(r: &TaskRun) -> String {
 /// （2026-11-17 拍板：icon 用设计 HTML 的 tico——脚本=file-code、
 /// Agent=bot，None = 不出）+ 名（可点下划线开话；停用/跳过灰名）+
 /// 结果槽 + 右缘 mono 时间。`select` = Some(def_id) 时行点击 = 详情回填
-/// （任务列表行）。
+/// （任务列表行），且行尾 hover 显影动作钮（立即运行/停用/移除，
+/// 2026-11-22 用户令从详情表头挪来，子代理行同款）。
 #[allow(clippy::too_many_arguments)]
 fn task_row(
     row_id: SharedString,
@@ -202,9 +203,13 @@ fn task_row(
     selected: bool,
     weak: &gpui::WeakEntity<Chat>,
     select: Option<String>,
+    running: bool,
     t: &'static Theme,
 ) -> AnyElement {
     let dot_id = SharedString::from(format!("{row_id}-dot"));
+    // 行尾动作钮与行点击/行名各要一份 select/title（主体装配会按值吃掉）
+    let select_act = select.clone();
+    let title_act = title.clone();
     // 颜色继承 sidebar_item（active text / 非活动 text_muted，subagent 行同款）；
     // 仅停用/跳过灰名覆盖
     let mut name_el = div()
@@ -263,7 +268,114 @@ fn task_row(
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(stamp)),
         )
+        // 行尾 hover 显影动作钮（列表行专属；日志行 select=None 不出）
+        .when_some(select_act, |d, def_id| {
+            d.child(task_row_actions(
+                &def_id, &title_act, !gray, running, weak, t,
+            ))
+        })
         .into_any_element()
+}
+
+/// 行尾 hover 显影动作钮（2026-11-22 用户令：立即运行/停用/移除从详情表头
+/// 挪来）。显影 = settings agents 行 hover「复制」同款 group 显影；钮 =
+/// queue_cards icon_btn 同款 22px hover 底小图标钮。运行中「立即运行」置灰
+/// （原表头同守卫）；停用/启用按 def.enabled 翻图标（eye-off/eye）；移除走
+/// 确认浮层（confirm_del）。
+fn task_row_actions(
+    def_id: &str,
+    title: &str,
+    enabled: bool,
+    running: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> AnyElement {
+    let reveal = SharedString::from(format!("task-row-act-{def_id}"));
+    let weak_run = weak.clone();
+    let id_run = def_id.to_string();
+    let weak_tog = weak.clone();
+    let id_tog = def_id.to_string();
+    let weak_del = weak.clone();
+    let id_del = def_id.to_string();
+    let title_del = title.to_string();
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(crate::ui::tokens::space::SP2))
+        .opacity(0.)
+        .group(reveal.clone())
+        .group_hover(reveal, |s| s.opacity(1.))
+        .font_weight(gpui::FontWeight::NORMAL)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(task_act_btn(
+            format!("task-act-run-{id_run}"),
+            "play",
+            "task.run_now",
+            running,
+            &weak_run,
+            move |c, cx| c.task_run_now(&id_run, cx),
+            t,
+        ))
+        .child(task_act_btn(
+            format!("task-act-toggle-{id_tog}"),
+            if enabled { "eye-off" } else { "eye" },
+            if enabled {
+                "task.disable"
+            } else {
+                "task.enable"
+            },
+            false,
+            &weak_tog,
+            move |c, cx| c.task_toggle(&id_tog, cx),
+            t,
+        ))
+        .child(task_act_btn(
+            format!("task-act-del-{id_del}"),
+            "trash",
+            "task.remove",
+            false,
+            &weak_del,
+            move |c, cx| {
+                c.tasks.page.confirm_del = Some((id_del.clone(), title_del.clone()));
+                cx.notify();
+            },
+            t,
+        ))
+        .into_any_element()
+}
+
+/// 22px 小图标动作钮（queue_cards icon_btn 同款 hover 态 + Chat 回调形态）。
+fn task_act_btn(
+    id: String,
+    name: &'static str,
+    tip_key: &'static str,
+    locked: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    on_click: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
+    t: &'static Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let weak = weak.clone();
+    div()
+        .id(SharedString::from(id))
+        .size(px(22.))
+        .rounded(px(crate::ui::tokens::radius::INLINE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .when(locked, |d| d.opacity(0.4))
+        .when(!locked, |d| d.hover(|s| s.bg(rgb(t.bg_hover))))
+        .with_tip(tip_key)
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            // 与行 on_mouse_down（选中）叠压，先拦防选中覆盖
+            cx.stop_propagation();
+            if locked {
+                return;
+            }
+            let _ = weak.update(cx, |c, cx| on_click(c, cx));
+        })
+        .child(icon(name, crate::ui::tokens::icon::XS, t.text_muted))
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +457,7 @@ fn tasks_body(
                     sel.as_deref() == Some(id.as_str()),
                     weak,
                     Some(id.clone()),
+                    chat.tasks.running.iter().any(|k| k.as_str() == id),
                     t,
                 ));
             }
@@ -423,7 +536,7 @@ fn log_body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> An
                     }
                 });
             task_row(
-                id, title, gray, link, tico, slot, tip, stamp, false, weak, None, t,
+                id, title, gray, link, tico, slot, tip, stamp, false, weak, None, false, t,
             )
         })
         .collect();
