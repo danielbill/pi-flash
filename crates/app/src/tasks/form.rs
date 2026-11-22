@@ -12,7 +12,7 @@ use crate::tasks::popup::time_pick;
 use crate::tasks::popup_slot;
 use crate::ui::icon;
 use crate::ui::kit::{Btn, config_button};
-use crate::ui::tokens::{btn, radius, space};
+use crate::ui::tokens::{btn, input, radius, space};
 
 pub(crate) fn form_head(
     chat: &Chat,
@@ -621,14 +621,45 @@ fn agent_block(
     ]
 }
 
-/// 脚本块（field 行 + 说明行）：sel-btn + 浏览…，note 带扩展名校验错误。
+/// 脚本块（field 行 + 说明行）：只读 input 形态选择器 + 浏览…，note 带
+/// 扩展名校验错误。选择器与名称输入统一样式（TextInput 单行同款：h30 /
+/// w250 / bg_panel / border / INLINE 圆角，2026-11-22 用户令），只读、无
+/// 内部提示文案；点击即开文件选择（原 sel-btn 下拉形态无点击处理器，
+/// chevron 是摆设——顺手修掉这个死控件）。
 fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> Vec<AnyElement> {
     let page = &chat.tasks.page;
-    let label = page
+    let script_text = page
         .script_path
         .as_ref()
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| tr("task.script_ph").to_string());
+        .unwrap_or_default();
+    let weak_pick = weak.clone();
+    let picker = div()
+        .id("task-sel-script")
+        .w(px(250.))
+        .h(px(input::H))
+        .px(px(space::SP4))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(radius::INLINE))
+        .bg(rgb(t.bg_panel))
+        .hover(|h| h.border_color(rgb(t.accent)))
+        .flex()
+        .items_center()
+        .text_size(ui_size(12.))
+        .text_color(rgb(t.text))
+        .cursor_pointer()
+        .overflow_hidden()
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .child(SharedString::from(script_text)),
+        )
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = weak_pick.update(cx, |c, cx| c.pick_task_script_file(cx));
+        });
     let note = div()
         .text_size(ui_size(11.5))
         .text_color(rgb(t.text_faint))
@@ -649,8 +680,8 @@ fn script_block(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -
             div()
                 .flex()
                 .items_center()
-                .gap(px(8.))
-                .child(sel_btn("task-sel-script", label, Some(340.), false, t))
+                .gap(px(space::SP4))
+                .child(picker)
                 .child(config_button(
                     "task-browse",
                     weak,
