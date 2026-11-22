@@ -19,8 +19,6 @@ use crate::appearance::theme::{self, Theme, theme};
 use crate::appearance::ui_size;
 use crate::editor::markdown::MONO_FAMILY;
 use crate::i18n::{tf, tr};
-use crate::market::pf_market::MONO;
-use crate::market::pi_native_market::design::px18;
 use crate::services::format::fmt_msg_time;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::tasks::{DefRow, PAGE_TAB_LOG, PAGE_TAB_TASKS};
@@ -76,20 +74,20 @@ pub(crate) fn page(
         .into_any_element()
 }
 
-/// 页头二级 tab（PF 插件市场 `tab_row` 简易形制，2026-11-16 用户拍板）：
-/// MONO 大字基线排 + `|` 分隔；活动全亮、非活动 text_dim hover 回亮。
+/// 页头二级 tab（2026-11-22 用户令改版）：字号/选中样式与文件树项目标题
+/// 完全对齐——ui_size(12) + 选中 BOLD accent / 未选中 text_dim hover 回
+/// text；`|` 分隔保留。
 fn pipe_tabs(cur: u8, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
     let tabs: [(u8, &'static str); 2] = [
         (PAGE_TAB_TASKS, "task.tab_main"),
         (PAGE_TAB_LOG, "task.tab_log"),
     ];
-    let mut row = div().flex().items_baseline().gap(px(10.));
+    let mut row = div().flex().items_center().gap(px(10.));
     for &(ix, key) in &tabs {
         if ix != PAGE_TAB_TASKS {
             row = row.child(
                 div()
-                    .font_family(MONO)
-                    .text_size(px(px18::TITLE_FS))
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_faint))
                     .child("|"),
             );
@@ -99,10 +97,14 @@ fn pipe_tabs(cur: u8, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyEl
         row = row.child(
             div()
                 .id(SharedString::from(format!("task-page-tab-{ix}")))
-                .font_family(MONO)
-                .text_size(px(px18::TITLE_FS))
+                .text_size(crate::appearance::ui_size(12.))
                 .cursor_pointer()
-                .text_color(rgb(if active { t.text } else { t.text_dim }))
+                .font_weight(if active {
+                    gpui::FontWeight::BOLD
+                } else {
+                    gpui::FontWeight::NORMAL
+                })
+                .text_color(rgb(if active { t.accent } else { t.text_dim }))
                 .when(!active, |d| d.hover(|h| h.text_color(rgb(t.text))))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak.update(cx, |c, cx| {
