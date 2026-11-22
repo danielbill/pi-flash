@@ -23,7 +23,7 @@ use crate::services::format::fmt_msg_time;
 use crate::tasks::DefRow;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::ui::icon;
-use crate::ui::kit::{Btn, config_button, sidebar_item, status_dot};
+use crate::ui::kit::{Btn, config_button, icon_btn, sidebar_item, status_dot};
 use crate::ui::overlay;
 use crate::ui::spark_spinner;
 use crate::ui::tooltip::WithTip;
@@ -270,9 +270,7 @@ fn task_row(
                 slot = slot
                     .justify_end()
                     .min_w(px(22. * 3. + crate::ui::tokens::space::SP2 * 2.))
-                    .child(task_row_actions(
-                        &def_id, &title_act, !gray, running, weak, t,
-                    ));
+                    .child(task_row_actions(&def_id, &title_act, !gray, running, weak));
             }
             slot
         })
@@ -281,7 +279,7 @@ fn task_row(
 
 /// 行尾 hover 显影动作钮（2026-11-22 用户令：立即运行/停用/移除从详情表头
 /// 挪来；同日用户令：绝对定位盖时间——时间右对齐，hover 时钮/时间 visibility
-/// 互斥）。钮 = queue_cards icon_btn 同款 22px hover 底小图标钮。运行中
+/// 互斥）。钮 = kit icon_btn（§5.2 IB_SM，2026-11-22 收编）。运行中
 /// 「立即运行」置灰（原表头同守卫）；停用/启用钮图标 = 当前状态（rotate-clock
 /// / pause，2026-11-22 用户令：状态与 icon 对应）；移除走确认浮层（confirm_del）。
 fn task_row_actions(
@@ -290,7 +288,6 @@ fn task_row_actions(
     enabled: bool,
     running: bool,
     weak: &gpui::WeakEntity<Chat>,
-    t: &'static Theme,
 ) -> AnyElement {
     // group 在行容器（task_row），此处只挂 group_hover——同元素自引用永不
     // 显影（docs/agents/gpui.md「group/group_hover 必须两元素分离」）。
@@ -323,7 +320,6 @@ fn task_row_actions(
             running,
             &weak_run,
             move |c, cx| c.task_run_now(&id_run, cx),
-            t,
         ))
         .child(task_act_btn(
             format!("task-act-toggle-{id_tog}"),
@@ -338,7 +334,6 @@ fn task_row_actions(
             false,
             &weak_tog,
             move |c, cx| c.task_toggle(&id_tog, cx),
-            t,
         ))
         .child(task_act_btn(
             format!("task-act-del-{id_del}"),
@@ -350,12 +345,12 @@ fn task_row_actions(
                 c.tasks.page.confirm_del = Some((id_del.clone(), title_del.clone()));
                 cx.notify();
             },
-            t,
         ))
         .into_any_element()
 }
 
-/// 22px 小图标动作钮（queue_cards icon_btn 同款 hover 态 + Chat 回调形态）。
+/// 22px 小图标动作钮（§5.2 IB_SM 行尾动作钮）：2026-11-22 收编至
+/// [`crate::ui::kit::icon_btn`]（几何逐值平移，kit 版为唯一画法）。
 fn task_act_btn(
     id: String,
     name: &'static str,
@@ -363,30 +358,8 @@ fn task_act_btn(
     locked: bool,
     weak: &gpui::WeakEntity<Chat>,
     on_click: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
-    t: &'static Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let weak = weak.clone();
-    div()
-        .id(SharedString::from(id))
-        // ui-raw: ok 046 行尾动作钮 IB_SM 22 槽逐值复刻（§10.8 登记）
-        .size(px(22.))
-        .rounded(px(crate::ui::tokens::radius::INLINE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .when(locked, |d| d.opacity(0.4))
-        .when(!locked, |d| d.hover(|s| s.bg(rgb(t.bg_hover))))
-        .with_tip(tip_key)
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            // 与行 on_mouse_down（选中）叠压，先拦防选中覆盖
-            cx.stop_propagation();
-            if locked {
-                return;
-            }
-            let _ = weak.update(cx, |c, cx| on_click(c, cx));
-        })
-        .child(icon(name, crate::ui::tokens::icon::MD, t.text_muted))
+) -> AnyElement {
+    icon_btn(id, weak, name, tip_key, locked, on_click)
 }
 
 // ---------------------------------------------------------------------------
@@ -600,17 +573,17 @@ fn run_log_panel(
                 .id(id)
                 .w_full()
                 .h(px(crate::ui::tokens::row::TASK))
-                .pl(px(12.))
-                .pr(px(12.))
+                .pl(px(crate::ui::tokens::space::SP6))
+                .pr(px(crate::ui::tokens::space::SP6))
                 .flex()
                 .items_center()
-                .gap(px(8.))
+                .gap(px(crate::ui::tokens::space::SP4))
                 .when(ix > 0, |d| d.border_t_1().border_color(rgb(t.border)))
                 // 结果点（hover 摘要同前）
                 .child(
                     div()
                         .id(dot_id)
-                        .w(px(16.))
+                        .w(px(crate::ui::tokens::icon::MD))
                         .flex_none()
                         .flex()
                         .items_center()

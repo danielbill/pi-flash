@@ -90,16 +90,23 @@ pub(crate) fn mc_agents_view(
         .into_any_element()
 }
 
-/// 列表行：7px 圆点 + 名称（name = 点名句柄 + 显示名）+ hover 浮现「复制」
-/// （2026-11-10 从右表单头「复制为自定义」迁来，内置/自定义通用，右缘与组头
-/// 「新建」对齐）。显影 = 行 group + 绘制期 opacity（命中区不变，psp 控制栏
-/// 同款；GroupHitboxes 按名分栈、paint 子树内 push/pop，同名组不跨行显影）。
+/// 列表行：7px 圆点 + 名称（name = 点名句柄 + 显示名）+ 行尾 hover 显影
+/// 动作钮 = 复制/删除两枚 icon 钮（2026-11-22 用户令：按钮改图标形，删除自
+/// 右表单头挪来、置于最右；仅自定义可删——损坏态必为自定义文件，行尾删除
+/// 已全覆盖）。钮 = kit icon_btn（§5.2 IB_SM，046 任务行尾同款，2026-11-22
+/// 收编）。显影 = 行 group + 绘制期 opacity（命中区不变，psp 控制栏同款；
+/// GroupHitboxes 按名分栈、paint 子树内 push/pop，同名组不跨行显影）。
+/// 行高/行间 = 046 任务行规格（row::TASK 36 + 行间 SP2 4；2026-11-22 用户
+/// 令：列表高度间距向定时任务列表对齐，基座 30/mb1 按后写覆盖）。
 fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> gpui::AnyElement {
     let t = T();
     let id = a.id.clone();
     let broken = a.error.is_some();
+    let custom = a.origin.is_custom();
     let reveal = SharedString::from(format!("ag-row-{}", a.id));
     widgets::sidebar_item(format!("ag-{}", a.id), active)
+        .h(px(crate::ui::tokens::row::TASK))
+        .mb(px(crate::ui::tokens::space::SP2))
         .bg(rgb(t.bg))
         .group(reveal.clone())
         .on_mouse_down(MouseButton::Left, {
@@ -121,25 +128,40 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
                 .child(SharedString::from(a.display_name().to_string())),
         )
         .child(
-            // 按钮壳：① 截停下压穿透——ui::button 挂在 mouse_down、且 gpui
-            // 内层先外层后派发，行 on_mouse_down 若不拦会把 copy 刚选中的
-            // 新条目覆盖回源条目（2026-11-10 真机实锤）；② 字重显式归位
-            // NORMAL——active 行的 SEMIBOLD 会继承进按钮文字。
+            // 按钮壳：① 截停下压穿透——gpui 内层先外层后派发，行
+            // on_mouse_down 若不拦会把 copy 刚选中的新条目覆盖回源条目
+            // （2026-11-10 真机实锤，icon_btn 内部亦截断、双保险）；
+            // ② 字重显式归位 NORMAL——active 行的 SEMIBOLD 会继承进钮区。
             div()
                 .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(crate::ui::tokens::space::SP2))
                 .opacity(0.)
                 .group_hover(reveal, |s| s.opacity(1.))
                 .font_weight(gpui::FontWeight::NORMAL)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(config_button(
+                .child(widgets::icon_btn(
                     format!("ag-copy-{}", a.id),
                     weak,
-                    &tr("agents.copy"),
-                    Btn::Secondary,
-                    true,
+                    "copy",
+                    "agents.copy",
                     false,
                     move |c, cx| c.mc_agent_copy(id.clone(), cx),
-                )),
+                ))
+                .when(custom, |d| {
+                    d.child(widgets::icon_btn(
+                        format!("ag-del-{}", a.id),
+                        weak,
+                        "trash",
+                        "agents.delete",
+                        false,
+                        {
+                            let del_id = a.id.clone();
+                            move |c, cx| c.mc_agent_ask_delete(del_id.clone(), cx)
+                        },
+                    ))
+                }),
         )
         .into_any_element()
 }

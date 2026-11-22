@@ -163,6 +163,8 @@
 
 特例（保留）：窗口控制钮 42×40 无圆角（OS 惯例）；composer 发送/停止 36×36 圆角 16（运行中收成 9）；大卡关闭钮 30×30 红底（破坏性区域语义）；topbar/statusbar 高 40（chrome 层，两条等高；两条 bar 上沿均不画 border_t，激活 tab 上沿不画线只留左右分隔）；**bar 内 tab 高 = bar 高 −4**（topbar tab 底缘 mb(−1) 融入下方内容区，statusbar 激活卡顶缘贴 dock 连体）。
 
+- 行尾动作钮（列表行 hover 显影的图标钮）唯一画法 = `ui/kit/button.rs::icon_btn`：IB_SM 22 槽 + 内图标 MD 16 + 圆角 INLINE + hover `bg_hover`（046 任务行/子代理行口径，2026-11-22 自 task_act_btn 收编；IB_SM=14 的表档留给 tab 关闭等窄行件）。槽位 token：`tokens::ib::{SM,MD,LG}`。
+
 ### 5.3 开关 Switch
 
 | 尺寸 | 轨道 | 圆角 | knob | 位置（关/开） |
@@ -494,7 +496,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `tasks/form.rs::ghost_btn` | px 8 / py 3 / rounded 6 | 046 表单行内 ghost 文字钮（py 3 非 2px 网格，HTML 拍板；px/圆角已 token 化） |
 | `tasks/popup.rs` time_pick 时/分行 | h 36 | 046 HTML `tpick` 双列拾取行逐值复刻（点选不关卡连续调时刻） |
 | `tasks/popup.rs::plus_row` | h 32 / gap 8 / px 10 / r 5 | InputPanel `slash_menu_view` 条目卡逐值复刻（2026-11-17 拍板「+ 弹层和 InputPanel 对齐」） |
-| `tasks/view.rs::task_act_btn` | 22×22（icon 12） | 046 行尾动作钮 IB_SM 22 槽逐值复刻（§5.2 拍板；queue_cards icon_btn 同款，其 2 处 22 已冻结基线待收编） |
+| `tasks/view.rs::task_act_btn` | 已收编 | 046 行尾动作钮 IB_SM 22 槽——2026-11-22 几何逐值平移至 `ui/kit/button.rs::icon_btn`（kit 版 = 唯一画法；原登记「icon 12」系笔误，实为 icon::MD 16）；queue_cards icon_btn 2 处 22 仍冻结基线待收编 |
 
 ---
 

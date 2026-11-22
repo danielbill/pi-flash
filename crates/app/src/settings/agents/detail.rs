@@ -74,21 +74,7 @@ pub(super) fn agent_detail(
             }
         })
         .child(div().flex_1())
-        .when(!is_new && !builtin, |d| {
-            // 删除（仅自定义；复制入口已移列表行 hover [复制]，2026-11-10）
-            d.child(config_button(
-                "ag-del",
-                weak,
-                &tr("agents.delete"),
-                Btn::Danger,
-                true,
-                false,
-                {
-                    let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                    move |c, cx| c.mc_agent_ask_delete(id.clone(), cx)
-                },
-            ))
-        })
+        // 删除已挪列表行尾 icon 钮（2026-11-22 用户令）；表单头只留保存
         .when(is_new || !builtin, |d| {
             d.child(config_button(
                 "ag-save",
@@ -112,43 +98,26 @@ pub(super) fn agent_detail(
 
     let mut form = div().flex().flex_col().gap(px(16.)).mt(px(16.)).flex_1();
 
-    // 损坏态：红条 + 打开文件修复 + 删除
+    // 损坏态：红条 + 打开文件修复（删除在列表行尾 icon 钮，2026-11-22 挪）
     if let Some(err) = broken {
         form = form
             .child(error_note(&format!("{}：{err}", tr("agents.broken"))))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(config_button(
-                        "ag-fix",
-                        weak,
-                        &tr("agents.open_fix"),
-                        Btn::Secondary,
-                        true,
-                        false,
-                        {
-                            let path = agent
-                                .as_ref()
-                                .and_then(|a| a.path.clone())
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            move |c, cx| c.mc_agent_open_fix(path.clone(), cx)
-                        },
-                    ))
-                    .child(config_button(
-                        "ag-del-broken",
-                        weak,
-                        &tr("agents.delete"),
-                        Btn::Danger,
-                        true,
-                        false,
-                        {
-                            let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                            move |c, cx| c.mc_agent_ask_delete(id.clone(), cx)
-                        },
-                    )),
-            );
+            .child(config_button(
+                "ag-fix",
+                weak,
+                &tr("agents.open_fix"),
+                Btn::Secondary,
+                true,
+                false,
+                {
+                    let path = agent
+                        .as_ref()
+                        .and_then(|a| a.path.clone())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    move |c, cx| c.mc_agent_open_fix(path.clone(), cx)
+                },
+            ));
         return detail_shell_with(head, form);
     }
 
@@ -344,9 +313,13 @@ fn workdir_seg(weak: &gpui::WeakEntity<Chat>, cwd_pf: bool, readonly: bool) -> g
     )
 }
 
-/// seg 通用装配（最大轮次/工作目录共用一份壳：28px 圆角分段、选中
-/// bg_selected + semibold）：`options` = (值, 文案, 选中)，`set` 写对应
-/// 表单字段 + 脏标。
+/// seg 通用装配（最大轮次/工作目录共用一份壳）。视觉 = 任务详情-类型
+/// type_seg（tasks/form.rs，2026-11-22 用户拍板「凸/凹」）同款：轨道 = 凹槽
+/// （bg_panel 沉底 + 边框 + SP1 内衬，CTRL 圆角），选中段 = 凸起（t.bg 浮出
+/// 槽底 + t.border 描边 + SEMIBOLD，INLINE 圆角），未选段 = 凹陷（透明底/
+/// 透明描边 + text_muted，hover 提亮）。芯片走 SM_H 24：SP1 内衬×2 + 边框
+/// ×2 后轨道总高 30。`options` = (值, 文案, 选中)，`set` 写对应表单字段 +
+/// 脏标。
 fn seg_control<T: Copy + PartialEq + 'static>(
     weak: &gpui::WeakEntity<Chat>,
     readonly: bool,
@@ -357,26 +330,37 @@ fn seg_control<T: Copy + PartialEq + 'static>(
     let mut seg = div()
         .flex()
         .flex_shrink_0()
-        .rounded(px(6.))
+        .rounded(px(crate::ui::tokens::radius::CTRL))
         .border_1()
         .border_color(rgb(t.border))
         .bg(rgb(t.bg_panel))
-        .overflow_hidden();
+        .overflow_hidden()
+        .p(px(crate::ui::tokens::space::SP1));
     for (value, label, on) in options {
         let weak_item = weak.clone();
         seg = seg.child(
             div()
-                .h(px(28.))
-                .px(px(14.))
+                .h(px(crate::ui::tokens::btn::SM_H))
+                .px(px(crate::ui::tokens::btn::SM_PX))
                 .flex()
                 .items_center()
                 .text_size(crate::appearance::ui_size(12.))
-                .text_color(rgb(if on { t.text } else { t.text_muted }))
-                .bg(rgb(if on { t.bg_selected } else { t.bg_panel }))
-                .when(on, |d| d.font_weight(gpui::FontWeight::SEMIBOLD))
+                .rounded(px(crate::ui::tokens::radius::INLINE))
+                // 描边两态都占位（透明 vs 实线），选中切换不推挤文字
+                .border_1()
+                .when(on, |d| {
+                    d.bg(rgb(t.bg))
+                        .border_color(rgb(t.border))
+                        .text_color(rgb(t.text))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                })
+                .when(!on, |d| {
+                    d.border_color(gpui::transparent_black())
+                        .text_color(rgb(t.text_muted))
+                })
                 .when(!readonly, |d| {
                     d.cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
+                        .when(!on, |d| d.hover(|s| s.text_color(rgb(t.text))))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = weak_item.update(cx, |c, cx| {
                                 if let Some(st) = c.dlg.settings.clone() {

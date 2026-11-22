@@ -56,6 +56,16 @@ pub mod btn {
     pub const LG_PX: f32 = 14.;
 }
 
+/// §5.2 图标按钮三档（方形槽 px；无边框、圆角 INLINE、hover bg_hover）。
+/// 内图标配对见规范表：IB_MD/LG → icon::MD/LG；IB_SM 行尾动作钮口径
+/// （046 任务/子代理列表行，2026-11-22）内图标走 icon::MD，见
+/// `ui/kit/button.rs::icon_btn`。
+pub mod ib {
+    pub const SM: f32 = 22.;
+    pub const MD: f32 = 28.;
+    pub const LG: f32 = 32.;
+}
+
 /// §5.3 开关两档（2026-10-09 定夺 28×16 为默认档；存量 32×18 收敛于此）。
 pub mod switch {
     pub const MD_W: f32 = 28.;
@@ -236,7 +246,7 @@ mod tests {
             ],
             [3., 5., 6., 8., 10., 12.]
         );
-        // §5.1 按钮
+        // §5.1 按钮 / §5.2 图标按钮槽
         assert_eq!(
             [
                 btn::SM_H,
@@ -248,6 +258,7 @@ mod tests {
             ],
             [24., 8., 28., 12., 32., 14.]
         );
+        assert_eq!([ib::SM, ib::MD, ib::LG], [22., 28., 32.]);
         // §5.3 开关
         assert_eq!(
             [
