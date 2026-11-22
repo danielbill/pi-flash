@@ -55,6 +55,19 @@ pub(crate) fn page(
         .flex()
         .bg(rgb(t.bg))
         .child(list)
+        // 列表 ⇆ 右列竖分隔线：§5.12 统一实现（常驻 1px 细线灰，比 0x45
+        // 自调灰重一档，2026-11-22 用户令：页面分割线统一左面板样式）
+        .child(
+            div()
+                .relative()
+                .w(px(crate::ui::tokens::divider::LINE))
+                .flex_none()
+                .child(crate::ui::divider::line(
+                    crate::ui::divider::LineSpec::vertical(),
+                    false,
+                    t,
+                )),
+        )
         .child(
             div()
                 .flex_1()
@@ -62,12 +75,21 @@ pub(crate) fn page(
                 .flex()
                 .flex_col()
                 .child(detail)
-                // 详情 ⇄ 日志 1px 横线隔离（2026-11-22 用户令）
+                // 详情 ⇄ 日志横线：左面板横分隔线同款（§5.12 统一实现，
+                // 两端缩进 15 对齐本页边距，带内居中留白）
                 .child(
                     div()
+                        .relative()
+                        .h(px(crate::ui::tokens::divider::HIT))
                         .flex_none()
-                        .h(px(1.))
-                        .bg(rgba(theme::border_alpha(t, 0x45))),
+                        .child(crate::ui::divider::line(
+                            crate::ui::divider::LineSpec::horizontal(
+                                15.,
+                                crate::ui::tokens::divider::HIT,
+                            ),
+                            false,
+                            t,
+                        )),
                 )
                 .child(log),
         )
@@ -508,21 +530,45 @@ fn tasks_detail(
 /// （vlist 壳同款：rounded 6 + 1px 边框 + 行间 1px 分隔线，settings/models
 /// list.rs 同语言），只呈现选中任务的运行记录。行 = 结果点 + 两行文（任务
 /// 名 11 / mono 时间 10 dim）；Agent 任务行名可点 = 开该次会话只读观察窗。
-/// 未选中任务/无记录出空态。
+/// 未选中任务/无记录出空态。列表 = vlist 组件（uniform_list + 滚动条 +
+/// 壳，settings/models 列表同件——滚动条不许再手滚丢，2026-11-22 用户令）。
 fn run_log_panel(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     sel: &Option<String>,
 ) -> AnyElement {
-    // 行高与模型列表同式（(11+10)*1.25 + 12）
-    let row_h = (f32::from(ui_size(11.)) + f32::from(ui_size(10.))) * 1.25 + 12.;
-    let runs: Vec<&TaskRun> = chat
+    // 行数据先行抽出（vlist 行闭包 'static：不借 chat——TaskRun Clone，
+    // 标题/灰名/开话路径全部预解析）
+    let rows: Vec<(TaskRun, String, bool, Option<PathBuf>)> = chat
         .tasks
         .runs
         .iter()
         // 只出选中任务的日志（2026-11-22 用户令：不再混杂）
         .filter(|r| sel.as_deref() == Some(r.def_id.as_str()))
+        .map(|r| {
+            let gray_task = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| d.def.id == r.def_id)
+                .map(|d| !d.def.enabled)
+                .unwrap_or(false);
+            let skipped = r.outcome == Outcome::Skipped;
+            let title = chat
+                .tasks
+                .defs
+                .iter()
+                .find(|d| d.def.id == r.def_id)
+                .map(|d| d.def.title.clone())
+                .unwrap_or_else(|| r.def_id.clone());
+            (
+                r.clone(),
+                title,
+                gray_task || skipped,
+                r.session_path.as_deref().map(PathBuf::from),
+            )
+        })
         .collect();
 
     let empty = sel.is_none()
@@ -532,118 +578,83 @@ fn run_log_panel(
             .iter()
             .find(|d| Some(&d.def.id) == sel.as_ref())
             .is_none();
-
-    // 卡体：行间 1px 分隔，round/border 壳同 vlist（settings/models 列表）
-    let card = if runs.is_empty() {
-        div()
-            .w_full()
-            .h(px(44.))
-            .flex()
-            .items_center()
-            .px(px(12.))
-            .text_size(ui_size(11.))
-            .text_color(rgb(t.text_dim))
-            .child(tr(if empty {
-                "task.log_none_sel"
-            } else {
-                "task.log_empty"
-            }))
+    let empty_key: &'static str = if empty {
+        "task.log_none_sel"
     } else {
-        let mut card = div().w_full().flex().flex_col();
-        for (ix, r) in runs.iter().enumerate() {
-            let gray_task = chat
-                .tasks
-                .defs
-                .iter()
-                .find(|d| d.def.id == r.def_id)
-                .map(|d| !d.def.enabled)
-                .unwrap_or(false);
-            let skipped = r.outcome == Outcome::Skipped;
-            let gray = gray_task || skipped;
-            let open_path = r.session_path.as_deref().map(PathBuf::from);
+        "task.log_empty"
+    };
+
+    let rows_v = rows.clone();
+    let weak_rows = weak.clone();
+    let list = crate::ui::vlist::vlist(
+        "task-log-vlist",
+        rows.len(),
+        crate::ui::tokens::row::TASK,
+        crate::ui::vlist::VListHeight::Fill,
+        true,
+        true,
+        empty_key,
+        None,
+        move |ix, _window, _cx| {
+            let (r, title, gray, open_path) = &rows_v[ix];
             let id = SharedString::from(format!("task-log-{}-{}", r.def_id, r.started_at));
             let dot_id = SharedString::from(format!("{id}-dot"));
-            // 行名 = 任务名（def title，2026-11-22 用户令：不出 def_id）
-            let title = chat
-                .tasks
-                .defs
-                .iter()
-                .find(|d| d.def.id == r.def_id)
-                .map(|d| d.def.title.clone())
-                .unwrap_or_else(|| r.def_id.clone());
-            let weak_open = weak.clone();
-            card = card.child(
-                div()
-                    .id(id)
-                    .w_full()
-                    .h(px(row_h))
-                    .pl(px(12.))
-                    .pr(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .when(ix > 0, |d| d.border_t_1().border_color(rgb(t.border)))
-                    // 结果点（hover 摘要同前）
-                    .child(
-                        div()
-                            .id(dot_id)
-                            .w(px(16.))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .when_some(run_slot(r, t), |d, s| d.child(s))
-                            .with_tip_text(run_tip(r)),
-                    )
-                    // 两行文：名（可点开观察窗，正常色）+ mono 时间
-                    .child({
-                        let mut name_col = div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .cursor_pointer()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .text_size(ui_size(11.))
-                                    .line_height(gpui::relative(1.25))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_color(rgb(if gray { t.text_faint } else { t.text }))
-                                    // hover 变主题色挂在名行本身——子级
-                                    // 显式 text_color 不吃父级 hover 色
-                                    .when(open_path.is_some(), |d| {
-                                        d.hover(|h| h.text_color(rgb(t.accent)))
-                                    })
-                                    .child(SharedString::from(title)),
-                            )
-                            .child(
-                                div()
-                                    .font_family(MONO_FAMILY)
-                                    .text_size(ui_size(10.))
-                                    .line_height(gpui::relative(1.25))
-                                    .text_color(rgb(t.text_dim))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(SharedString::from(fmt_stamp(r.started_at))),
-                            );
-                        if let Some(sp) = open_path {
-                            name_col = name_col
-                                .hover(|h| h.text_color(rgb(t.accent)))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_open.update(cx, |c, cx| {
-                                        c.open_subagent_session_window(sp.clone(), cx);
-                                    });
-                                });
-                        }
-                        name_col
-                    }),
-            );
-        }
-        card
-    };
+            let weak_open = weak_rows.clone();
+            let open_path = open_path.clone();
+            div()
+                .id(id)
+                .w_full()
+                .h(px(crate::ui::tokens::row::TASK))
+                .pl(px(12.))
+                .pr(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .when(ix > 0, |d| d.border_t_1().border_color(rgb(t.border)))
+                // 结果点（hover 摘要同前）
+                .child(
+                    div()
+                        .id(dot_id)
+                        .w(px(16.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .when_some(run_slot(r, t), |d, s| d.child(s))
+                        .with_tip_text(run_tip(r)),
+                )
+                // 一行：名（可点开观察窗）+ 右对齐 mono 时间（2026-11-22 用户令）
+                .child({
+                    let mut name_el = div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(ui_size(12.))
+                        .cursor_pointer()
+                        .text_color(rgb(if *gray { t.text_faint } else { t.text }))
+                        .when(open_path.is_some(), |d| {
+                            d.hover(|h| h.text_color(rgb(t.accent)))
+                        })
+                        .child(SharedString::from(title.clone()));
+                    if let Some(sp) = open_path {
+                        name_el = name_el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_open.update(cx, |c, cx| {
+                                c.open_subagent_session_window(sp.clone(), cx);
+                            });
+                        });
+                    }
+                    name_el
+                })
+                .child(
+                    div()
+                        .flex_none()
+                        .font_family(MONO_FAMILY)
+                        .text_size(ui_size(11.))
+                        .text_color(rgb(t.text_faint))
+                        .child(SharedString::from(fmt_stamp(r.started_at))),
+                )
+                .into_any_element()
+        },
+    );
 
     div()
         .id("task-log-panel")
@@ -674,24 +685,21 @@ fn run_log_panel(
                         .text_size(ui_size(12.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text_muted))
-                        .child(SharedString::from(runs.len().to_string())),
+                        .child(SharedString::from(rows.len().to_string())),
                 ),
         )
+        // vlist 壳自带 rounded/border/滚动条：外层只留边距（mx 对齐详情
+        // px 15）
         .child(
             div()
                 .id("task-log-list")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
                 .mx(px(15.))
                 .mb(px(12.))
-                .rounded(px(6.))
-                .border_1()
-                .border_color(rgb(t.border))
-                .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(card),
+                .child(list),
         )
         .into_any_element()
 }
