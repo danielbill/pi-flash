@@ -8,16 +8,11 @@
 //! panic。
 
 // ===========================================================================
-// 键 = 语义标识 `<域>.<主语>[.<限定>]`，**不再拿中文当键**（2026-10-12 迁移）。
-// 旧设计里 zh-CN 源串同时是显示值和查表键，两处必须逐字节相等却没有编译期
-// 检查——润色一个字、或新增文案忘了配译文，繁/英界面都会静默回落成中文。
-// 语义键让三种语言的文案在表里各自独立：改文案不再动键。
-//
-// 行内四列：`(key, zh-CN, zh-TW, en)`。**繁/英留空 = 尚未翻译**��此时 tr()
-// 回落 zh-CN（与迁移前一致）；漏译清单由 src/i18n_audit.rs 盯着（只减不增）。
-//
-// 新增文案流程：① i18n_audit 挡住「加了 tr() 却没加表行」；② 表行繁/英空着
-// 会被挂进 BACKLOG，补齐后从 BACKLOG 删掉。
+// 键 = 语义标识 `<域>.<主语>[.<限定>]`，**不再拿中文当键**（2026-10-12 迁移）：
+// 旧设计 zh-CN 源串兼当显示值与查表键，须逐字节相等却无编译期检查——润色一字或
+// 漏配译文，繁/英界面即静默回落中文；语义键让三语文案各自独立，改文案不动键。
+// 新增文案流程：① i18n_audit 挡住「加了 tr() 却没加表行」；② 表行繁/英空着会被
+// 挂进 BACKLOG，补齐后从 BACKLOG 删掉。
 // ===========================================================================
 
 /// 关于页信息块：这两个常量现在是**键**，文案在 TABLE 同一行（改文案不必动
@@ -25,13 +20,7 @@
 pub const ABOUT_DESC: &str = "about.tagline";
 pub const ABOUT_NOTE: &str = "about.note";
 
-/// (source zh-CN, zh-TW, en)
-
-// (key, zh-CN, zh-TW, en)
-//
-// rustfmt 跳过本 const：i18n_audit 按行解析（行 trim 后以 '(' 起 + 切 4 列），
-// 表行必须**一行一条**；rustfmt 会把超宽表行折成 5 行 → audit 只解析到零头直接
-// panic。豁免只针对这个 const，本文件其余部分照常自动格式化。
+// (key, zh-CN, zh-TW, en)；rustfmt 豁免仅本 const（audit 按行解析，折行即 panic），其余部分照常自动格式化。
 #[rustfmt::skip]
 pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     // chrome / sidebar
@@ -50,8 +39,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("titlebar.menu", "菜单", "選單", "Menu"),
     ("market.btn.install", "安装", "安裝", "Install"),
     ("market.btn.update", "更新", "更新", "Update"),
-    // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案本身照抄
-    // 设计稿英文，这里只收需要跟随界面的那几个词）
+    // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案照抄设计稿英文，只收需跟随界面的词）
     ("market.native_tab", "Pi Dev 扩展社区", "Pi Dev 擴展社区", "Pi Dev Packages"),
     ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
     ("market.pf.empty", "无可用PF插件", "無可用PF外掛", "No PF plugins available"),
@@ -293,8 +281,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("settings.show_more", "显示更多", "顯示更多", "Show more"),
     // session list / relative time templates
     ("session.messages", "{} 条消息", "{} 條消息", "{} messages"),
-    // 033 导航面板总结栏：改「icon 数字」四组（v7x），无文案不走过 i18n。
-    // time.s_ago 已删（2026-11：弹窗时间不数秒，time_ago 最小粒度到分钟）
+    // 033 导航面板总结栏：改「icon 数字」四组（v7x）；time.s_ago 已删（2026-11，最小粒度到分钟）
     ("time.m_ago", "{n}分钟前", "{n}分鐘前", "{n}m ago"),
     ("time.h_ago", "{n}小时前", "{n}小時前", "{n}h ago"),
     ("time.d_ago", "{n}天前", "{n}天前", "{n}d ago"),
@@ -366,8 +353,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("conflict.unsaved_n_files", "有未保存的修改：{n} 个文件", "有未儲存的修改：{n} 個檔案", "Unsaved changes in {n} files"),
     ("conflict.close_without_saving", "不保存关闭", "不儲存關閉", "Close without saving"),
     ("conflict.save_and_close", "保存并关闭", "儲存並關閉", "Save and close"),
-    // topbar 标签右键菜单（zed tab_bar 菜单移植；无 Close Clean，会话
-    // 首标签恒不可关——菜单里没有 Close、Close Left 恒灰）
+    // topbar 标签右键菜单（zed tab_bar 移植；无 Close Clean——首标签恒不可关，Close Left 恒灰）
     ("tab.close", "关闭", "關閉", "Close"),
     ("tab.close_others", "关闭其他标签", "關閉其他標籤", "Close Others"),
     ("tab.close_left", "关闭左侧标签", "關閉左側標籤", "Close Left"),
@@ -920,8 +906,9 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.desc", "任务描述", "任務描述", "Prompt"),
     ("task.instr", "指令", "指令", "Prompt"),
     ("task.sched", "定时", "定時", "Schedule"),
-    ("task.tab_main", "任务", "任務", "Tasks"),
-    ("task.tab_log", "日志", "日誌", "Log"),
+    ("task.log_title", "运行日志", "執行日誌", "Run log"),
+    ("task.log_none_sel", "选择任务后查看其运行日志", "選擇任務後查看其執行日誌", "Select a task to view its run log"),
+    ("task.log_empty", "暂无运行记录", "暫無執行記錄", "No runs yet"),
     ("task.remove", "移除", "移除", "Remove"),
     ("task.run_at", "于", "於", "at"),
     ("task.minute_nth", "第", "第", "at"),
@@ -944,8 +931,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.script_note", "脚本执行超过30分钟将无条件终止", "執行目錄=腳本所在目錄;逾時 30 分鐘自動終止", "Runs in the script's folder; killed after 30 min"),
     ("task.script_err_ext", "不支持的脚本扩展名", "不支援的腳本副檔名", "Unsupported script extension"),
     ("task.create", "创建", "建立", "Create"),
-    // 2026-11-17 拍板：按钮对齐子代理页（agents.save「保存」紧排同款，
-    // 去全角空格——空格曾把保存钮撑宽一圈，与新建钮不成对）
+    // 2026-11-17 拍板：按钮对齐子代理页（agents.save「保存」紧排同款；去全角空格——曾把保存钮撑宽）
     ("task.save", "保存", "儲存", "Save"),
     ("task.cancel", "取消", "取消", "Cancel"),
     ("task.delete", "删除", "刪除", "Delete"),
