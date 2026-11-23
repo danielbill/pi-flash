@@ -14,7 +14,7 @@
 | 启停/列表/重排 roundtrip | pf-context `enable_list_reschedule_roundtrip` | list_enabled 过滤；reschedule 写指针；None=清空 |
 | 整行更新（created_at 不覆盖；非法 spec 拒写） | pf-context `update_def_overwrites_row_keeps_created_at` | |
 | run 生命周期（start→settle；防双结算；bind_run 冻结） | pf-context `run_lifecycle_start_then_settle` | 仅 running 态可结算；model/session_path 回填 |
-| skip 落账 + 台账排序/截断 | pf-context `record_skip_and_list_runs_ordering` | skipped 一段写齐；started_at 倒序 |
+| 台账只含真实执行（历史 skipped 过滤）+ 排序/截断 | pf-context `list_runs_filters_legacy_skips_and_orders` | started_at 倒序；last_run 同口径 |
 | prune 每任务保 50 | pf-context `prune_runs_keeps_newest_per_def` | 60→50 删最老；幂等；keep 收紧再删 |
 | 删除连带删 runs | pf-context `delete_cascades_runs` | 同事务级联；重复删报错 |
 | next_run：minute 锚点推进不对齐墙钟/防漂移/时钟回拨 | app `tasks::sched::tests::minute_from_anchor_not_wall_clock` | 11:46 建每 10 分不在 11:50 抢跑 |
@@ -22,9 +22,9 @@
 | next_run：daily 跨日回滚 | app `daily_rolls_to_next_day_when_today_passed` | |
 | next_run：weekly 周一=1 位次/最近周几 | app `weekly_monday_is_one_and_nearest_weekday_wins` | 2026-01-05 是周一 |
 | next_run：monthly 溢出日跳过 | app `monthly_skips_overflow_day` | 1/31 → 3/31（2 月无效跳过） |
-| claim：due/宽限内/in-flight 接力保持到期/misfire 超窗 skip+前推 | app `claim_filters_inflight_misfire_and_due` | 5min 宽限边界；busy 零落账指针不动；misfire 锚点不动前推 next |
+| claim：due/宽限内/in-flight 接力保持到期/misfire 超窗静默丢弃 | app `claim_filters_inflight_misfire_and_due` | 5min 宽限边界；busy/late 零落账；misfire 锚点不动前推 next |
 | 运行中接力：跨格零落账、结算后补跑 | app `in_flight_overlap_relays_after_settle` | 重叠触发保持到期；结算后认领 scheduled_at=重叠格；指针再前推 |
-| 接力上界：超长运行拖过宽限 → 一条 skipped | app `relay_exceeding_grace_drops_single_skip_row` | 不追债不排队爆炸；skip 挂计划触发时刻 |
+| 接力上界：超长运行拖过宽限 → 静默丢弃 | app `relay_exceeding_grace_drops_silently` | 不追债不排队爆炸；零落账只留执行行 |
 | 运行期 tick 零刷屏（刷屏事故回归） | app `running_task_ticks_do_not_spam_ledger` | 运行期多 tick 台账恒 1 行 |
 | settle：整行结算不碰指针 | app `settle_writes_outcome_and_never_touches_pointer` | 指针归 claim 认领即消费 |
 | settle：manual 不污染周期 | app `settle_manual_never_touches_schedule` | next_run/锚点原样 |

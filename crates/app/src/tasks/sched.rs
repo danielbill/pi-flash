@@ -14,8 +14,8 @@
 //!   结算，automationRepo.ts:998-1050）→ 运行中再触发**接力不丢弃**：触发
 //!   保持到期（不落账、指针不动），结算后下一轮 tick 认领补跑（ZCode
 //!   claimDue 只认领 running=0 行，重叠触发天然排队）；misfire 超窗（超
-//!   5min 宽限）记一条 skipped run（at = 计划触发时刻）+ 前推 → 交调度泵
-//!   派发。
+//!   5min 宽限）静默丢弃**不落账**（跳过非执行，2026-11-23 用户令「没
+//!   执行不属于执行 log」；痕迹只进应用日志）+ 前推 → 交调度泵派发。
 //! - settle：只结算 running 台账行，**不碰调度指针**（2026-11-23 修：原
 //!   settle 重算使运行期每 tick 重复判定到期，每 tick 落一条 skip 刷屏
 //!   任务日志）。「manual 不污染 cron 节奏」由 manual 派发不走 claim 保证
@@ -34,9 +34,9 @@ use crate::services::scheduler::{DueJob, JobOutcome};
 use super::{tasks_err, tasks_log};
 
 /// misfire 宽限：next_run_at 早于 now 超过该值 → 视为「关机/休眠/退出期间
-/// 错过的窗口」→ 记 skipped 不补跑。取值明显大于一次正常轮询延迟（ZCode
-/// MISFIRE_GRACE_MS 同值）。也是接力等待的上界：运行拖到触发超窗 → 放弃
-/// 该次不追债（防排队爆炸）。
+/// 错过的窗口」→ 静默丢弃不补跑（不落账——跳过非执行，2026-11-23 用户
+/// 令）。取值明显大于一次正常轮询延迟（ZCode MISFIRE_GRACE_MS 同值）。
+/// 也是接力等待的上界：运行拖到触发超窗 → 放弃该次不追债（防排队爆炸）。
 pub(crate) const MISFIRE_GRACE_MS: i64 = 5 * 60_000;
 
 /// daily/weekly 搜索边界（100 年；ZCode 36_600/5_220 同值——无未来候选 =
@@ -150,9 +150,9 @@ pub(crate) fn next_run_at(spec: &TaskSpec, anchor_at: i64, from: i64) -> Option<
 
 /// 认领到期作业（046-0 claim 流程，2026-11-23 重构「认领即消费 + 接力」）：
 /// due（enabled ∧ next_run_at ≤ now）→ spec 解析失败入休眠 → 运行中再触发
-/// 接力（保持到期不落账，结算后补跑）→ misfire 超窗落一条 skipped + 前推
-/// → 正常认领当场把指针前推到严格未来值再交派发（派发失败/崩溃都不会
-/// 重复触发）。
+/// 接力（保持到期不落账，结算后补跑）→ misfire 超窗静默丢弃 + 前推 →
+/// 正常认领当场把指针前推到严格未来值再交派发（派发失败/崩溃都不会
+/// 重复触发）。全程只有 dispatch 落真实执行的 run 行。
 pub(crate) fn claim_due(
     store: &TaskStore<'_>,
     now: i64,
@@ -186,16 +186,15 @@ pub(crate) fn claim_due(
         if in_flight.contains(&def.id) {
             continue;
         }
-        // misfire：计划触发时刻早于 now-5min → 错过窗口，skip 不补跑。
-        // 覆盖两类：应用未运行期间错过的；接力等待中被超长运行拖过宽限的
-        // （后者是接力的天然上界，防追债排队爆炸）。
+        // misfire：计划触发时刻早于 now-5min → 错过窗口，静默丢弃不补跑。
+        // 不落账——跳过非执行（2026-11-23 用户令「没执行不属于执行 log」），
+        // 痕迹只进应用日志。覆盖两类：应用未运行期间错过的；接力等待中被
+        // 超长运行拖过宽限的（后者是接力的天然上界，防追债排队爆炸）。
         if next < now - MISFIRE_GRACE_MS {
-            skip_run(
-                store,
-                &def.id,
-                next,
-                "错过触发窗口（超过 5 分钟宽限），不补跑",
-            );
+            tasks_log(&format!(
+                "misfire 丢弃: task={} at={}（超 5min 宽限，不补跑不落账）",
+                def.id, next
+            ));
             advance_pointer(store, &def.id, &spec, anchor, now);
             continue;
         }
@@ -216,14 +215,6 @@ pub(crate) fn claim_due(
 fn advance_pointer(store: &TaskStore<'_>, def_id: &str, spec: &TaskSpec, anchor: i64, now: i64) {
     let fwd = next_run_at(spec, anchor, now);
     let _ = store.reschedule(def_id, fwd, Some(anchor));
-}
-
-/// 落一条 skipped run（结果点 text_faint；hover 显示原因摘要）。
-fn skip_run(store: &TaskStore<'_>, def_id: &str, at: i64, reason: &str) {
-    match store.record_skip(def_id, Trigger::Schedule, at, reason) {
-        Ok(_) => tasks_log(&format!("skip: task={def_id} at={at} ({reason})")),
-        Err(e) => tasks_err(&format!("skip 落账失败: task={def_id} {e}")),
-    }
 }
 
 /// 结算作业（046-0 settle 流程，2026-11-23 重构）：**只写结果不碰调度
@@ -566,10 +557,8 @@ mod tests {
         );
         assert!(store.last_run("due").unwrap().is_none(), "认领不落 run 行");
 
-        // late：misfire skip 落账（started_at = 计划触发时刻）+ next_run 前推
-        let late = store.last_run("late").unwrap().unwrap();
-        assert_eq!(late.outcome, Outcome::Skipped);
-        assert_eq!(late.started_at, now - 10 * 60_000);
+        // late：misfire 静默丢弃（不落账）+ next_run 前推
+        assert!(store.last_run("late").unwrap().is_none(), "misfire 不落账");
         let def = store.get_def("late").unwrap().unwrap();
         let anchor = def.anchor_at.unwrap();
         assert_eq!(
@@ -667,10 +656,10 @@ mod tests {
         );
     }
 
-    /// 接力有界：运行超长拖到触发超 5min 宽限 → 结算后认领按 misfire 落
-    /// 一条 skipped + 前推重同步——不追债、不排队爆炸。
+    /// 接力有界：运行超长拖到触发超 5min 宽限 → 结算后认领静默丢弃 +
+    /// 前推重同步——不追债、不排队爆炸、不落账。
     #[test]
-    fn relay_exceeding_grace_drops_single_skip_row() {
+    fn relay_exceeding_grace_drops_silently() {
         let (_dir, db) = db();
         let store = TaskStore::new(&db);
         let t0 = local_ms(2026, 2, 10, 12, 0);
@@ -685,15 +674,15 @@ mod tests {
         assert!(claim_due(&store, t0 + 20 * 60_000 + 5_000, &inflight).is_empty());
         assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
 
-        // 结算后认领：overdue 10min10s > 5min 宽限 → 一条 skipped，不补跑
+        // 结算后认领：overdue 10min10s > 5min 宽限 → 丢弃不补跑不落账
         settle_job(&store, "t", &JobOutcome::ok(None), t0 + 30 * 60_000).unwrap();
         let jobs = claim_due(&store, t0 + 30 * 60_000 + 10_000, &HashSet::new());
         assert!(jobs.is_empty());
-        let rows = store.list_runs(Some("t"), -1).unwrap();
-        assert_eq!(rows.len(), 2, "ok + 一条 skipped");
-        let skip = &rows[0]; // started_at 倒序，skip 最新
-        assert_eq!(skip.outcome, Outcome::Skipped);
-        assert_eq!(skip.started_at, t0 + 20 * 60_000, "挂计划触发时刻");
+        assert_eq!(
+            store.list_runs(Some("t"), -1).unwrap().len(),
+            1,
+            "只留真实执行行"
+        );
         assert_eq!(
             store.get_def("t").unwrap().unwrap().next_run_at,
             Some(t0 + 40 * 60_000),

@@ -548,51 +548,22 @@ impl<'a> TaskStore<'a> {
         })
     }
 
-    /// 落一条 skipped 运行（misfire 超窗 / 运行中再触发；一段写齐，无需
-    /// start+settle 两段）。原因摘要进 result_json（§1.2 结果点 hover）。
-    pub fn record_skip(
-        &self,
-        def_id: &str,
-        trigger: Trigger,
-        at: i64,
-        reason: &str,
-    ) -> Result<i64, String> {
-        self.db.with_tx(|tx| {
-            let n: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM task_defs WHERE id = ?1",
-                    [def_id],
-                    |r| r.get(0),
-                )
-                .map_err(|e| e.to_string())?;
-            if n == 0 {
-                return Err(format!("任务不存在: {def_id}"));
-            }
-            let result = serde_json::json!({ "reason": reason }).to_string();
-            tx.execute(
-                "INSERT INTO task_runs (def_id, trigger, started_at, finished_at, outcome, result_json)
-                 VALUES (?1, ?2, ?3, ?3, 'skipped', ?4)",
-                params![def_id, trigger.as_str(), at, result],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(tx.last_insert_rowid())
-        })
-    }
-
     /// 运行历史（UI 历史 tab）：`def_id` = None 时跨任务（「全部任务」过滤
-    /// 档）；started_at 倒序，`limit` ≤ 0 = 不截断。
+    /// 档）；started_at 倒序，`limit` ≤ 0 = 不截断。**只含真实执行**——
+    /// skipped（历史跳过账）不回（2026-11-23 用户令：没执行不属于执行
+    /// log；新账也不再落 skipped，行随 prune 自然淘汰）。
     pub fn list_runs(&self, def_id: Option<&str>, limit: i64) -> Result<Vec<TaskRun>, String> {
         self.db.with_conn(|c| {
             let (sql, bind_def): (&str, Option<&str>) = match def_id {
                 Some(_) => (
                     "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, model, result_json
-                     FROM task_runs WHERE def_id = ?1
+                     FROM task_runs WHERE def_id = ?1 AND outcome <> 'skipped'
                      ORDER BY started_at DESC, id DESC LIMIT ?2",
                     def_id,
                 ),
                 None => (
                     "SELECT id, def_id, trigger, started_at, finished_at, outcome, session_path, model, result_json
-                     FROM task_runs
+                     FROM task_runs WHERE outcome <> 'skipped'
                      ORDER BY started_at DESC, id DESC LIMIT ?1",
                     None,
                 ),
@@ -1038,40 +1009,41 @@ mod tests {
     }
 
     #[test]
-    fn record_skip_and_list_runs_ordering() {
+    fn list_runs_filters_legacy_skips_and_orders() {
         let (_dir, db) = db();
         let tasks = TaskStore::new(&db);
         tasks.create(&agent_def("a")).unwrap();
         tasks.create(&agent_def("b")).unwrap();
 
-        tasks
-            .record_skip("a", Trigger::Schedule, 100, "错过触发窗口")
+        // 历史跳过账（旧版落过 skipped；新账已不再写）——直插 DB 模拟遗留
+        for (def_id, at) in [("a", 100), ("b", 50)] {
+            db.with_conn(|c| {
+                c.execute(
+                    "INSERT INTO task_runs (def_id, trigger, started_at, finished_at, outcome, result_json)
+                     VALUES (?1, 'schedule', ?2, ?2, 'skipped', '{\"reason\":\"错过触发窗口\"}')",
+                    params![def_id, at],
+                )
+                .map_err(|e| e.to_string())
+            })
             .unwrap();
+        }
         let manual = tasks.start_run("a", Trigger::Manual, 200, None).unwrap();
         tasks.settle_run(manual, Outcome::Ok, 250, None).unwrap();
-        tasks
-            .record_skip("b", Trigger::Schedule, 50, "上一轮仍在运行")
-            .unwrap();
 
+        // 只回真实执行：skipped 行不论 def 过滤与否都不出现
         let runs_a = tasks.list_runs(Some("a"), -1).unwrap();
-        assert_eq!(runs_a.len(), 2);
-        assert_eq!(runs_a[0].started_at, 200, "新在前");
-        assert_eq!(runs_a[1].outcome, Outcome::Skipped);
-        assert_eq!(runs_a[1].finished_at, Some(100));
-        assert!(
-            runs_a[1]
-                .result_json
-                .as_deref()
-                .unwrap()
-                .contains("错过触发窗口")
-        );
+        assert_eq!(runs_a.len(), 1, "skipped 历史行被过滤");
+        assert_eq!(runs_a[0].started_at, 200);
 
         let all = tasks.list_runs(None, -1).unwrap();
-        assert_eq!(all.len(), 3);
-        assert_eq!(all[0].def_id, "a", "跨任务按 started_at 倒序");
-        assert_eq!(all[2].def_id, "b");
+        assert_eq!(all.len(), 1, "跨任务查询同样过滤");
+        assert_eq!(all[0].def_id, "a");
         assert_eq!(tasks.list_runs(None, 1).unwrap().len(), 1, "limit 截断");
-        assert_eq!(tasks.list_runs(Some("b"), -1).unwrap().len(), 1);
+        assert!(tasks.list_runs(Some("b"), -1).unwrap().is_empty());
+
+        // last_run 同口径：上次「真实执行」
+        assert_eq!(tasks.last_run("a").unwrap().unwrap().outcome, Outcome::Ok);
+        assert!(tasks.last_run("b").unwrap().is_none());
     }
 
     #[test]
