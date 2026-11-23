@@ -11,6 +11,12 @@
 //!   `pending_ext_sources`：下一轮 `send_input` 空闲发送前重绑
 //!   （`--session` 复接不丢消息）——连点 N 项也只重绑一次，且运行中
 //!   不掐轮（pi 的 RPC 没有运行时换包命令，重绑是唯一通路）。
+//!
+//! **两个宿主**（按 `content_view` 分流，2026-11-23）：会话区如上写
+//! runtime + 台账；**046 任务页嵌入态**写任务表单 `tasks.page.extensions`
+//! （随【保存】进任务 spec，派发时按它挂载）——不碰背后会话。此前任务页
+//! 勾选落的是背后会话的清单，任务自己不存，重开详情回落全局启用集
+//! （beads pi-flash-jt44）。
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
@@ -61,7 +67,25 @@ impl Chat {
     /// 「新会话创建」时复制成会话初始清单（`SessionRuntime::new`），菜单
     /// 不再并回全局集——否则取消的勾在重开时被全局集顶回去（回显 bug）。
     pub(crate) fn open_pi_extension_picker(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.rt().read(cx).tool_preset_key() != "custom" {
+        // 守卫 + 种子按宿主分流：任务页嵌入态读任务表单（档位 = 表单 tools、
+        // 种子 = 任务清单，None = 全局启用集，读启动缓存不走盘），会话区读
+        // runtime
+        let task_form = self.layout.content_view == crate::ContentView::Tasks;
+        let (is_custom, seed) = if task_form {
+            (
+                self.tasks.page.tools == "custom",
+                match &self.tasks.page.extensions {
+                    Some(list) => list.clone(),
+                    None => {
+                        pi_link::skills::enabled_sources_in_packages(&self.pool.globals.packages)
+                    }
+                },
+            )
+        } else {
+            let r = self.rt().read(cx);
+            (r.tool_preset_key() == "custom", r.ext_sources.clone())
+        };
+        if !is_custom {
             self.dlg.pill_menu = None;
             self.set_status(
                 crate::i18n::tr("extensions.only_full_preset").to_string(),
@@ -69,7 +93,6 @@ impl Chat {
             );
             return;
         }
-        let seed = self.rt().read(cx).ext_sources.clone();
         self.dlg.pill_menu = None;
         self.dlg.pi_extension_picker = Some(PiExtensionPicker::new(seed));
         cx.notify();
@@ -94,28 +117,23 @@ impl Chat {
         cx.notify();
     }
 
-    /// 勾选即生效：把当前勾选集写入 runtime（按钮计数实时变）并落台账。
-    /// 重绑时机 = 下一轮 `send_input` 空闲发送前（见模块注释）。
+    /// 勾选即生效：把当前勾选集写入宿主（按钮计数实时变）。会话区另落
+    /// 台账，重绑时机 = 下一轮 `send_input` 空闲发送前（见模块注释）。
     fn apply_ext_selection(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(picker) = self.dlg.pi_extension_picker.as_ref() else {
             return;
         };
-        // 宇宙序 = 全局 → 项目，去重（同一来源出现在两个 scope 时 `-e` 只发一次），
-        // 再按展示名排序，与面板呈现一致
-        let mut sources: Vec<String> = Vec::new();
-        for v in self
-            .cfg
-            .mc_pkgs_global
-            .iter()
-            .chain(self.cfg.mc_pkgs_project.iter())
-        {
-            let src = pi_link::skills::entry_source(v);
-            if src.is_empty() || !picker.pending.contains(&src) || sources.contains(&src) {
-                continue;
-            }
-            sources.push(src);
+        let sources = picked_sources(
+            &self.cfg.mc_pkgs_global,
+            &self.cfg.mc_pkgs_project,
+            &picker.pending,
+        );
+        if self.layout.content_view == crate::ContentView::Tasks {
+            // 任务页嵌入态：清单落任务表单（随【保存】进 spec）——不碰会话
+            // runtime、不写 session-ext.json（那是背后会话的台账）
+            self.tasks.page.extensions = Some(sources);
+            return;
         }
-        sources.sort_by_key(|s| pi_link::skills::display_source(s).to_lowercase());
         let rt = self.rt();
         let key = rt.read(cx).key.clone();
         rt.update(cx, |r, _| {
@@ -140,6 +158,26 @@ impl Chat {
             self.set_status(crate::i18n::tr("extensions.list_next_turn").to_string(), cx);
         }
     }
+}
+
+/// 勾选集 → 有序去重的源清单（会话区/任务页两个宿主共用）：宇宙序 =
+/// 全局 → 项目，去重（同一来源出现在两个 scope 时 `-e` 只发一次），再按
+/// 展示名排序，与面板呈现一致；不在宇宙里的勾选（已卸载的包）不落。
+pub(crate) fn picked_sources(
+    global: &[serde_json::Value],
+    project: &[serde_json::Value],
+    pending: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut sources: Vec<String> = Vec::new();
+    for v in global.iter().chain(project.iter()) {
+        let src = pi_link::skills::entry_source_str(v);
+        if src.is_empty() || !pending.contains(src) || sources.iter().any(|s| s == src) {
+            continue;
+        }
+        sources.push(src.to_string());
+    }
+    sources.sort_by_key(|s| pi_link::skills::display_source(s).to_lowercase());
+    sources
 }
 
 /// 面板元素（`None` = 没开）。挂在 app root 上，锚点同工具胶囊菜单。
@@ -348,4 +386,52 @@ pub(crate) fn plugin_row(
 
 fn tag(label: &str, bg: gpui::Hsla, fg: gpui::Hsla) -> AnyElement {
     crate::ui::kit::tag(label, bg, fg)
+}
+
+#[cfg(test)]
+mod picked_sources_tests {
+    use super::picked_sources;
+    use serde_json::json;
+    use std::collections::HashSet;
+
+    fn set(list: &[&str]) -> HashSet<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn strs(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn universe_order_dedupe_then_sorted_by_display_name() {
+        let global = [json!("npm:zeta"), json!({"source": "npm:alpha"})];
+        let project = [
+            json!("npm:alpha"),
+            json!({"source": "", "extensions": []}),
+            json!("npm:mid"),
+        ];
+        // 同一来源跨 scope 只发一次；空 source 跳过；按展示名（去 npm:）排序
+        assert_eq!(
+            picked_sources(
+                &global,
+                &project,
+                &set(&["npm:zeta", "npm:alpha", "npm:mid"])
+            ),
+            strs(&["npm:alpha", "npm:mid", "npm:zeta"])
+        );
+    }
+
+    #[test]
+    fn unchecked_and_unlisted_sources_are_dropped() {
+        let global = [json!("npm:a"), json!("npm:b")];
+        // 未勾选不落；勾了但不在宇宙（已卸载的包）也不落——勾选集只是种子快照
+        assert_eq!(
+            picked_sources(&global, &[], &set(&["npm:b", "npm:gone"])),
+            strs(&["npm:b"])
+        );
+        assert!(
+            picked_sources(&global, &[], &set(&[])).is_empty(),
+            "全不勾 = 空清单（合法）"
+        );
+    }
 }

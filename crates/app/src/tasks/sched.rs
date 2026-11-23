@@ -347,6 +347,7 @@ mod tests {
                 tools: "default".into(),
                 model: None,
                 thinking: "auto".into(),
+                extensions: None,
             }),
             script: None,
         }

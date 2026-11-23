@@ -4,6 +4,43 @@
 > 与 `docs/agents/*.md`。`待复验` 条目 = 当前待跑的手工清单。2026-11-11 全文压缩：过程
 > 叙事与返工史删去，需要时查 git 历史。
 
+## 待复验（2026-11-23 修复）——046 任务页扩展清单不落任务 spec：勾到只剩 web-access 保存后，重开详情又变回全局 4 个
+
+- 现象：任务页【指令】区把扩展勾到只剩 web-access 并保存，每次点开该任务
+  详情，plug 计数回【4】（= 设置页全局启用的 4 个包）。
+- 根因：任务页【指令】= 嵌入的真 InputPanel（2026-11-17 拍板），工具档/
+  思考/模型三样菜单有 task_form 分支（写 tasks.page），**扩展这一路没有**
+  ——`plugin_button` / `open_pi_extension_picker` / `apply_ext_selection` 全走
+  `self.rt()`，读写的是背后那个会话 runtime 的 `ext_sources` +
+  session-ext.json。`AgentSpec` 无扩展字段，spec 只存下 `tools=custom`；
+  派发时 fresh runtime 回落全局启用集（run.rs 注「v1 不做每任务配方」）。
+  副作用：在任务页勾扩展会静默改掉背后会话的扩展集。
+- 修法（beads pi-flash-jt44）：
+  1. `AgentSpec.extensions: Option<Vec<String>>`（`#[serde(default)]`：
+     存量 spec = None 沿用全局启用集；Some = 每任务配方，空表合法；空串
+     条目拒写）；
+  2. `TaskPage` / `FormSnap` / `build_spec` 带清单（勾选即 dirty，保存钮
+     亮）。任务页嵌入态 plug 按钮读表单档位 + 计数（`tasks::ext_count`，
+     读启动缓存 `globals.packages`，零分配不走盘）；勾选面板种子 = 任务
+     清单，写入 `tasks.page.extensions`，不碰会话 runtime / 台账；
+  3. 派发 `dispatch_ext_sources`：Some = 任务清单 + 写台账 draft 键（bind
+     迁会话键，任务会话日后再打开仍按当时配方挂载）；None = 全局启用集；
+     两种都先清 draft 键残留（`draft-N` 序号跨实例复用，上一实例同名草稿
+     的自选清单会被 `SessionRuntime::new` 当初始清单读入）；
+  4. 自动化：`session.tools_preset` 任务页分支改写表单（原直调会改背后
+     会话）；快照 `dialogs.tasks` 增 `tools/ext/ext_count`、
+     `app.plugin_menu` 增 `count`。
+- 验证：pf-context 61 / pi-link 300 / app（tasks+picker 过滤）27 全绿；
+  pif-ui 隔离实例端到端（`test/046-自动任务/ui.md` 执行记录 10）：勾到
+  只剩 web-access → 背后会话仍 4 条、不写台账 → 保存后库内
+  `extensions=["npm:pi-web-access"]` → 新建再重选仍 1 → 旧格式 spec
+  加载 = null / 4 → 重启后仍 1。**真机待复验**：任务实际运行时会话只挂
+  web-access（本轮未触发真实运行，派发清单由单测固化）。
+- 已知限制：勾选面板宇宙 = 全局 + **当前打开项目**的包（任务选了别的项目
+  时，那个项目的项目级包不出现在面板）；修复前保存的存量任务扩展选择
+  从未落库，需在任务页重勾一次并保存；台账不表达「显式空表」（任务再开
+  的会话回落全局集，运行期以 spec 为准）。
+
 ## 待复验（2026-11-22 修复）——046 任务列表行尾动作钮显影失效：icon 恒不可见（tip/点击正常）
 
 - 现象：hover 任务列表行，「立即运行」tip 正常弹出、22px 动作钮可点击

@@ -167,6 +167,8 @@ fn spawn_agent_turn(
     // 新会话复用逻辑捡走任务 draft；FileBound 清掉用户同 cwd 草稿
     let key = format!("draft-{}", chat.pool.draft_seq);
     chat.pool.draft_seq += 1;
+    // 扩展清单先于 runtime 定稿（含台账 draft 键对齐，见 dispatch_ext_sources）
+    let ext_sources = dispatch_ext_sources(a.extensions.as_deref(), &key);
     let rt = cx.new(|_| {
         let mut r = SessionRuntime::new(key.clone(), cwd.clone(), None);
         r.task_owned = true;
@@ -182,9 +184,12 @@ fn spawn_agent_turn(
         if a.thinking != "auto" {
             r.thinking_override = Some(a.thinking.clone());
         }
-        // tools 档位：spawn 期 CLI flags 生效（034 档位键；custom = 沿用
-        // 会话级配方，fresh runtime 无自选扩展 = full，v1 不做每任务配方）
+        // tools 档位：spawn 期 CLI flags 生效（034 档位键）。full+（custom）
+        // 档的扩展集 = 任务 spec 的 extensions（每任务配方，2026-11-23；
+        // 此前「沿用会话级配方」= fresh runtime 回落全局启用集，任务页勾的
+        // 清单从来到不了这里——beads pi-flash-jt44）
         r.tools_preset = a.tools.clone();
+        r.ext_sources = ext_sources;
         r.status = "任务运行中".into();
         r
     });
@@ -215,6 +220,53 @@ fn spawn_agent_turn(
         r.send_input(cx);
     });
     Ok(())
+}
+
+/// 派发入口：按任务 spec 定稿本次运行的扩展清单（full+ 档 `-e` 源）。
+fn dispatch_ext_sources(extensions: Option<&[String]>, key: &str) -> Vec<String> {
+    dispatch_ext_sources_in(
+        extensions,
+        key,
+        pi_link::session_ext::store_path().as_deref(),
+        pi_link::skills::enabled_package_sources,
+    )
+}
+
+/// 派发时刻定稿任务的扩展清单，返回值落 `SessionRuntime::ext_sources`：
+///
+/// - `Some(list)` = 任务专属配方：原样用，并写入台账 draft 键——会话绑
+///   文件后 `on_file_bound` 把条目迁到会话文件键，任务会话日后再打开仍按
+///   当时配方挂载（否则回落全局集，与 jt44 同类的「配置不跟身」）；
+/// - `None` = 沿用全局启用集（`inherit`），与新会话创建同一条回落。
+///
+/// 两种情况都**清掉 draft 键上的残留**：fresh runtime 的 key 是 `draft-N`，
+/// 序号跨实例复用，台账里可能留着上一实例同名草稿的自选清单——
+/// `SessionRuntime::new` 会把它当本任务的初始清单读进来（任务扩展集
+/// 串味）。键是本实例刚铸的，名下不可能有本实例写的合法挂载条目，整条
+/// 覆写/删除即可。空表落台账 = 无条目（台账表达的固有限制）：运行期以
+/// 返回值为准（一个扩展都不挂）。
+///
+/// 纯内核（`store` / `inherit` 显式注入，便于断言）。
+fn dispatch_ext_sources_in(
+    extensions: Option<&[String]>,
+    key: &str,
+    store: Option<&Path>,
+    inherit: impl FnOnce() -> Vec<String>,
+) -> Vec<String> {
+    match extensions {
+        Some(list) => {
+            if let Some(store) = store {
+                let _ = pi_link::session_ext::write_for(store, key, list);
+            }
+            list.to_vec()
+        }
+        None => {
+            if let Some(store) = store {
+                let _ = pi_link::session_ext::remove_for(store, key);
+            }
+            inherit()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -559,5 +611,55 @@ mod tests {
     fn unsupported_ext_has_no_plan() {
         assert!(services::script_exec::spawn_plan(Path::new("readme.txt"), None).is_none());
         assert!(services::script_exec::spawn_plan(Path::new("noext"), None).is_none());
+    }
+
+    /// 派发扩展清单：任务专属配方原样返回 + 落台账 draft 键；None = 沿用
+    /// 全局启用集。两种情况都清掉 draft 键残留——上一实例同名草稿的自选
+    /// 清单不得串进本任务（pi-flash-jt44）
+    #[test]
+    fn dispatch_ext_sources_pins_task_list_and_clears_stale_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("session-ext.json");
+        let key = "draft-3";
+        let inherit = || vec!["npm:global".to_string()];
+
+        // 上一实例留下的同名草稿自选清单（残留）
+        pi_link::session_ext::write_for(&store, key, &["npm:stale".to_string()]).unwrap();
+        assert_eq!(
+            dispatch_ext_sources_in(None, key, Some(&store), inherit),
+            vec!["npm:global".to_string()],
+            "None = 全局启用集，不读残留"
+        );
+        assert!(
+            pi_link::session_ext::read_for(&store, key).is_empty(),
+            "残留已清"
+        );
+
+        // 任务专属配方：原样 + 落台账（bind 时随身份迁到会话文件键）
+        let list = vec!["npm:pi-web-access".to_string()];
+        assert_eq!(
+            dispatch_ext_sources_in(Some(&list), key, Some(&store), inherit),
+            list
+        );
+        assert_eq!(pi_link::session_ext::read_for(&store, key), list);
+
+        // 残留再落一次：任务配方整条覆写，不与残留合并
+        pi_link::session_ext::write_for(&store, key, &["npm:stale".to_string()]).unwrap();
+        dispatch_ext_sources_in(Some(&list), key, Some(&store), inherit);
+        assert_eq!(pi_link::session_ext::read_for(&store, key), list);
+
+        // 空表 = 一个扩展都不挂（返回值为准；台账无条目是台账的固有表达）
+        assert!(dispatch_ext_sources_in(Some(&[]), key, Some(&store), inherit).is_empty());
+        assert!(pi_link::session_ext::read_for(&store, key).is_empty());
+
+        // 无台账（数据目录不可用）：清单仍以任务 spec / 全局集为准
+        assert_eq!(
+            dispatch_ext_sources_in(Some(&list), key, None, inherit),
+            list
+        );
+        assert_eq!(
+            dispatch_ext_sources_in(None, key, None, inherit),
+            vec!["npm:global".to_string()]
+        );
     }
 }

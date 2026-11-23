@@ -96,6 +96,11 @@ pub(crate) struct TaskPage {
     pub month_day: u32,
     pub project: Option<PathBuf>,
     pub tools: &'static str,
+    /// full+ 档扩展清单（plug 按钮/勾选面板读写）：None = 沿用全局启用集
+    /// （新建默认 / 存量任务）；Some = 任务专属配方，随【保存】进 spec。
+    /// 2026-11-23 修：此前任务页勾选写的是背后会话的 ext_sources，任务
+    /// 自己不存，重开详情回落全局集（beads pi-flash-jt44）。
+    pub extensions: Option<Vec<String>>,
     pub model: Option<(String, String)>,
     pub thinking: &'static str,
     pub script_path: Option<PathBuf>,
@@ -382,6 +387,7 @@ impl Chat {
                     .find(|k| **k == a.tools)
                     .copied()
                     .unwrap_or("default");
+                page.extensions = a.extensions.clone();
                 page.model = a.model.clone();
                 page.thinking = pf_context::domain::tasks::THINKING_LEVELS
                     .iter()
@@ -418,6 +424,7 @@ impl Chat {
         page.month_day = 1;
         page.project = proj;
         page.tools = "full";
+        page.extensions = None;
         page.model = None;
         page.thinking = "auto";
         page.script_path = None;
@@ -455,6 +462,7 @@ impl Chat {
             month_day: page.month_day,
             project: page.project.clone(),
             tools: page.tools,
+            extensions: page.extensions.clone(),
             model: page.model.clone(),
             thinking: page.thinking,
             script_path: page.script_path.clone(),
@@ -463,7 +471,9 @@ impl Chat {
 
     /// 保存钮可点判据（2026-11-22 用户令）：内容相对载入/新建/上次保存的
     /// 基线有改动 **且** 能装配出合法 spec。form_head 每帧读一次——快照
-    /// = 14 个小字段 PartialEq + 一次名称输入读值，µs 级，热路径无碍。
+    /// = 15 个小字段 PartialEq + 一次名称输入读值，µs 级，热路径无碍
+    /// （扩展清单的深拷贝实测 4 条 ≈ 1.2µs/次——debug 测试二进制上的
+    /// 上界，与同函数已有的指令文本克隆同量级，`[perf]` 计时 2026-11-23）。
     pub(crate) fn task_form_savable(&self, cx: &Context<Self>) -> bool {
         let snap = self.form_snap(cx);
         let dirty = self.tasks.page.origin.as_ref() != Some(&snap);
@@ -633,6 +643,7 @@ pub(crate) struct FormSnap {
     month_day: u32,
     project: Option<PathBuf>,
     tools: &'static str,
+    extensions: Option<Vec<String>>,
     model: Option<(String, String)>,
     thinking: &'static str,
     script_path: Option<PathBuf>,
@@ -641,6 +652,16 @@ pub(crate) struct FormSnap {
 /// 间隔档（§1.3 下拉清单；HTML cmin 菜单同源）。
 pub(crate) const INTERVALS: [u32; 10] = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
 
+/// 任务页嵌入态 plug 按钮的扩展计数（渲染每帧读，零分配）：`Some` = 任务
+/// 专属清单长度；`None` = 全局启用集条数——读启动缓存 `globals.packages`
+/// 不走盘，口径与 [`pi_link::skills::enabled_package_sources`] 同源。
+pub(crate) fn ext_count(extensions: &Option<Vec<String>>, packages: &[serde_json::Value]) -> usize {
+    match extensions {
+        Some(list) => list.len(),
+        None => pi_link::skills::count_enabled_sources_in_packages(packages),
+    }
+}
+
 fn dummy_agent() -> pf_context::domain::tasks::AgentSpec {
     pf_context::domain::tasks::AgentSpec {
         prompt: String::new(),
@@ -648,6 +669,7 @@ fn dummy_agent() -> pf_context::domain::tasks::AgentSpec {
         tools: "default".into(),
         model: None,
         thinking: "auto".into(),
+        extensions: None,
     }
 }
 
@@ -686,6 +708,7 @@ fn build_spec(s: &FormSnap) -> Option<TaskSpec> {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 tools: s.tools.to_string(),
+                extensions: s.extensions.clone(),
                 model: s.model.clone(),
                 thinking: s.thinking.to_string(),
             }),
@@ -715,4 +738,68 @@ pub(crate) fn set_task_form_project(c: &mut Chat, path: PathBuf, cx: &mut gpui::
 /// 任务表单的目录选择（键盘 Enter / 【打开文件夹】行路由）。
 pub(crate) fn pick_task_project_folder(c: &mut Chat, cx: &mut gpui::Context<Chat>) {
     c.pick_project_folder_for_task(cx);
+}
+
+#[cfg(test)]
+mod form_spec_tests {
+    use super::*;
+
+    fn snap(extensions: Option<Vec<String>>) -> FormSnap {
+        FormSnap {
+            name: "日报".into(),
+            desc: "写日报".into(),
+            kind_agent: true,
+            unit_ix: 2,
+            interval_ix: 0,
+            hour: 9,
+            minute: 0,
+            weekdays: [false; 7],
+            month_day: 1,
+            project: Some(PathBuf::from(r"D:\work\demo")),
+            tools: "custom",
+            extensions,
+            model: None,
+            thinking: "auto",
+            script_path: None,
+        }
+    }
+
+    /// 表单快照 → spec 的扩展清单零漂移：None（沿用全局）/ 显式清单 / 空表
+    /// （一个扩展都不挂）三态互不串味——派发侧按这三态分流挂载
+    #[test]
+    fn build_spec_carries_extensions_verbatim() {
+        let one = || Some(vec!["npm:pi-web-access".to_string()]);
+        for (input, want) in [
+            (None, None),
+            (one(), one()),
+            (Some(Vec::new()), Some(Vec::new())),
+        ] {
+            let spec = build_spec(&snap(input)).unwrap();
+            assert!(spec.validate().is_ok(), "三态均为合法 spec");
+            assert_eq!(spec.agent.unwrap().extensions, want);
+        }
+    }
+
+    /// plug 计数：Some = 清单长度（空表显 [0]）；None = 全局启用集条数，
+    /// 口径同 enabled_package_sources（禁用条目/空 source 不计）
+    #[test]
+    fn ext_count_reads_list_or_global_enabled() {
+        let pkgs = serde_json::json!([
+            "npm:pi-on",
+            {"source": "npm:pi-off", "extensions": [], "skills": [], "prompts": [], "themes": []},
+            {"source": "npm:pi-filtered", "extensions": ["a.ts"]},
+            {"source": "", "extensions": []}
+        ])
+        .as_array()
+        .cloned()
+        .unwrap();
+        assert_eq!(ext_count(&None, &pkgs), 2, "None = 全局启用集");
+        assert_eq!(
+            ext_count(&Some(vec!["npm:a".into(), "npm:b".into()]), &pkgs),
+            2,
+            "Some = 清单长度"
+        );
+        assert_eq!(ext_count(&Some(Vec::new()), &pkgs), 0, "空表显 [0]");
+        assert_eq!(ext_count(&None, &[]), 0);
+    }
 }

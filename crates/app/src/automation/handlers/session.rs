@@ -105,6 +105,18 @@ pub(super) fn dispatch(
                 .ok_or_else(|| {
                     bad("需要 {\"preset\": \"full|custom|default|read-only|chat-only\"}")
                 })?;
+            // 046 任务页嵌入态：与工具胶囊菜单行同一条分派（pill.rs 的
+            // task_form 分支）——写任务表单字段，不动背后会话的 runtime
+            if chat.layout.content_view == crate::ContentView::Tasks {
+                let key = pf_context::domain::tasks::TOOLS_PRESETS
+                    .iter()
+                    .find(|k| **k == preset)
+                    .copied()
+                    .ok_or_else(|| bad("未知 preset"))?;
+                chat.tasks.page.tools = key;
+                cx.notify();
+                return ok();
+            }
             chat.mc_set_tools_preset(preset, cx);
             ok()
         }

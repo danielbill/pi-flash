@@ -295,3 +295,54 @@ RESULT: fail=0。
   `down`+sleep 0.1+`up` 后焦点才迁移。按钮/seg 等非焦点类用 click 正常；
 - bash printf 写 `--params-file` JSON：`\a` 类转义会被 printf 吃掉（
   "ctrl-a" 变非法 JSON）——用 python `json.dumps` 写文件。
+
+## 执行记录 10（2026-11-23 任务页扩展清单落任务 spec：pi-flash-jt44）
+
+用户报障：任务页把扩展勾到只剩 web-access 并保存，每次点开该任务详情 plug
+又回【4】（= 设置页全局启用的 4 个包）。根因 = 嵌入 InputPanel 的**扩展这
+一路**没有 task_form 分支（执行记录 7 当时口径「ext = 会话清单」）：
+plug 按钮 / `open_pi_extension_picker` / `apply_ext_selection` 全走
+`self.rt()`，读写的是背后会话；`AgentSpec` 无扩展字段，spec 只存下
+`tools=custom`。修：spec 增 `agent.extensions`（null = 沿用全局启用集）+
+表单 / 面板 / 派发三处接任务清单（`docs/buglist.md` 同日条目）。
+
+单实例两轮（同 `PI_FLASH_DIR`，`tmp/ui-test-jt44`，中间 `app.quit` 重启）；
+逻辑窗口 1707×912（shot 2560×1368，scale 1.5）。**不触发真实任务运行**
+（不点【立即运行】，零模型额度）——派发清单由单测
+`dispatch_ext_sources_pins_task_list_and_clears_stale_draft` 固化。
+
+```
+✓ 基线：背后会话 ext_sources = 4（web-access / pi-usage /
+  rpiv-ask-user-question / billion-context）；session 视图
+  plugin_menu {available:true, count:4}
+✓ tasks.open 新建态：tools=full → plug 置灰 plugin_menu.available=false，
+  ext=null ext_count=4（档位读表单——修前读背后会话，恒 true）
+✓ session.tools_preset custom（任务页分支）→ tools=custom、available=true、count=4
+✓ plugin_picker.open（任务页分支）→ 种子 = 全局启用集（pending_sources 4 条）
+✓ plugin_picker.toggle ×3（去 pi-usage / rpiv-ask-user-question /
+  billion-context）→ 表单 ext=["npm:pi-web-access"]、ext_count=1、
+  plugin_menu.count=1
+✓ 背后会话 ext_sources 仍 4 条；隔离目录无 session-ext.json（任务页不写台账）
+✓ 名称框 down/up (1300,71) + keys t、pif-ui type 指令 → 保存钮点亮 →
+  保存 (1664,70) → defs=1 sel 回填
+✓ 隔离库 context.db 直读：spec_json.agent.extensions=["npm:pi-web-access"]
+✓ 新建 (845,70) → 表单复位 tools=full / ext=null / count=4
+✓ 重选任务行 (500,115) → tools=custom、ext=["npm:pi-web-access"]、count=1   # 报障路径
+✓ 存量兼容：直插旧格式 spec（无 extensions 键，停用）→ 选中 ext=null、count=4
+✓ app.quit → 同目录重启 → tasks.open 首开选中该任务：ext=["npm:pi-web-access"]、
+  count=1、保存钮灰（无假 dirty）；截图 plug【1】
+✓ pf-context 61 / pi-link 300 / app（tasks+picker 过滤）27 全绿
+```
+
+RESULT: fail=0。
+
+陷阱回填（本轮新增）：
+
+- `ui.hit_probe` 的 `chain` 是**全量** hitbox 列表，不是该点命中链——按
+  `hovered == true` 过滤后取面积最小者，才是该点上的元素；
+- `wait --eq 2` 等数字值实测不成立（45s 超时，末帧快照里已是
+  `"defs":2`）——数字断言用 `snapshot + grep`，`wait` 只留给字符串/布尔；
+- `input.keys --arg keys=1` 这类纯数字键名被 `--arg` 按 JSON 数字解析，
+  到不了 handler（同上一条「单字符」陷阱，需 `--params-file`）；
+- `shot` 是物理像素：目测坐标 × (逻辑宽 1706.67 / 图宽) 才是逻辑坐标——
+  精确定位仍以 hit_probe 的 bounds 为准。

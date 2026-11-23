@@ -202,12 +202,26 @@ pub(super) fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>
         "terminals": chat.ws.terminals.len(),
         "active_terminal": chat.ws.active_terminal,
         // 031/040 full+ 档扩展面板：按钮可用性（full+ 档即可，勾选即生效）
-        "plugin_menu": {
-            "available": chat
-                .pool.runtimes
+        // + 计数。046 任务页嵌入态读任务表单（pi-flash-jt44 回归断言：清单
+        // 落任务 spec 后重开详情，available/count 与表单一致）
+        "plugin_menu": if chat.layout.content_view == crate::ContentView::Tasks {
+            json!({
+                "available": chat.tasks.page.tools == "custom",
+                "count": crate::tasks::ext_count(
+                    &chat.tasks.page.extensions,
+                    &chat.pool.globals.packages
+                ),
+            })
+        } else {
+            let r = chat
+                .pool
+                .runtimes
                 .get(&chat.pool.active_key)
-                .map(|rt| rt.read(cx).tool_preset_key() == "custom")
-                .unwrap_or(false),
+                .map(|rt| rt.read(cx));
+            json!({
+                "available": r.as_ref().is_some_and(|r| r.tool_preset_key() == "custom"),
+                "count": r.as_ref().map_or(0, |r| r.ext_sources.len()),
+            })
         },
         // 快照键沿用 pi-web 契约名 plugin_picker（Rust 标识符已改 pi_extension_picker）
         "plugin_picker": chat.dlg.pi_extension_picker.as_ref().map(|p| {

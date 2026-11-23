@@ -28,7 +28,15 @@ fn plugin_button(
 ) -> gpui::AnyElement {
     // 激活条件只有一个：**当前档是「full+」**（内部键 custom）。运行中也能
     // 点开勾选，清单在下一轮发送前重绑生效（pending_ext_sources 链路）。
-    let (is_custom, n, open) = {
+    // 046 任务页嵌入态：档位与计数读任务表单（清单落任务 spec，不碰背后
+    // 会话的 ext_sources——2026-11-23 修，此前读的是背后会话的档位/清单）
+    let (is_custom, n, open) = if chat.layout.content_view == crate::ContentView::Tasks {
+        (
+            chat.tasks.page.tools == "custom",
+            crate::tasks::ext_count(&chat.tasks.page.extensions, &chat.pool.globals.packages),
+            chat.dlg.pi_extension_picker.is_some(),
+        )
+    } else {
         let r = chat.rt().read(cx);
         (
             r.tool_preset_key() == "custom",

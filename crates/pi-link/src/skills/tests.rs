@@ -124,6 +124,32 @@ fn display_source_strips_npm_and_enabled_sources_filter_disabled() {
         enabled_package_sources_in(&base.join("settings.json")),
         vec!["npm:pi-on".to_string(), "npm:pi-filtered".to_string()]
     );
+    // 内存版与盘读版同口径（046 任务页渲染读启动缓存，不走盘）；计数版零分配
+    let pkgs = parse_lenient(&std::fs::read_to_string(base.join("settings.json")).unwrap())
+        .unwrap()["packages"]
+        .as_array()
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        enabled_sources_in_packages(&pkgs),
+        enabled_package_sources_in(&base.join("settings.json"))
+    );
+    assert_eq!(count_enabled_sources_in_packages(&pkgs), 2);
+    assert_eq!(enabled_sources_in_packages(&[]).len(), 0);
+    assert_eq!(count_enabled_sources_in_packages(&[]), 0);
+    // entry_source 与借用版同值（含非法形状：source 非字符串 / 非法类型）
+    for odd in [
+        serde_json::json!({"source": 7}),
+        serde_json::json!({"extensions": []}),
+        serde_json::json!([]),
+        serde_json::json!("npm:plain"),
+    ] {
+        assert_eq!(entry_source(&odd), entry_source_str(&odd).to_string());
+    }
+    assert_eq!(
+        entry_source_str(&serde_json::json!({"source": "npm:x"})),
+        "npm:x"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }
 

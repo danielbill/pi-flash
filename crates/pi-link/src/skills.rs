@@ -247,14 +247,15 @@ fn edit_frontmatter(text: &str, disable: bool) -> String {
 
 /// Packages (`packages` settings key) helpers for the plugins panel.
 pub fn entry_source(entry: &serde_json::Value) -> String {
+    entry_source_str(entry).to_string()
+}
+
+/// [`entry_source`] 的借用版（只读判定/计数用，不分配）。
+pub fn entry_source_str(entry: &serde_json::Value) -> &str {
     match entry {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Object(o) => o
-            .get("source")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        _ => String::new(),
+        serde_json::Value::String(s) => s.as_str(),
+        serde_json::Value::Object(o) => o.get("source").and_then(|v| v.as_str()).unwrap_or(""),
+        _ => "",
     }
 }
 
@@ -383,13 +384,29 @@ pub fn display_source(source: &str) -> &str {
 /// settings.json `packages` 里「启用中」的包来源（040：基础扩展集——
 /// custom 档挂载与勾选面板的持续生效底座；禁用 = 对象条目四数组置空）。
 pub fn enabled_package_sources_in(settings: &Path) -> Vec<String> {
-    crate::config::read_packages(settings)
-        .unwrap_or_default()
+    enabled_sources_in_packages(&crate::config::read_packages(settings).unwrap_or_default())
+}
+
+/// [`enabled_package_sources_in`] 的内存版：对已装载的 `packages` 数组过滤
+/// 启用项（渲染侧读启动缓存，不走盘）。
+pub fn enabled_sources_in_packages(packages: &[serde_json::Value]) -> Vec<String> {
+    packages
         .iter()
         .filter(|e| !entry_disabled(e))
-        .map(entry_source)
+        .map(|e| entry_source_str(e))
         .filter(|s| !s.is_empty())
+        .map(str::to_string)
         .collect()
+}
+
+/// [`enabled_sources_in_packages`] 的计数版（渲染热路径用：零分配）。
+pub fn count_enabled_sources_in_packages(packages: &[serde_json::Value]) -> usize {
+    packages
+        .iter()
+        .filter(|e| !entry_disabled(e))
+        .map(|e| entry_source_str(e))
+        .filter(|s| !s.is_empty())
+        .count()
 }
 
 /// [`enabled_package_sources_in`] at the real global settings.json.

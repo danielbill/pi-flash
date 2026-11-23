@@ -164,6 +164,11 @@ pub struct AgentSpec {
     pub model: Option<(String, String)>,
     /// 思考强度键（[`THINKING_LEVELS`] 之一）。
     pub thinking: String,
+    /// full+ 档（`tools = custom`）的任务专属扩展清单（`entry_source()` 源串
+    /// = spawn 的 `-e` 参数）。`None` = 沿用全局启用集（存量 spec 与没动过
+    /// 扩展菜单的任务）；`Some` = 每任务配方，空表合法（一个扩展都不挂）。
+    #[serde(default)]
+    pub extensions: Option<Vec<String>>,
 }
 
 /// 脚本任务业务字段（spec_json.script）。
@@ -242,6 +247,12 @@ impl TaskSpec {
                         a.thinking,
                         THINKING_LEVELS.join("/")
                     ));
+                }
+                if a.extensions
+                    .as_ref()
+                    .is_some_and(|l| l.iter().any(|s| s.trim().is_empty()))
+                {
+                    return Err("extensions 条目不能为空串".into());
                 }
             }
             TaskKind::Script => {
@@ -705,6 +716,7 @@ mod tests {
                 tools: "default".into(),
                 model: None,
                 thinking: "auto".into(),
+                extensions: None,
             }),
             script: None,
         }
@@ -755,6 +767,49 @@ mod tests {
         assert_eq!(parsed, spec);
         let parsed = TaskSpec::from_json(&spec_json(&script_spec())).unwrap();
         assert_eq!(parsed, script_spec());
+    }
+
+    #[test]
+    fn agent_extensions_roundtrip_and_legacy_default() {
+        // 每任务配方：显式清单（含空表 = 一个扩展都不挂）零漂移
+        let lists: [&[&str]; 2] = [&["npm:pi-web-access"], &[]];
+        for list in lists {
+            let mut spec = agent_spec("写日报");
+            let want: Vec<String> = list.iter().map(|s| s.to_string()).collect();
+            spec.agent.as_mut().unwrap().tools = "custom".into();
+            spec.agent.as_mut().unwrap().extensions = Some(want.clone());
+            let parsed = TaskSpec::from_json(&spec_json(&spec)).unwrap();
+            assert_eq!(parsed, spec);
+            assert_eq!(parsed.agent.unwrap().extensions, Some(want));
+        }
+        // 存量 spec（修复前落库，无 extensions 键）= None：沿用全局启用集
+        let legacy = r#"{"kind":"agent","schedule":{"unit":"daily","interval":1,"hour":8,"minute":30},
+                      "agent":{"prompt":"x","project":"p","tools":"custom","thinking":"auto"}}"#;
+        let parsed = TaskSpec::from_json(legacy).unwrap();
+        assert_eq!(parsed.agent.unwrap().extensions, None);
+    }
+
+    #[test]
+    fn agent_extensions_reject_blank_entry() {
+        let (_dir, db) = db();
+        let tasks = TaskStore::new(&db);
+        let mut spec = agent_spec("写日报");
+        spec.agent.as_mut().unwrap().tools = "custom".into();
+        spec.agent.as_mut().unwrap().extensions = Some(vec!["npm:a".into(), "  ".into()]);
+        assert!(
+            spec.validate().err().unwrap().contains("extensions"),
+            "空串条目拒"
+        );
+        let mut d = agent_def("t");
+        d.spec_json = spec_json(&spec);
+        assert!(tasks.create(&d).is_err(), "写库前拒绝");
+        assert!(tasks.list_defs().unwrap().is_empty());
+
+        spec.agent.as_mut().unwrap().extensions = Some(vec!["npm:a".into()]);
+        d.spec_json = spec_json(&spec);
+        tasks.create(&d).unwrap();
+        let got = TaskSpec::from_json(&tasks.get_def("t").unwrap().unwrap().spec_json).unwrap();
+        assert_eq!(got, spec, "落库读回清单一致");
     }
 
     #[test]
@@ -810,6 +865,7 @@ mod tests {
             tools: "default".into(),
             model: None,
             thinking: "auto".into(),
+            extensions: None,
         });
         assert!(s.validate().is_err(), "script + agent 同时携带应拒");
         // 业务字段内容

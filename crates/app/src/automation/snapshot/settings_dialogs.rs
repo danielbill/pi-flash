@@ -138,6 +138,15 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             "running": chat.tasks.running.len(),
             "runs": chat.tasks.runs.len(),
             "limit": pf_context::domain::tasks::TASK_CREATE_LIMIT,
+            // 嵌入态 InputPanel 的工具档 + 扩展清单（表单值；ext = null 表示
+            // 沿用全局启用集，ext_count = 生效条数）——pi-flash-jt44 回归
+            // 断言用：勾选 → 保存 → 重选该行，ext 与保存时一致
+            "tools": chat.tasks.page.tools,
+            "ext": chat.tasks.page.extensions,
+            "ext_count": crate::tasks::ext_count(
+                &chat.tasks.page.extensions,
+                &chat.pool.globals.packages,
+            ),
         })
     } else {
         serde_json::Value::Null
