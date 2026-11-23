@@ -33,8 +33,9 @@ use crate::ui::tooltip::WithTip;
 // ---------------------------------------------------------------------------
 
 /// 任务管理页主体（content.rs `ContentView::Tasks` 分支）。2026-11-22 用户
-/// 令再改版：左列表 100% 高 + 右列 = 上详情 / 1px 横线 / 下任务日志 50%
-/// （模型列表卡样式，只呈现选中任务）。
+/// 令再改版：左列表 100% 高 + 右列 = 上详情 / 1px 横线 / 下任务日志（模型
+/// 列表卡样式，只呈现选中任务；2026-11-23 用户令：日志高度随内容条数自
+/// 动调整、上限 360 统一模型列表，不再固定 50%）。
 pub(crate) fn page(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -503,13 +504,14 @@ fn tasks_detail(
     detail.into_any_element()
 }
 
-/// 右列下方任务日志区（2026-11-22 用户令再改版）：50% 高，模型列表卡样式
-/// （vlist 壳同款：rounded 6 + 1px 边框 + 行间 1px 分隔线，settings/models
-/// list.rs 同语言），只呈现选中任务的运行记录。行 = 结果点 + 任务名（**恒
-/// 正常色**——日志是已发生的历史，与任务启停态无关，2026-11-22 用户令：
-/// dim 只表无效/注释，日志不是注释）+ 右缘 mono 时间；Agent 任务行名可点
-/// = 开该次会话只读观察窗。未选中任务/无记录出空态。列表 = vlist 组件
-///（uniform_list + 滚动条 + 壳——滚动条不许再手滚丢）。
+/// 右列下方任务日志区（2026-11-22 用户令再改版；2026-11-23 用户令：高度
+/// 随内容条数自动调整——`Capped(360)` 统一模型列表口径，有几条展示几条，
+/// 超过上限出滚动，不再固定 50%）：模型列表卡样式（vlist 壳同款：rounded
+/// 6 + 1px 边框 + 行间内缩分隔线），只呈现选中任务的运行记录。行 = 结果
+/// 点 + 任务名（**恒正常色**——日志是已发生的历史，与任务启停态无关，
+/// 2026-11-22 用户令：dim 只表无效/注释，日志不是注释）+ 右缘 mono 时间；
+/// Agent 任务行名可点 = 开该次会话只读观察窗。未选中任务/无记录出空态。
+/// 列表 = vlist 组件（uniform_list + 滚动条 + 壳——滚动条不许再手滚丢）。
 fn run_log_panel(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -559,7 +561,8 @@ fn run_log_panel(
         "task-log-vlist",
         rows.len(),
         crate::ui::tokens::row::TASK,
-        crate::ui::vlist::VListHeight::Fill,
+        // 高度随内容条数、上限 360（2026-11-23 用户令：统一模型列表行为）
+        crate::ui::vlist::VListHeight::Capped(360.),
         true,
         true,
         empty_key,
@@ -635,7 +638,6 @@ fn run_log_panel(
 
     div()
         .id("task-log-panel")
-        .h(gpui::relative(0.5))
         .flex_none()
         .flex()
         .flex_col()
@@ -664,13 +666,11 @@ fn run_log_panel(
                         .child(SharedString::from(rows.len().to_string())),
                 ),
         )
-        // vlist 壳自带 rounded/border/滚动条：外层只留边距（mx 对齐详情
-        // px 15）
+        // vlist 壳自带 rounded/border/滚动条 + Capped 定高（内容条数，上限
+        // 360）：外层只留边距（mx 对齐详情 px 15）
         .child(
             div()
                 .id("task-log-list")
-                .flex_1()
-                .min_h_0()
                 .mx(px(15.))
                 .mb(px(12.))
                 .flex()
