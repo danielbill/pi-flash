@@ -8,12 +8,14 @@
 //! - **脚本任务**：独立子进程（不经内置终端），cwd = 脚本所在目录，
 //!   **30min 超时强杀**；输出尾 + exit code 写 result_json（§1.4 脚本行
 //!   620 弹窗消费）。
-//! - **立即运行**：[`Chat::task_run_now`]，trigger = manual——settle_job
-//!   对 manual 只写结果不动 next_run/锚点（不污染周期，ZCode
-//!   automationRepo.ts:666-751）；运行中再触发被 in-flight 守卫挡下。
+//! - **立即运行**：[`Chat::task_run_now`]，trigger = manual——manual 派发
+//!   不走 claim、不碰周期指针（「manual 不污染 cron 节奏」，ZCode
+//!   automationRepo.ts:666-751）；manual 占用中再撞 schedule 触发由 claim
+//!   撞车分支记一条 skip + 前推（tasks/sched.rs）。
 //!
 //! 两类执行体都经 oneshot 回报 [`JobOutcome`]，结算统一走 scheduler
-//! `spawn_settle` → TasksSource::settle → settle_job（单一路径）。
+//! `spawn_settle` → TasksSource::settle → settle_job（单一路径；只写结果
+//! 不碰调度指针——指针在 claim 认领即消费时已前推）。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -89,7 +91,8 @@ pub(crate) fn pending_key_for(chat: &Chat, def_id: &str) -> Option<String> {
 
 /// 派发一次运行：start_run 落台账（running）→ 按类型起执行体 → oneshot。
 /// 起执行体失败（目录/脚本不存在等）直接 Err——scheduler/run_now 的统一
-/// 失败路径会结算该 run（running 行在，settle_job 收口 + 周期推进）。
+/// 失败路径会结算该 run（running 行在，settle_job 收口；周期已由 claim
+/// 认领即消费前推，此处不再管调度）。
 pub(crate) fn dispatch(
     chat: &mut Chat,
     def_id: &str,

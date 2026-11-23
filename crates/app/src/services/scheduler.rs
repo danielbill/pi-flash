@@ -104,7 +104,7 @@ pub(crate) trait ScheduleSource: Send + Sync {
         chat: &mut Chat,
         cx: &mut gpui::Context<Chat>,
     ) -> Result<JobRx, String>;
-    /// 结算：写结果账 + 重排自己的调度指针。
+    /// 结算：写结果账（调度指针已由 claim 认领时消费前推，结算不碰）。
     fn settle(&self, job: DueJob, outcome: JobOutcome, now: i64);
 }
 

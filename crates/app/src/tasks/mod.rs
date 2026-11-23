@@ -222,9 +222,9 @@ impl scheduler::ScheduleSource for TasksSource {
     ) -> Result<scheduler::JobRx, String> {
         // 046-S3 执行链：agent 会话 / 脚本子进程（run.rs dispatch）。run 行
         // 落 started 于 dispatch 内；Err = 起执行体失败（run 行已由 dispatch
-        // 结算为 failed，这里把 Err 交回统一失败路径重排周期）。trigger 按
-        // 派发来源记账（2026-11-22 修：手动运行此前被误标 schedule，
-        // settle_job 的「manual 不动周期」分支因此永远走不到）。
+        // 结算为 failed，这里把 Err 交回统一失败路径结算收口——周期已由
+        // claim 认领即消费前推，settle 只写结果不碰指针）。trigger 按派发
+        // 来源记账（2026-11-22 修：手动运行此前被误标 schedule）。
         let trigger = if job.manual {
             Trigger::Manual
         } else {

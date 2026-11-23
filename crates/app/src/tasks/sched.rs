@@ -8,12 +8,16 @@
 //!   anchor 推进 k·interval **不对齐墙钟刻度**（11:46 建「每 10 分」不在
 //!   11:50 抢跑）；weekly 锚周取周一逐周扫 weekdays；monthly 过滤溢出日
 //!  （1/31 → 2 月无效）；hourly 只对齐 minute。恒返回**严格晚于 from** 的
-//!   候选（结算重算以当下为基准 → 恒给未来值，跑超一个周期也不产生追债）。
-//! - claim：due = enabled ∧ next_run_at ≤ now → in-flight 撞车落 skipped
-//!   run → misfire（5min 宽限内照跑，超出 skip 不补跑、next_run 前推下一
-//!   边界）→ 交调度泵派发。
-//! - settle：结算 running 台账行 + 重算 next_run（manual 不动周期——
-//!   「manual 不污染 cron 节奏」，ZCode automationRepo.ts:666-751）。
+//!   候选（认领前推以当下为基准 → 恒给未来值，跑超一个周期也不产生追债）。
+//! - claim：due = enabled ∧ next_run_at ≤ now → **认领即消费**（指针当场
+//!   前推到严格未来值；ZCode markDispatched 是「派发结算」而非运行完成
+//!   结算，automationRepo.ts:998-1050）→ in-flight 撞车 / misfire 超窗各
+//!   记**一条** skipped run（at = 计划触发时刻）+ 指针前推，一触发至多一
+//!   行账 → 交调度泵派发。
+//! - settle：只结算 running 台账行，**不碰调度指针**（2026-11-23 修：原
+//!   settle 重算使运行期每 tick 重复判定到期，每 tick 落一条 skip 刷屏
+//!   任务日志）。「manual 不污染 cron 节奏」由 manual 派发不走 claim 保证
+//!  （ZCode automationRepo.ts:666-751）。
 //! - recover：running 残留置 failed（app_exit 中断）+ 首轮 prune（046-0）。
 
 use std::collections::HashSet;
@@ -141,9 +145,10 @@ pub(crate) fn next_run_at(spec: &TaskSpec, anchor_at: i64, from: i64) -> Option<
 // claim / settle / recover（&TaskStore 界面）
 // ---------------------------------------------------------------------------
 
-/// 认领到期作业（046-0 claim 流程）：
-/// due（enabled ∧ next_run_at ≤ now）→ in-flight 撞车落 skipped run →
-/// misfire 判定（超 5min 宽限 skip 不补跑、next_run 前推）→ 返回可派发作业。
+/// 认领到期作业（046-0 claim 流程，2026-11-23 重构「认领即消费」）：
+/// due（enabled ∧ next_run_at ≤ now）→ spec 解析失败入休眠 → in-flight
+/// 撞车 / misfire 超窗各落一条 skipped run + 指针前推 → 正常认领当场把
+/// 指针前推到严格未来值再交派发（派发失败/崩溃都不会重复触发）。
 pub(crate) fn claim_due(
     store: &TaskStore<'_>,
     now: i64,
@@ -162,9 +167,20 @@ pub(crate) fn claim_due(
             Some(t) if t <= now => t,
             _ => continue, // 未到期 / 未排期
         };
-        // 运行中再触发 → 落 skipped run 不派发（§1.5 双保险之泵侧）
+        let Ok(spec) = TaskSpec::from_json(&def.spec_json) else {
+            // 数据异常防刷屏：指针清空入休眠（否则每 tick 重触发反复落账）
+            tasks_err(&format!("claim: task={} spec 解析失败，入休眠", def.id));
+            let _ = store.reschedule(&def.id, None, None);
+            continue;
+        };
+        let anchor = def.anchor_at.unwrap_or(next);
+        // 运行中再触发（manual 占用 / 上轮超期压格）→ 真实被挤掉的触发：
+        // 记一条 skipped（at = 计划触发时刻）+ 指针前推，与 misfire 同构。
+        // 一条 skip 行 ↔ 一个被消费的触发（原实现指针结算才推进，运行期每
+        // tick 重复判定到期 → 每 tick 落一条 skip，任务日志 14 条的根因）。
         if in_flight.contains(&def.id) {
-            skip_run(store, &def.id, now, "上一轮仍在运行");
+            skip_run(store, &def.id, next, "上一轮仍在运行");
+            advance_pointer(store, &def.id, &spec, anchor, now);
             continue;
         }
         // misfire：计划触发时刻早于 now-5min → 错过窗口，skip 不补跑
@@ -175,14 +191,13 @@ pub(crate) fn claim_due(
                 next,
                 "错过触发窗口（应用未运行期间），不补跑",
             );
-            // next_run 前推下一边界；锚点不动（防漂移）
-            if let Ok(spec) = TaskSpec::from_json(&def.spec_json) {
-                let anchor = def.anchor_at.unwrap_or(next);
-                let fwd = next_run_at(&spec, anchor, now);
-                let _ = store.reschedule(&def.id, fwd, Some(anchor));
-            }
+            advance_pointer(store, &def.id, &spec, anchor, now);
             continue;
         }
+        // 认领即消费：指针先推进，派发失败/崩溃也不会重复触发。崩溃落在
+        // 认领与 dispatch 落 run 行之间的 µs 窗口 = 丢一次运行不重复（两害
+        // 取其轻，原设计该窗口是重启后重复触发）。
+        advance_pointer(store, &def.id, &spec, anchor, now);
         jobs.push(DueJob {
             key: def.id,
             scheduled_at: next,
@@ -190,6 +205,12 @@ pub(crate) fn claim_due(
         });
     }
     jobs
+}
+
+/// 指针前推：以当下为基准从锚点网格取下一格（恒严格未来；锚点不动防漂移）。
+fn advance_pointer(store: &TaskStore<'_>, def_id: &str, spec: &TaskSpec, anchor: i64, now: i64) {
+    let fwd = next_run_at(spec, anchor, now);
+    let _ = store.reschedule(def_id, fwd, Some(anchor));
 }
 
 /// 落一条 skipped run（结果点 text_faint；hover 显示原因摘要）。
@@ -200,12 +221,11 @@ fn skip_run(store: &TaskStore<'_>, def_id: &str, at: i64, reason: &str) {
     }
 }
 
-/// 结算作业（046-0 settle 流程）：
-/// 1. 结算 running 台账行（整行 UPDATE；outcome 由 [`JobOutcome`] 映射：
-///    ok / timeout（细分键）/ failed）；
-/// 2. **manual 触发到此为止**——只写结果不动 next_run/锚点（不污染周期）；
-/// 3. schedule 触发重算 next_run：以结算时刻为基准恒给未来值，锚点原样
-///    保留（防漂移）。无 running 行（派发失败）也走到这，周期照常推进。
+/// 结算作业（046-0 settle 流程，2026-11-23 重构）：**只写结果不碰调度
+/// 指针**——认领即消费后指针恒指未来，settle 重算是「运行期每 tick 重复
+/// 到期」的根因；manual/schedule 之分只存于 run 行 trigger（start_run 落
+/// 行时已记账），结算语义两者一致。无 running 行（派发前置失败等）= 空转，
+/// 周期已由 claim 前推。
 pub(crate) fn settle_job(
     store: &TaskStore<'_>,
     def_id: &str,
@@ -220,17 +240,8 @@ pub(crate) fn settle_job(
             oc.as_str(),
             now - row.started_at
         ));
-        if row.trigger == Trigger::Manual {
-            return Ok(());
-        }
     }
-    let Some(def) = store.get_def(def_id)? else {
-        return Err(format!("任务不存在: {def_id}"));
-    };
-    let spec = TaskSpec::from_json(&def.spec_json)?;
-    let anchor = def.anchor_at.unwrap_or(now);
-    let next = next_run_at(&spec, anchor, now);
-    store.reschedule(def_id, next, Some(anchor))
+    Ok(())
 }
 
 /// JobOutcome → 台账 outcome（细分键 timeout → Timeout，余按 success）。
@@ -533,10 +544,25 @@ mod tests {
         let keys: Vec<&str> = jobs.iter().map(|j| j.key.as_str()).collect();
         assert_eq!(keys, vec!["due"], "只有宽限内到期且不撞车的进派发");
 
-        // busy：in-flight skip 落账（started_at = now）
+        // busy：in-flight skip 落账（at = 计划触发时刻）+ 指针前推
         let busy = store.last_run("busy").unwrap().unwrap();
         assert_eq!(busy.outcome, Outcome::Skipped);
-        assert_eq!(busy.started_at, now);
+        assert_eq!(busy.started_at, now - 60_000);
+        let busy_fwd =
+            next_run_at(&agent_def_spec(ScheduleUnit::Daily), now - 86_400_000, now).unwrap();
+        assert_eq!(
+            store.get_def("busy").unwrap().unwrap().next_run_at,
+            Some(busy_fwd)
+        );
+
+        // due：认领即消费——指针当场前推，且认领本身不落 run 行
+        let due_fwd =
+            next_run_at(&agent_def_spec(ScheduleUnit::Daily), now - 86_400_000, now).unwrap();
+        assert_eq!(
+            store.get_def("due").unwrap().unwrap().next_run_at,
+            Some(due_fwd)
+        );
+        assert!(store.last_run("due").unwrap().is_none(), "认领不落 run 行");
 
         // late：misfire skip 落账（started_at = 计划触发时刻）+ next_run 前推
         let late = store.last_run("late").unwrap().unwrap();
@@ -551,10 +577,79 @@ mod tests {
         );
     }
 
+    /// 回归（2026-11-23 用户令）：运行中的任务每 20s tick 不再刷 skipped
+    /// 行——认领即消费后指针恒指未来，运行期 claim 恒空转；台账只 1 行。
+    #[test]
+    fn running_task_ticks_do_not_spam_ledger() {
+        let (_dir, db) = db();
+        let store = TaskStore::new(&db);
+        let t0 = local_ms(2026, 2, 10, 12, 0);
+        let spec = mk_spec(ScheduleUnit::Minute, 20, 0, 0, vec![], 0);
+        make_def(&store, "t", &spec, Some(t0), Some(t0));
+
+        // tick1 认领派发：指针当场推进下一格（+20min）；run 行由 dispatch 落
+        let jobs = claim_due(&store, t0, &HashSet::new());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].scheduled_at, t0);
+        assert_eq!(
+            store.get_def("t").unwrap().unwrap().next_run_at,
+            Some(t0 + 20 * 60_000),
+            "认领即消费：指针前推到下一格"
+        );
+        store.start_run("t", Trigger::Schedule, t0, None).unwrap();
+
+        // 运行期每 20s tick：claim 空转零新增行（原实现每 tick 一条 skipped）
+        let inflight: HashSet<String> = ["t".to_string()].into();
+        for s in [20_000, 40_000, 60_000, 120_000] {
+            assert!(claim_due(&store, t0 + s, &inflight).is_empty());
+        }
+        assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
+
+        // 结算只写结果：仍 1 行，指针不动
+        settle_job(&store, "t", &JobOutcome::ok(None), t0 + 125_000).unwrap();
+        assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
+        assert_eq!(
+            store.get_def("t").unwrap().unwrap().next_run_at,
+            Some(t0 + 20 * 60_000)
+        );
+
+        // 下一格到期 → 正常进入下一轮
+        let jobs = claim_due(&store, t0 + 20 * 60_000 + 1_000, &HashSet::new());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].scheduled_at, t0 + 20 * 60_000);
+    }
+
+    /// in-flight 真实重叠（manual 占用 / 上轮超期压格）：一个被挤掉的触发
+    /// 只落一条 skipped（at = 计划触发时刻）+ 指针前推，后续 tick 零新增。
+    #[test]
+    fn in_flight_overlap_skips_once_and_forwards() {
+        let (_dir, db) = db();
+        let store = TaskStore::new(&db);
+        let now = local_ms(2026, 2, 10, 12, 0);
+        let anchor = local_ms(2026, 2, 10, 8, 0);
+        let spec = agent_def_spec(ScheduleUnit::Daily); // 每天 08:30
+        make_def(&store, "t", &spec, Some(now), Some(anchor));
+
+        let inflight: HashSet<String> = ["t".to_string()].into();
+        let jobs = claim_due(&store, now, &inflight);
+        assert!(jobs.is_empty());
+        let skip = store.last_run("t").unwrap().unwrap();
+        assert_eq!(skip.outcome, Outcome::Skipped);
+        assert_eq!(skip.started_at, now, "skip 行挂计划触发时刻");
+        let fwd = next_run_at(&spec, anchor, now).unwrap();
+        assert_eq!(store.get_def("t").unwrap().unwrap().next_run_at, Some(fwd));
+
+        // 后续 tick（仍在运行）：指针已前推，零新增行
+        for s in [20_000, 40_000] {
+            assert!(claim_due(&store, now + s, &inflight).is_empty());
+        }
+        assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
+    }
+
     // ---- settle ----
 
     #[test]
-    fn settle_writes_outcome_and_reschedules_from_anchor() {
+    fn settle_writes_outcome_and_never_touches_pointer() {
         let (_dir, db) = db();
         let store = TaskStore::new(&db);
         let now = local_ms(2026, 2, 10, 12, 0);
@@ -571,13 +666,10 @@ mod tests {
         assert_eq!(row.id, run);
         assert_eq!(row.outcome, Outcome::Ok);
         assert_eq!(row.finished_at, Some(now));
-        // 锚点保留防漂移：next = anchor 网格上严格晚于 now 的第一格
+        // settle 不碰指针：next_run 保持认领时前推的值（这里即建库值）
         let def = store.get_def("t").unwrap().unwrap();
+        assert_eq!(def.next_run_at, Some(anchor));
         assert_eq!(def.anchor_at, Some(anchor));
-        assert_eq!(
-            def.next_run_at.unwrap(),
-            next_run_at(&spec, anchor, now).unwrap()
-        );
     }
 
     #[test]
@@ -615,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn settle_without_running_row_still_advances_schedule() {
+    fn settle_without_running_row_is_noop() {
         let (_dir, db) = db();
         let store = TaskStore::new(&db);
         let now = local_ms(2026, 2, 10, 12, 0);
@@ -623,7 +715,8 @@ mod tests {
         let spec = agent_def_spec(ScheduleUnit::Daily);
         make_def(&store, "t", &spec, Some(now - 60_000), Some(anchor));
 
-        // 派发失败路径（无 running 行）：结果账无行，周期照常推进
+        // 派发前置失败路径（无 running 行）：settle 空转不落账；周期已由
+        // claim 认领时前推——这里不再兜底重排（防失败循环重触发）
         settle_job(
             &store,
             "t",
@@ -633,10 +726,7 @@ mod tests {
         .unwrap();
         assert!(store.last_run("t").unwrap().is_none());
         let def = store.get_def("t").unwrap().unwrap();
-        assert_eq!(
-            def.next_run_at.unwrap(),
-            next_run_at(&spec, anchor, now).unwrap()
-        );
+        assert_eq!(def.next_run_at, Some(now - 60_000), "settle 不碰指针");
     }
 
     #[test]
