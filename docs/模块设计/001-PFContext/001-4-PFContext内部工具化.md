@@ -26,7 +26,8 @@ pfctx_manager      pi.appendEntry(              120ms 泵 drain（Chat 上下文
   RPC 无运行时切换——041 §6）。
 - **传输**：自定义条目通道（subagent-settled 同款），entry_appended 实时推宿主。
 - **执行**：op 队列（`services/pfctx_ops.rs`，静态 Mutex<VecDeque>，pf-svc
-  同款先例）→ `startup/pumps.rs` 120ms 泵在 Chat 上下文逐 op 分发。
+  同款先例；soft cap 256，超限弃最旧一条并在 pfctx.log 留丢弃计数）→
+  `startup/pumps.rs` 120ms 泵在 Chat 上下文逐 op 分发。
 - **读**：query 直接读 `app-settings.json` 落盘态（与宿主内存合并窗口 ≤50ms）。
 - **规则**：外部直改文件只对纯快照项等效；带副作用项必须走本执行链。
 
@@ -65,10 +66,11 @@ pfctx_manager      pi.appendEntry(              120ms 泵 drain（Chat 上下文
 ## 5 开关（设置-更多【自我调试】）
 
 - 存储 = hub `agent.self_debug`（section `agent`，默认 **on**）。
-- on/off = spawn 门控（`client.rs` `mount_pfctx_manager`，`--tools` allowlist
-  同步点名）+ 切换时全池 pending + 空闲会话立即重绑（仿 `apply_subagent_switch`）
-  ——真注入/真移除；运行中会话推迟到下轮空闲。
-- read-only / chat-only 档不注入（allowlist 口径与 `agent` 工具一致）。
+- on/off = spawn 门控：`client.rs` `mount_pfctx_manager` 以 `-e` 挂扩展 +
+  `session/runtime/spawn.rs` 在 default/full 档的 `--tools` allowlist 同步点名
+  （read-only / chat-only 档不点名，口径与 `agent` 工具一致）；切换时全池
+  pending + 空闲会话立即重绑（仿 `apply_subagent_switch`）——真注入/真移除；
+  运行中会话推迟到下轮空闲。
 
 ## 6 观测
 

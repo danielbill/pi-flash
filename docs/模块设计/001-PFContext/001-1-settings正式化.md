@@ -77,7 +77,7 @@ PF 的设置文档为 `<PF数据目录>/app-settings.json`。**永不叫 `settin
 | `models` | default_provider, default_model | |
 | `updates` | auto_update | |
 | `shell` | autohide_icons, sound | |
-| `subagents` | subagent_capacity → `capacity`、subagent_enabled → `enabled`（新增 `max_depth`，恒 1） | 见 §4 |
+| `subagents` | subagent_capacity → `capacity`、subagent_enabled → `enabled`（新增 `max_depth`，恒 1） | 见 §5 |
 | `agent` | （无 v1 键，新增段） | `self_debug`，见 001-4 |
 
 读迁移：v2 section 存在则用 v2；否则读同名 v1 平铺键；两者都无 → `Default`。
@@ -121,8 +121,14 @@ pub trait Section: Default + Clone + Serialize + DeserializeOwned + Send + Sync 
 扩展读 `ext-context.json` 的 `subagents` 段（投影为准）；缺投影回退 legacy
 `agents/config.json` → 扩展 FALLBACK。详见 [001-2 §4/§8](001-2-跨进程投影.md)。
 
-## 7 验收（细则见 001-3）
+## 7 现行不变量
 
-- 未知键往返单测：手工塞 `"x_unknown": {"a": 1}`，一次 `set` 后仍在且逐字不变。
-- 拖 stepper 20 次只产生 1 次写盘（coalesce，日志 `[perf] settings.flush=…`）。
-- 冷启动 settings 读盘 1 次，`[perf] settings.load=<µs>` 进 pfctx.log。
+未知键/未知 section 写入前后逐字不变、连续 `set` 经 50ms coalesce 合并为一次
+写盘、冷启动只读盘一次——均由 `crates/pf-context` 单测钉住；`[perf]
+settings.load` / `settings.flush` 打点进 pfctx.log（`PI_FLASH_PERF=1` 门控）。
+
+## 8 参数目录（agent 设置面）
+
+agent 可设置项的参数目录（点路径 ↔ 宿主 setter 一一对应，扩展侧目录校验）在
+[001-4 §4](001-4-PFContext内部工具化.md)；目录与宿主 setter **双侧手工同步**，
+漂移表现为目录外拒绝（fail-safe）。

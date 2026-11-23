@@ -57,7 +57,7 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   extensions.rs session_ext.rs  扩展发现 / 会话级插件清单（031/034）
   agents.rs agents/ subagents.rs  Agent profile + 内置子代理 builtin/模块配置（044）/ 内置子代理扩展定位（044-3）
   agents/ pf_plugins/     内置子代理实现 + 模块配置（044）/ PF 插件目录扫描、安装/迁移/卸载（090-4）
-  drafts.rs hidden_sessions.rs  输入草稿持久化 / 隐藏会话
+  drafts.rs hidden_sessions.rs session_names.rs  输入草稿持久化 / 隐藏会话 / 会话名台账（session-names.json）
   model_ref.rs model_test.rs model_price/  模型引用 / 连通性测试 / 价格目录 models.dev
   pf_auth.rs pfctx_manager.rs service_ext.rs  PF 凭据 / pf-context 守护客户端（001）/ 服务端扩展清单
   dev_flags.rs paths.rs   dev-flags 开发旗标 / PF 自有文件路径（010）
@@ -65,14 +65,14 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   bin/                    附属可执行（pif-ui CLI、pif-secret 取 key、pi 全局前置 shim、token-count/probe-sample 统计探查）
 
 crates/app/src/         GPUI 界面（组织方式：Chat = 全应用状态实体，直属字段 = 8 簇
-                        子结构 pool/composer/layout/psp/ws/dlg/cfg/aux + 直属插件字段
-                        plugins（pf_plugin::PluginUi）；域方法以 impl Chat
+                        子结构 pool/composer/layout/psp/ws/dlg/cfg/aux + 直属域字段
+                        plugins（pf_plugin::PluginUi）/tasks（046）；域方法以 impl Chat
                         块形式住在各领域文件——本仓核心组织方式，详见 ARCHITECTURE.md §3）
   shell/ startup.rs startup/  应用壳（types/chat/render）/ 启动唯一入口（globals/pumps/restore）（010）
   agent_session.rs content.rs  RPC 进程所有权、事件泵、状态机 / 内容区状态机 chat/term/md
   dialogs/                弹窗域（090）：provider/project picker、ask_card、ext_ui
   terminal/               内置终端（alacritty+ConPTY）
-  appearance/ i18n.rs     界面域：七主题色板+字体槽位（006/007）/ 三语（zh-CN 为源）+ 审计
+  appearance/ i18n.rs     界面域：八主题色板+字体槽位（006/007）/ 三语（zh-CN 为源）+ 审计
   automation/ assets.rs status_bar.rs titlebar.rs top_panels.rs  pif-ui 服务 / 图标编入 / 状态栏 / topbar / 系统提示词面板
   editor/                 文件编辑器域：kind 注册表 + view/tabs + markdown（023/024/025）
   function_panel/         左 dock 域：psp/file_tree/git 面板（015/020/021/022）
@@ -81,10 +81,12 @@ crates/app/src/         GPUI 界面（组织方式：Chat = 全应用状态实�
   mode/                   计划模式（031）：dialog/state + plan_mode.ts
   market/                 扩展市场页面 + 三市场分段外壳（040-1/090-4）
   pf_plugin/              PF 插件宿主（090-4；02 契约）
+  tasks/                  自动任务（046）：store/view/form/popup/run/sched
   services/               无 UI 助手（pi-web lib/ parity）：updater（081）/workspace/models_config/
                           file_icons/at_file/file_index/file_tree/format/git/paths_sort/sound/
                           token_probe/watcher/shell_open/asset_evict/pi_extension_updates（082）/session_clean（052）/
-                          custom_models_store/mj_doc_cache/pf_state/pfctx_ops（001）/script_exec/win_pin
+                          custom_models_store/mj_doc_cache/pf_state/pfctx_ops（001）/script_exec/win_pin/
+                          scheduler（046 定时调度）
   session/                会话域：runtime（030）/messages（032）/input（031）/nav_panel（033）/
                           pool/chat_list/footer_bar·fn_bar（034）/menu+menu_rows/attachments/fork/diff/
                           model·mcp·pi_extension picker/new_session（012）/tools_recipe（034）/

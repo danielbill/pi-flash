@@ -1,15 +1,16 @@
 整个app的layout 基本参考 ZED实现。
 
-最外层是上中下结构。
+客户区自绘标题栏，body 为左右两栏（`shell/render/body.rs`）：
 
-上：顶部操作栏
-包含左侧的 logo 显示区域， 和 右侧的操作按钮区域
+左：功能面板栏（panel-col）
+- 顶：topbar 左段（收放钮，`titlebar::topbar_l`）
+- 中：功能面板 dock（015：020-1 整合面板 = 项目会话列表 + 目录文件树；git/插件面板互斥切换）
+- 底：底部控制状态栏（018，只在左栏底部，收起态随面板整列隐藏）
 
-右侧按钮区域包括：
-settings 按钮 和  窗口控制三按钮
+右：内容区（content-col）
+- 顶：topbar 右段（置顶会话 tab + 自由标签区 + 窗口控制钮，`titlebar::topbar_r`；
+  空段挂 `WindowControlArea::Drag`，三个窗口钮注册 Min/Max/Close 命中盒）
+- 主：内容区（030 会话界面 / 文件编辑器 / 终端 / 搜索等单例 tab，`content.rs` 状态机）
 
-中：主内容区域
-分为左侧的功能面板（015）和右侧的会话区域（030）
-
-下：底部控制状态栏（018）
-
+全窗 overlay 叠层：settings → dialogs → 确认浮层 → psp 悬浮 → picker → toast
+（`shell/render/overlay.rs`）。

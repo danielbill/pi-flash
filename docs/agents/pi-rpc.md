@@ -2,7 +2,7 @@
 
 改动会碰到的文件（先读完本文再动）：
 - `crates/pi-link/**`：协议层本体——`protocol/` 目录（itlq.6 起，mod 全量 re-export：command/blocks/events/session/wire + tests/）、`client.rs` 侧车进程、`json.rs` 解析、`transcript.rs` 重放、`catalog.rs` 启动目录、`vendor.rs` 定位
-- `crates/app/src/agent_session.rs`、`crates/app/src/session/runtime.rs`、`crates/app/src/session/messages.rs`、`crates/app/src/ext_ui.rs`：app 侧主要消费方
+- `crates/app/src/agent_session.rs`、`crates/app/src/session/runtime/`、`crates/app/src/session/messages/`、`crates/app/src/dialogs/ext_ui.rs`：app 侧主要消费方
 
 随踩随补。vendor 升级（bump `vendor/pi/package.json` + VERSION）必跑 pi-link 符合性测试，并复核下方标了版本号的条目。
 

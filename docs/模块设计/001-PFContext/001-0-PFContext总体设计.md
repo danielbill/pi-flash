@@ -1,7 +1,7 @@
 # 001-0 PFContext 总体设计
 
 > 本文是本目录的**唯一事实源**：三子集契约、分层与优先级、失效语义、与 pi 文件的边界。
-> 实现切片与验收：[001-3-切片与验收](001-3-切片与验收.md)。
+> 测试覆盖与模块关系：[001-3-切片与验收](001-3-切片与验收.md)。
 
 ## 1 设计目标
 
@@ -24,10 +24,11 @@ settings 是人许的愿，state 是此刻的样子，domain 是发生过的事�
 crates/pf-context/src/
   lib.rs              Hub 门面：三子集共享同一生命周期
   log.rs              pfctx.log 观测日志（>2MB 滚动 .old；纯内存态零写）
+  tests_support.rs    测试公用件（临时目录 / 读 JSON）
   settings/
-    mod.rs  section.rs  source.rs  doc.rs  export.rs  watch.rs
-    sections/         agent.rs appearance.rs chat.rs dev_flags.rs index.rs
-                      models.rs sessions.rs shell.rs subagents.rs
+    mod.rs  section.rs  source.rs  doc.rs  export.rs  watch.rs  tests.rs
+    sections/         mod.rs agent.rs appearance.rs chat.rs dev_flags.rs
+                      index.rs models.rs sessions.rs shell.rs subagents.rs
   state/              StateStore：Arc 快照读 + update 写
   domain/             DbSource（rusqlite WAL）+ TaskStore（046 种子）+ Source trait
 ```
@@ -79,7 +80,7 @@ crates/pf-context/src/
 | `~/.pi/agent/mcp.json` | pi（043 由 PF 编辑） | 走既定 mcp 模块，不经 context |
 | `~/.pi-flash/app-settings.json` | **PF** | context 全权 |
 | `~/.pi-flash/ext-context.json` | **PF 写 / 扩展读** | 见 001-2 |
-| `~/.pi-flash/agents/config.json` | legacy fallback（投影上线后双写一版过渡） | 见 001-2 §8 |
+| `~/.pi-flash/agents/config.json` | legacy fallback（PF 双写一版，未升级扩展可用） | 见 001-2 §8 |
 | `~/.pi-flash/context.db` | **PF**（domain 专用） | 见 001-0 §2 |
 
 **PF 的配置文件永远不叫 `settings.json`**——`settings.json` 是 pi 的文件，
@@ -96,7 +97,7 @@ crates/pf-context/src/
 ## 8 文档地图
 
 - [001-0-PFContext总体设计](001-0-PFContext总体设计.md) —— 本文
-- [001-1-settings正式化](001-1-settings正式化.md) —— `app-settings.json` v2：section 化、读写模型、25 键迁移、Section 契约
+- [001-1-settings正式化](001-1-settings正式化.md) —— `app-settings.json` v2：section 化、读写模型、25 键迁移、Section 契约、参数目录指针
 - [001-2-跨进程投影](001-2-跨进程投影.md) —— `ext-context.json`：形态、扩展读取契约、env 白名单、安全与观测
-- [001-3-切片与验收](001-3-切片与验收.md) —— 验收指标、测试清单、风险与回滚
+- [001-3-切片与验收](001-3-切片与验收.md) —— 测试覆盖、与其他模块的关系
 - [001-4-PFContext内部工具化](001-4-PFContext内部工具化.md) —— pfctx_manager：agent 设置面、执行链、参数目录

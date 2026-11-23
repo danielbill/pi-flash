@@ -80,7 +80,7 @@
   列表比条目先滚，条目的 `stop_propagation` 永远晚一步（超高用户气泡「滚不
   动、只有整屏滚」的根因，v63-9）。已 vendor 补丁：`elements/list.rs` 的
   `List::paint` 把 `on_mouse_event` 挪到条目循环**之前**。回归锁
-  `session/messages/turn.rs` 的 `mod bubble_wheel`（内层未到边界列表不动 /
+  `session/messages/user_row/tests.rs` 的 `mod bubble_wheel`（内层未到边界列表不动 /
   到边界才接手）。新增「列表里嵌滚动容器」的写法，先确认容器在列表条目里
   （自动满足），再写边界拦截。
 - **鼠标事件注入（自动化）**：`Window::dispatch_event` 返回 pub(crate) 类
@@ -97,7 +97,7 @@
   ask_card 090 定案）。新增会话弹窗 = 在该槽位追加一个 if 挂载；z 序 =
   子节点绘制序，非模态（插件弹窗）在下、模态（问卷卡 → 阻塞弹窗）在上。
   切走 content tab 时弹窗随主栏同隐（状态保留，切回即见）。全窗模态
-  （Dialog 枚举族、settings、确认浮层）仍挂 `shell/render.rs` 根，勿混。
+  （Dialog 枚举族、settings、确认浮层）仍挂 `shell/render/` 根，勿混。
 
 ## 文本与绘制
 
@@ -240,7 +240,7 @@
 - **vendor 本地改动（升级必须重套）**：`text/text_view.rs`（**起选遮挡守卫**，2026-10-15，pi-flash-hlo5）：selectable TextView 在 `prepaint` 插自身 Normal hitbox（`type PrepaintState = Hitbox`，插先于子树），起选 mouse-down **裸监听**加 `hitbox.is_hovered(window)` 守卫。根因：裸 `window.on_mouse_event` 收全窗所有事件，`bounds.contains` 只答「点在文本区内」不答「文本区在该点是否可见」——composer 悬浮胶囊（后绘 BlockMouse）叠在消息列上，胶囊上划选穿透选中身后的隐藏文本；`occlude()` 只挡 div 层命中路由，挡不住裸监听。语义：hit_test 从后往前走、遇 BlockMouse break，被遮挡者进不了 `mouse_hit_test.ids` → 守卫精确到点击点（同帧可见区照常起选），附带堵住被 content mask 裁掉的滚出区起选。**宿主悬浮层必须自挂 occlude 才享受此守卫**（回底钮 scroll-to-bottom 同期补挂——它无 BlockMouse hitbox 时身后文本照旧穿透）。
 - **vendor 本地改动（升级必须重套）**：`window.rs` + `platform.rs` + `platform/windows/`（**窗口内容回读**，zed main 的 D3D11 staging 纹理回读 `Window::render_to_image` 移植，约 100 行）——`ui.screenshot` op / `pif-ui shot` 的底座（UI 自动化 §1，000-自动化测试.md）：进程内截最近一帧、不抢 OS 屏、被遮挡/最小化窗口也能截。
 - **vendor 本地改动（升级必须重套）**：`elements/list.rs`（`list()` 虚拟列表滚轮，2026-10-15）：滚轮监听只应用**本事件**的 delta（原 `accumulated_scroll_delta` 跨事件累计再整包重放——同帧 N 个事件总位移 d₁·N+d₂·(N-1)+…，事件积压越多过量越狠；zed 上游同缺陷，平时一帧一事件掩盖，流式全窗重建拖长帧时滚轮一滚跳一大截）+ 行高硬编码 `px(20.)` 改真实 `window.line_height()`（div `paint_scroll_listener` 同款，随字号缩放）。app 侧配套 free_scroll 见「滚动」节。
-- **vendor 本地改动（升级必须重套）**：`elements/list.rs`（**滚轮注册时机**，v63-9，`List::paint`）：`window.on_mouse_event` 原在**条目 paint 之后**注册 → 冒泡相位逆注册序派发，列表比条目先收到滚轮，条目内滚动容器的 `stop_propagation()` 永远晚一步 ⇒ 超高用户气泡「带滚动条却滚不动、只有整屏滚」，且列表 sync 的 free_scroll 被误置。修法：把注册挪到条目循环**之前**（`hitbox_id`/`height`/`scroll_top` 在 prepaint 已有）。回归锁 `session/messages/turn.rs` 的 `mod bubble_wheel`。**通用规则：滚轮嵌套语义靠注册顺序，谁后注册谁先收到——popup/悬浮滚动层想抢在列表之前处理，只要晚注册即可。**
+- **vendor 本地改动（升级必须重套）**：`elements/list.rs`（**滚轮注册时机**，v63-9，`List::paint`）：`window.on_mouse_event` 原在**条目 paint 之后**注册 → 冒泡相位逆注册序派发，列表比条目先收到滚轮，条目内滚动容器的 `stop_propagation()` 永远晚一步 ⇒ 超高用户气泡「带滚动条却滚不动、只有整屏滚」，且列表 sync 的 free_scroll 被误置。修法：把注册挪到条目循环**之前**（`hitbox_id`/`height`/`scroll_top` 在 prepaint 已有）。回归锁 `session/messages/user_row/tests.rs` 的 `mod bubble_wheel`。**通用规则：滚轮嵌套语义靠注册顺序，谁后注册谁先收到——popup/悬浮滚动层想抢在列表之前处理，只要晚注册即可。**
 - **vendor 本地改动（升级必须重套）**：`input/state.rs` `scroll_to`（**光标移动鬼畜振荡修复**，2026-10-15）：①`edge_height` 固定 3 行 → `min(3行, 视口半高)`——视口 H < 2×edge（composer 3~5 行高必中）时上下「安全区」重叠为空，两支判据的解互落对方触发区（deferred 实测 0→-40→-20→-40…永不收敛），而 `move_to`（movement.rs，**每次光标移动都调 scroll_to**）逐键重算 → 滚动位逐键翻转、auto_grow 容器 3↔4 行交替，快速连按即鬼畜；静止不抖是因为 scroll_to 只在光标移动时被调。②解钳进内容滚动范围 `[-(wrapper.len()×行高-H).max(0), 0]`——此前光标贴底行即使内容放得下也把首行裁出视口且停住（解无下界）。量法：composer 灌 5 行中文、Ctrl+End 到末行、pif-ui keys left 连打逐帧 shot——修复前可见行数 3↔4 交替、修复后 11 帧行带全等且差异仅在光标水平位移。
 - **vendor 本地改动（升级必须重套）**：`input/state.rs` `scroll_to`（**点击可见行瞬移屏幕底部修复**，2026-10-16）：滚轮路径 `update_scroll_offset` 钳的是含垫底的 `scroll_size`（半视口 overscroll），末行可合法停进视口中部；而 scroll_to 尾部曾**无条件**把 offset 重钳进纯内容范围并写 `deferred_scroll_offset`——点击视口中部的末行，停好的滚动位被拽回内容底、该行瞬移屏幕底部（10-15 那条「两钳制并存不冲突」的判断不成立，冲突在光标可见也落账）。修法：内容钳制收进上下两支越界分支（只作用于「解」），函数尾仅在 `scroll_offset != scroll_handle.offset()` 时写 deferred + notify——光标可见时滚动位不动，用户 overscroll 停车保留；分支解行为与 10-15 振荡修复一致（不越内容底、不裁顶）。
 - **vendor 本地改动（升级必须重套）**：`platform/windows/events.rs` `handle_cursor_changed`（**拖拽期光标不切样式修复**，2026-10-16）：原实现只在 `current_cursor` 的 **Some/None 翻转**时 `SetCursor`，「有→有」的样式切换全押给系统 `WM_SETCURSOR`；而**拖拽（按住键）期间系统不再派发 WM_SETCURSOR** → 光标整段钉在起手样式，松手那一刻才被补上（项目行 OpenHand → `App::set_active_drag_cursor_style(ClosedHand)` 的握紧手错位一整段：悬停与拖动同显小手、放下才显抓住）。修法 = 句柄**变了**（含 None 翻转与句柄不同）即 `SetCursor`。诊断记忆点：**同一处光标在不同修饰状态（拖拽/按住键）下表现不一致 → 先怀疑 SetCursor 的触发时机，不要一路往渲染/命中查找**。

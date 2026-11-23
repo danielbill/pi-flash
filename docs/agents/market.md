@@ -12,7 +12,7 @@
   `PI_FLASH_PI_EXT_MARKET=1/0` 最高优先；启动 stderr 打 `pi_ext_market=off/on`。
 - 关态三处闸门，**新增入口必须一起想**：`titlebar::topbar_l` 不渲染「菜单」三横钮
   / `open_pi_ext_market()` 直接 return（覆盖 pif-ui 自动化 `pi-ext-market`，
-  `automation/handlers.rs`）/ `spawn_pi_ext_market_prefetch` 直接 return（不为看不见的
+  `automation/handlers/`）/ `spawn_pi_ext_market_prefetch` 直接 return（不为看不见的
   页面偷跑网络）。**菜单钮与菜单项的上线取舍 2026-10-23 用户否决过一版改动，别再动**
   （只该碰市场页本体）。
 - `open_pi_ext_market` 是**唯一**打开路径（菜单项、自动化、将来的快捷键都打这里）；它
@@ -133,7 +133,7 @@
 - **头段是页签行**（v4）：`所有插件 | 已安装` 两签都可点（`tab_row`/`tab_label`，
   `PfTab`），`card_header` 的 title 已从 SharedString 改成 AnyElement——别照旧
   签名往里塞字符串。已安装签计数只报总数（无分页），All 签沿用 `1-N / total`。
-- **【已安装】视图（`pf_installed.rs`）的数据源 = PF 插件台账 `plugins.json`，
+- **【已安装】视图（`pf_installed/`）的数据源 = PF 插件台账 `plugins.json`，
   不是 pi 扩展 settings.json**。详情 = 说明（索引 desc，三语取词，缺 = —）/
   状态（随启停）/ 来源（索引 publisher，缺索引回落台账 source）/ 路径 + 卸载
   垃圾桶（确认浮层挂 shell/render 顶层，`remove_confirm_overlay`）。用户明确
