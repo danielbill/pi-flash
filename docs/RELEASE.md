@@ -97,7 +97,8 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 ### 3.2 发布包人工验收（所有者执行；八步全绿之后、ship.sh 之前）
 
 验收对象 = `dist/pi-flash-<v>-win32-x64.zip`（即将上传的那份）。
-解压到任意目录，运行包内 `pi-flash.exe`，由所有者验证本版改动是否生效。
+验收前 agent 把新包解压到 `D:\下载\pi-flash`（dist zip 解至 `D:\下载`，zip 根自带 `pi-flash/` 包装目录，落地即该目录），
+所有者直接运行该目录包内 `pi-flash.exe`，由所有者验证本版改动是否生效。
 
 - 通过 → `touch dist/MANUAL-OK-<v>`（ship.sh 前置校验认此标记；release.sh 重跑会清掉标记，重打包即重验）
 - 不通过 → 修因后整脚重跑 release.sh
