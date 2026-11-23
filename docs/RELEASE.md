@@ -35,15 +35,16 @@
 
 - [ ] 所有者已拍板本次版本号
 - [ ] git 工作区干净（release.sh 门禁拒绝 tracked 改动；**并行会话的活必须先由其本人提交**，
-      勿 stash、勿代提交；若按规范流程**预写**了 CHANGELOG 新版本段，同样要先提交——
-      收编幂等，内容一致则零改动；中止后整脚重跑时「同版本版本三件套残迹」脚本自动放行，
-      无需手工还原）
+      勿 stash、勿代提交）。门禁自动放行两类同版本残迹、无需手工还原：① 版本三件套
+      （中止后重跑）；② 两份 CHANGELOG 的未提交差异**只落在本版本段内**（预写的新段、
+      上一轮 step5 收编的段、修因后改了措辞的段都算）。CHANGELOG **段外**有改动仍须先
+      提交——ship.sh 会把整份文件卷进发版提交
 - [ ] CHANGELOG写完交所有者审批，审批通过方可继续
 - [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（28 项）
 - [ ] 架构守卫 PASS：`scripts/check_arch.sh`（行数红线按**非测试行数**计；超线存量冻结在
       `scripts/arch-lines-baseline.txt`，新增超线/存量增长 = 先拆分或口径复核再发版；
       基线只许人工 `--update-baseline` 刷新）
-- [ ] `pi-flash.exe` 未运行（烟测会 `taskkill` 全部实例；且 debug 实例正在运行会让 debug 构建撞 exe 锁）
+- [ ] `pi-flash.exe` 未运行（debug 实例锁着 `target/debug/pi-flash.exe`，会让 debug 构建撞 exe 锁。烟测只按 PID 杀自己的隔离实例，在跑的实例不受波及）
 - [ ] 发布说明就绪：`tmp/release-notes-<v>.md`（安装/更新命令 + 本版要点；**双语**：中文段在上、
       单独一行 `<!-- EN -->`、下接英文段，见 `docs/CHANGELOG规范.md`；中文段收编 CHANGELOG.md、
       英文段收编 CHANGELOG_EN.md、全文作 Release 正文。纯中文可发版，英文后补走 `gh release edit`）
@@ -76,9 +77,13 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
    （0.5.0 曾 4.3GB 随包撑到 1.4GB）+ **随包扩展双向清点**（`SHIP_EXTS` 清单：
    extensions/ 下清单外目录 = 硬失败、清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏
    pfctx-manager / pf-svc-runtime）——失败只花 1 秒，不留到构建/压缩后才发现
-4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
-   查 `PI_FLASH_PERF`）；Defender 对新拷 exe 的瞬时锁自动歇 3s 重试一轮（0.5.0
-   Permission denied 实录），两轮都败才中止；结束 taskkill
+4. **GUI 烟测**：**隔离数据目录**启动（`PI_FLASH_DIR=dist/smoke-home`，不碰真实
+   `~/.pi-flash`）→ 等**就绪信号**（隔离 home 的 pfctx.log 出现调度 recover 行 = 启动泵
+   已跑完；上限 60s）→ 再停留 5s；**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
+   查 `PI_FLASH_PERF`）。只按 PID 杀烟测实例自身，不动在跑的实例。Defender 对新拷 exe
+   的瞬时锁自动歇 3s 重试一轮（0.5.0 Permission denied 实录），两轮都败才中止；失败现场
+   留 `dist/smoke.log` + `dist/smoke-home/pfctx.log`。隔离 home 为空 → 走首装启动路径，
+   「恢复上次会话」那条路径由 §3.2 人工验收覆盖
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
    （双语以单独一行 `<!-- EN -->` 分隔；无英文段则只收中文，英文版不动）
 6. 压缩 `pi-flash-<v>-win32-x64.zip`（压缩器择优：System32 bsdtar 优先 → 7-Zip
@@ -178,8 +183,11 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 
 | 症状 | 处置 |
 |---|---|
-| 烟测 ✗ 启动有输出 | 脚本已自动歇 3s 重试一轮（Defender 对新拷 exe 的瞬时锁属瞬时失败，0.5.0 实录）；两轮都败才看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑；其它前缀行（如 `[scheduler]`）同理 = 该模块诊断没落 pfctx.log 的门控回归，修码重跑（排查判据见 `docs/agents/engineering.md` 发版脚本节） |
-| 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。预写的 CHANGELOG 段自行提交后再整脚重跑。中止重跑被**同版本版本三件套残迹**卡住的情况脚本已自动放行，无需手工还原 |
+| 烟测 ✗ 启动有输出 | 脚本已自动歇 3s 重试一轮（Defender 对新拷 exe 的瞬时锁属瞬时失败，0.5.0 实录）；两轮都败才看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑；其它前缀行（如 `[scheduler]` / `[tasks]`）同理 = 该模块诊断没落 pfctx.log 的门控回归，修码重跑（排查判据见 `docs/agents/engineering.md` 发版脚本节） |
+| 烟测 ✗ 就绪信号超时 | 实例 60s 内没走到调度泵。看 `dist/smoke-home/pfctx.log` 走到了哪一步、`dist/smoke.log` 有无报错；启动卡死 / 崩溃 = 修码重跑。若改过调度器日志 tag、或默认关了 `auto_tasks`（含环境变量 `PI_FLASH_AUTO_TASKS=0`），同步改 release.sh 的 `SMOKE_READY_RE` |
+| 烟测 ✗ 调度 recover 失败 | 隔离 home 首启连任务库都打不开 = 首装即坏，修码重跑 |
+| 烟测 ✗ 烟测实例未能终止 | 按 PID 树杀后 5s 仍存活：`tasklist` 里找 `dist\pi-flash\pi-flash.exe` 手动结束后重跑 |
+| 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。CHANGELOG 差异只在本版本段内的（预写的新段 / 上一轮收编的段）脚本已自动放行；段外改动自行提交后再整脚重跑 |
 | 体积守卫 ✗（>250MB 或 > 上一版 ×1.8） | 打包现场混入异物（0.5.0：extensions 里 target-check 4.3GB 随包）；step 0.5 预清理只清已知模式，按 `du -sh dist/pi-flash/*` 查体积构成，清完重跑 |
 | ship.sh ✗ tag 已存在 / push 断网 / release 撞名 | 分别见 §0 永不复用、§6 git push 断网、§6 release 撞名；脚本各步失败信息已带对应处置 |
 | ship.sh ✗ 缺 `dist/MANUAL-OK-<v>` | 未做 §3.2 人工验收，或 release.sh 重跑后标记已清（重打包即重验）→ 按 §3.2 验收通过后 `touch dist/MANUAL-OK-<v>` 再 ship |

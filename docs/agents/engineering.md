@@ -30,12 +30,13 @@
 - **esbuild 路径会随 npm hoist 变**：断言原写死 `node_modules/@earendil-works/pi-coding-agent/node_modules/@esbuild`，新版 pi 把 `@esbuild/win32-x64` 提升到 `vendor/pi/node_modules/@esbuild` → 裁非宿主平台那步整脚失败。两处都认（先试嵌套再回落顶层）。
 - **烟测「启动零输出」与更新探查鸡生蛋**：release 构建默认跑更新检查（`PI_FLASH_UPDATE_CHECK` 未设时 `!cfg!(debug_assertions)` 为真），而 GitHub Release 还没建时 `/releases/latest` 必 404 → `eprintln!("[updater] 检查更新失败…")` 把门禁打红。烟测须 `export PI_FLASH_UPDATE_CHECK=0`（门禁只验启动，不验更新）。
 - **CHANGELOG 收编不能假设首行是版本段**：文件顶部的 `# 更新日志` 标题 + 说明段会被原 `tail -n +2` 吃掉，且同版本段已存在时会写出两份 → 已改成幂等 `upsert_section`（同版本段原地替换，否则插到首个 `## [` 之前，前言原样保留）。收编前还要去**段首空行**，否则 `<!-- EN -->` 前后空行会在英文段标题下多出一行。
-- 烟测会 `taskkill` 全部 `pi-flash.exe`：发版前必须让用户自己优雅关掉实例（草稿/回合会丢），别替他 kill。
+- 烟测**只按 PID 杀自己的隔离实例**（0.6.1 后）：`/proc/$!/winpid` 取 Windows PID → `taskkill //PID … //T //F`，在跑的用户实例不受波及。历史：旧版 `taskkill //IM pi-flash.exe //F` 杀全部同名实例（草稿/回合会丢），当时要求发版前用户自己优雅关实例。**隔离的只是数据目录**：release 构建每次启动都做用户级注册（pif-secret / pi shim 入 `%LOCALAPPDATA%\pi-flash\bin`，`pi-target.json` 把全局 `pi` 指向**本载荷所在目录**），无开关——发版日烟测后命令行 `pi` 跑的是 `dist\pi-flash` 那份，下次启动正式版自愈归位；手工验证烟测段前先备份该指针文件，验完按字节还原。
 - **拆文件必须同步重写 ui-raw 基线路径（两次踩坑：4b284fcc、0.5.0 发版前）**：check_arch §4 按**路径逐条**比对基线，「超规文件全拆 ≤500 行」把代码搬进目录模块后，旧路径消失按 0 计、新路径无档按新增计 → 40+ 文件全红，看似债暴涨实为漂移。判别法：在发版 tag 的 worktree 上跑 `python -I scripts/check_ui_raw.py --list` 对账总量——**总账不涨（甚至下降）= 纯漂移**，走「所有者确认 → `--update-baseline` 重写」；总账真涨才算新增违规。agent 不得自行刷基线，对账数字须写进 commit message 备案。**0.5.0 后基线卫生已机器化**：check_ui_raw.py 对「基线键指向不存在文件」直接硬失败，拆分当场红，不再攒到发版日对账。
 - **打包现场预清理 + 体积硬守卫（0.5.0 实录）**：extensions/pf-subagents/target-check（CARGO_TARGET_DIR 检查缓存 4.3GB）随 `cp -r` 进包，90MB → 1.4GB，靠人眼在第 8 步才发现。已固化：release.sh step 0.5 预清理 `extensions/*/target-check|target`；压缩后体积守卫 >250MB 绝对上限或 > 上一版 ×1.8（gh api 取基线，离线降级）即中止。**发版看脚本输出不能只看 ✓/✗，产物体积必须过守卫，不许靠目测。**
-- **同版本残迹卡门禁（0.5.0 实录）**：release.sh step1 改版本号后中止，重跑被自家残迹卡门禁，每轮手工 `git checkout --` 三件套。已固化：门禁识别「脏文件仅限版本三件套且内容已是目标版本」自动放行。
+- **同版本残迹卡门禁（0.5.0 实录）**：release.sh step1 改版本号后中止，重跑被自家残迹卡门禁，每轮手工 `git checkout --` 三件套。已固化：门禁识别「脏文件仅限版本三件套且内容已是目标版本」自动放行。**0.6.1 后扩到 CHANGELOG**：整脚跑完（step5 已收编）再重跑是 §3.2 验收不过的既定路径，两份 CHANGELOG 必脏，旧门禁每轮都卡（0.6.1 多发一个中间提交）。现放行「差异只落在 `[VERSION]` 段内」——把该段从 HEAD 版与工作区版各自剥掉后须逐字节相同（行尾 CRLF/LF 归一后比）；段外有改动仍硬失败，ship.sh 会把整份文件卷进发版提交。
 - **Defender 对新拷 exe 瞬时锁（0.5.0 实录）**：烟测首启 `Permission denied`，重跑即过＝瞬时失败。已固化：烟测失败歇 3s 自动重试一轮，两轮都败才中止。
-- **烟测「启动零输出」会被启动时序侥幸放过（0.6.1 实录）**：`[scheduler]` source 注册 / recover 两行是无条件 `eprintln`，烟测实例若在 6s 窗口内没走到调度泵就「零输出」通过——0.6.0 与 0.6.1 首包都是这样过的，重跑时实例走到才把门禁打红。判据：pfctx.log 里该次 `[boot]` 之后有没有 `sqlite(context.db) ready` 行（走到调度泵 0.6–0.8s 内必有）。**正常路径上的诊断一律不得 `eprintln` 直打**：落 pfctx.log（`pf_context::log(tag, msg)`，宿主模块留痕入口；debug 构建可 `cfg(debug_assertions)` 另回显终端），与 `[perf]` 的 `PI_FLASH_PERF` 门控同一纪律。烟测红了先看 `dist/smoke.log` 的前缀定模块。
+- **烟测「启动零输出」会被启动时序侥幸放过（0.6.1 实录）**：`[scheduler]` source 注册 / recover 两行是无条件 `eprintln`，烟测实例若在 6s 窗口内没走到调度泵就「零输出」通过——0.6.0 与 0.6.1 首包都是这样过的，重跑时实例走到才把门禁打红。判据：pfctx.log 里该次 `[boot]` 之后有没有 `sqlite(context.db) ready` 行（走到调度泵 0.6–0.8s 内必有）。**正常路径上的诊断一律不得 `eprintln` 直打**：落 pfctx.log（`pf_context::log(tag, msg)`，宿主模块留痕入口；debug 构建可 `cfg(debug_assertions)` 另回显终端），与 `[perf]` 的 `PI_FLASH_PERF` 门控同一纪律。烟测红了先看 `dist/smoke.log` 的前缀定模块（`[scheduler]` / `[tasks]` 两族 0.6.1 后已收口）。**空放行已堵（0.6.1 后）**：烟测改等就绪信号——隔离 home 的 pfctx.log 出现 `[scheduler] recover` 行（启动泵收尾语句之后的第一步）再停留 5s 才杀，上限 60s；实例跑在 `PI_FLASH_DIR=dist/smoke-home`（空 home = 首装启动路径，到期任务不会被真实派发；也不覆盖「恢复上次会话」，那条归 §3.2 人工验收）。调度器日志 tag 或 `auto_tasks` 默认值一改，同步改 release.sh 的 `SMOKE_READY_RE`——忘改的表现是就绪信号超时硬失败，不会空放行。
+- **改 release.sh 的门禁 / 烟测，不必整脚重跑发版来验**（0.6.1 后）：① 门禁——`awk '/^# --- 0\.5 打包现场预清理/ { exit } { print }'` 抽出脚本头，尾部接 `echo GATE PASSED`，放进 `mktemp -d` 的合成仓库（三件套 + 两份 CHANGELOG + notes + vendor cli.js 占位）跑场景、断言退出码；改动前后各跑一遍，确认用例有鉴别力（放行类在旧门禁上必须失败）。② 烟测——`sed -n '/^# SMOKE_BEGIN/,/^# SMOKE_END/p'` 抽出自包含段，`source` 后对现有 `dist/pi-flash` 跑 `smoke_run`（同一条烟测链路，不算「直接执行打包产物」）。不启动进程的旁证：对 exe 做只读字节检索（旧字面量 0 处 / 新写法在）。
 - **门禁命令禁接 `| tail`（0.6.1 实录）**：管道后退出码是 `tail` 的，前段测试红了链式 `&&` 照样往下走；汇总行还可能正好被截掉（`cargo test -p pi-link | tail -5` 只剩 doctest 的 `0 passed`）。门禁一律全量输出落 `tmp/` 日志、逐项回显 `exit=$?`，再对日志查 `test result:` / `FAILED`。
 - **开发缓存落位纪律（target-check 事故根因）**：在 extensions/* 里跑 cargo 检查/构建时，`CARGO_TARGET_DIR` 指到 `tmp/<名字>-target`（仓库根 tmp/），**勿把 target-check / target 留在扩展目录里**——release.sh `cp -r` 随包盲拷，0.5.0 曾把 4.3GB 缓存打进包（90MB→1.4GB）。step 0.5 预清理 + dist 侧剥离是兜底，根因在落位。
 
@@ -144,6 +145,30 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { `
 3. **`-z` 下 rename/copy 是两条 NUL 记录**（`R  new\0old\0`），没有 TAB 可切；
    按 TAB 解析永远不命中，old path 还会被当成独立条目。修法：X/Y 为 R/C 时
    消费紧跟的下一条记录。
+
+## 并行会话同文件混 WIP：只提交自己的块（2026-11-23 实锤）
+
+对方的未提交功能块与自己的改动块交错在同一文件（0.6.1 后 `tasks/mod.rs`、`run.rs`），
+整文件 `git add` 会把对方 WIP 卷进自己的提交。非交互版 `git add -p`：
+
+1. **自己那份单独成型**：`git worktree add --detach tmp/verify-wt HEAD` + 只 apply 自己的
+   补丁——顺手就是隔离的编译验证环境（`CARGO_TARGET_DIR` 指主 `target/`，只跑
+   `cargo check -p <crate> --tests`，不另起构建目录）。在该副本上 `rustfmt --check`
+   必须干净：钩子对「工作区差异不只是排版」的文件会跳过格式化并放行，没人替你排版。
+2. **私有索引提交**：`GIT_INDEX_FILE=tmp/idx git read-tree HEAD` →
+   `git update-index --cacheinfo 100644,$(git -C tmp/verify-wt hash-object -w <f>),<f>` →
+   `git commit -F <msg>`。**不能用 `git commit -- <path>`**：pathspec 形式取的是工作区
+   整文件，等于没拆。
+3. **提交后 `git reset -q HEAD -- <paths>`** 把共享索引对齐到新 HEAD。否则这些路径在
+   共享索引里还是旧 blob，对方下一次裸 `git commit` 会把它当反向改动提交 = 撤掉你的提交。
+4. **提交前钉住基线**：`[ "$(git rev-parse HEAD)" = <起手时的 HEAD> ]`。HEAD 若已前移，
+   私有索引里的旧基线会把对方刚提交的内容改回去。
+
+**blob 别直接取工作区文件**。文档类没法走 worktree 补丁时尤其容易中招——实测取 blob
+前几秒对方刚往同一文档加了一行，被连带提交，靠 `commit --amend`（同样走私有索引）才剔除。
+要么从已提交 blob 推导（`git show HEAD:<f>` 去掉对方行 → `hash-object -w --no-filter`），
+要么取 blob 前后各看一次 `git diff -U0`。验收：`git diff -- <f>` 里不再有自己的标记行
+（固定字符串 `grep -F` 逐个数），对方的块原样还在。
 
 ## 格式化：全自动（pre-commit 机械处理，2026-10-20 转向）
 

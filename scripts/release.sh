@@ -36,20 +36,40 @@ ZIP_NAME="pi-flash-${VERSION}-win32-x64.zip"
 # 每轮都要手工还原三件套）：脏文件仅限版本三件套、且 Cargo.toml / package.json
 # 内容已是目标版本 = 确定性残迹，放行（step1 的 sed 幂等重打）；Cargo.lock 由
 # step2 构建确定性重生成，同批放行。版本不符 = 人工误动，照旧硬失败。
+# CHANGELOG 段内残迹放行（0.6.1 实录：整脚跑完后修因重跑——§3.2 验收不过的既定
+# 路径——被上一次 step5 收编的两份 CHANGELOG 卡门禁，每轮先手工提交、多发一个
+# 中间提交）：两份 CHANGELOG 的未提交差异只许落在**本版本段**内（段外逐字节同
+# HEAD）= 确定性残迹，放行（step5 upsert 幂等原地重写该段）。段外有改动照旧硬
+# 失败——ship.sh 把整份文件卷进发版提交，段外未提交内容绝不能搭车。
 DIRTY=$(git status --porcelain --untracked-files=no)
 if [[ -n "$DIRTY" ]]; then
   RESIDUE_OK=1
+  # 去掉 [VERSION] 段（其标题行至下一个 `## [` 之前），段外内容原样输出
+  strip_ver_section() {
+    awk -v ver="$VERSION" '
+      BEGIN { esc = ver; gsub(/\./, "\\.", esc) }
+      /^## \[/ { skip = ($0 ~ "^## \\[" esc "\\]") }
+      !skip'
+  }
+  # 段外与 HEAD 逐字节一致（行尾 CRLF/LF 归一后比）→ 0；文件未入库/被删 → 1
+  changelog_residue_ok() {
+    [[ -n "$(git show "HEAD:$1" 2>/dev/null)" ]] || return 1
+    diff <(git show "HEAD:$1" | strip_ver_section | tr -d '\r') \
+         <(tr -d '\r' < "$1" | strip_ver_section) > /dev/null 2>&1
+  }
   while IFS= read -r line; do
     f=${line#?? }; f=${f#\"}; f=${f%\"}
     case "$f" in
       Cargo.lock) ;;
       crates/app/Cargo.toml) grep -q "^version = \"$VERSION\"" "$f" || RESIDUE_OK=0 ;;
       npm/package.json)      grep -q "\"version\": \"$VERSION\"" "$f" || RESIDUE_OK=0 ;;
+      docs/CHANGELOG.md|docs/CHANGELOG_EN.md)
+        changelog_residue_ok "$f" || RESIDUE_OK=0 ;;
       *) RESIDUE_OK=0 ;;
     esac
   done <<< "$DIRTY"
   if [[ "$RESIDUE_OK" == 1 ]]; then
-    echo "    检测到同版本残迹（三件套已是 $VERSION），放行整脚重跑"
+    echo "    检测到同版本残迹（三件套已是 $VERSION，CHANGELOG 差异仅在本版本段内），放行整脚重跑"
   else
     echo "✗ 工作区有未提交改动，先提交再发布："
     git status --short
@@ -220,37 +240,112 @@ if [[ "$DIST_MB" -gt 500 ]]; then
 fi
 echo "    dist 总量 ${DIST_MB}MB，正常"
 
-echo "==> 4/8 包内烟测（独立目录启动）"
-SMOKE_LOG="$ROOT/dist/smoke.log"
-SMOKE_FAIL=""
+echo "==> 4/8 包内烟测（隔离数据目录 + 就绪信号）"
 # 烟测只验「启动无输出」，更新探查不属于启动门禁：release 构建默认跑更新检查，而
 # GitHub Release 尚未创建时 /releases/latest 必404 → eprintln 污染日志（首发鸡生蛋）。
 PI_FLASH_UPDATE_CHECK=0
 export PI_FLASH_UPDATE_CHECK
+# SMOKE_BEGIN —— 烟测整段自包含（只依赖 $ROOT；抽到临时脚本 source 后可直接单测）
+# 三条设计（2026-11-23 0.6.1 发版实录，逐条对应一桩事故）：
+#   1. 隔离数据目录：实例跑在 PI_FLASH_DIR=dist/smoke-home 上，不碰真实 ~/.pi-flash
+#      ——调度器是活的，旧版烟测窗口内到期任务会被真实派发、recover 会动真实台账。
+#      隔离的只是数据目录：用户级注册（pif-secret / pi shim 入 %LOCALAPPDATA%\pi-flash\bin、
+#      全局 pi 指针指向本载荷）每次 release 启动都会做，无开关，属既有行为。
+#   2. 就绪信号：等到隔离 home 的 pfctx.log 出现调度 recover 行（启动泵 spawn_boot_tasks
+#      收尾语句之后的第一步）再杀，杀前再停留 SMOKE_SETTLE_SECS。旧版固定 sleep 6：
+#      新 exe 首启被 Defender 扫描拖慢时实例还没走到调度泵就被杀，「零输出」是空放行
+#      （0.6.1 当天 4 次烟测 2 次如此）。
+#   3. 只杀自身：按 PID 杀烟测实例及其子树。旧版 taskkill //IM 杀全部同名实例，连
+#      用户正在跑的一起杀（草稿/回合会丢）。
+# 覆盖面取舍：隔离 home 是空的 → 走首装启动路径，不覆盖「恢复上次会话」那条路径
+# （由 §3.2 所有者在真实数据上的人工验收覆盖）。
+SMOKE_EXE="$ROOT/dist/pi-flash/pi-flash.exe"
+SMOKE_LOG="$ROOT/dist/smoke.log"
+SMOKE_HOME="$ROOT/dist/smoke-home"
+SMOKE_PFCTX="$SMOKE_HOME/pfctx.log"
+SMOKE_READY_MAX=60     # 等就绪信号上限（秒）：Defender 首启扫描实测拖 5s+，留足余量
+SMOKE_SETTLE_SECS=5    # 就绪后停留（秒）：首轮 tick / 慢启动日志都落在这个窗口
+# 就绪信号 = 下式在隔离 home 的 pfctx.log 命中。调度器或日志 tag 改动时同步改这里；
+# 忘改的表现是「就绪信号超时」硬失败——宁可红，不可空放行。
+SMOKE_READY_RE='\[scheduler\] recover '
+SMOKE_FAIL=""
+SMOKE_PID=""
+
+# 烟测实例的 Windows PID（MSYS pid ≠ Windows pid；native exe 经 exec 后此值即其 PID）
+smoke_winpid() { cat "/proc/$SMOKE_PID/winpid" 2>/dev/null; }
+
+# 杀烟测实例及其子树（只按 PID，绝不按映像名——那会连用户实例一起杀）。
+smoke_kill() {
+  [[ -n "$SMOKE_PID" ]] || return 0
+  kill -0 "$SMOKE_PID" 2>/dev/null || return 0
+  local wp i=0
+  wp=$(smoke_winpid)
+  [[ -n "$wp" ]] && taskkill //PID "$wp" //T //F > /dev/null 2>&1
+  while kill -0 "$SMOKE_PID" 2>/dev/null && (( i < 20 )); do sleep 0.25; i=$((i + 1)); done
+  kill -0 "$SMOKE_PID" 2>/dev/null && return 1
+  return 0
+}
+
+# 单轮：隔离 home 起 → 等就绪 → 停留 → 杀自身 → 验零输出。0 = 过；1 = 败（$SMOKE_FAIL）
 smoke_once() {
+  rm -rf "$SMOKE_HOME"
+  mkdir -p "$SMOKE_HOME" || { SMOKE_FAIL="隔离 home 创建失败：$SMOKE_HOME"; return 1; }
   : > "$SMOKE_LOG"
-  (cd / && "$ROOT/dist/pi-flash/pi-flash.exe" > "$SMOKE_LOG" 2>&1 &)
-  sleep 6
-  if ! tasklist //FI "IMAGENAME eq pi-flash.exe" 2>/dev/null | grep -qi pi-flash; then
-    SMOKE_FAIL="进程未起"; return 1
+  local home_win waited=0
+  home_win=$(cygpath -w "$SMOKE_HOME")
+  (cd / && PI_FLASH_DIR="$home_win" exec "$SMOKE_EXE") > "$SMOKE_LOG" 2>&1 &
+  SMOKE_PID=$!
+  while :; do
+    if ! kill -0 "$SMOKE_PID" 2>/dev/null; then SMOKE_FAIL="进程提前退出"; return 1; fi
+    if [[ -f "$SMOKE_PFCTX" ]] && grep -q "$SMOKE_READY_RE" "$SMOKE_PFCTX" 2>/dev/null; then
+      break
+    fi
+    if (( waited >= SMOKE_READY_MAX * 2 )); then
+      SMOKE_FAIL="就绪信号超时（${SMOKE_READY_MAX}s 未见 pfctx.log 调度 recover 行）"
+      return 1
+    fi
+    sleep 0.5; waited=$((waited + 1))
+  done
+  echo "    就绪信号已到（$((waited / 2)).$((waited % 2 * 5))s），停留 ${SMOKE_SETTLE_SECS}s"
+  sleep "$SMOKE_SETTLE_SECS"
+  if ! kill -0 "$SMOKE_PID" 2>/dev/null; then SMOKE_FAIL="就绪后进程自行退出"; return 1; fi
+  if grep -q '\[scheduler\] recover .* 失败' "$SMOKE_PFCTX" 2>/dev/null; then
+    SMOKE_FAIL="调度 recover 失败（隔离 home 首启）"; return 1
   fi
-  taskkill //IM pi-flash.exe //F > /dev/null 2>&1 || true
-  sleep 1
+  smoke_kill || { SMOKE_FAIL="烟测实例未能终止（PID $SMOKE_PID）"; return 1; }
   if [[ -s "$SMOKE_LOG" ]]; then SMOKE_FAIL="启动有输出"; return 1; fi
   return 0
 }
-# Defender 实时扫描对刚拷出的 exe 会短暂持锁 → 首启 Permission denied（0.5.0 实录，
-# 重跑即过）＝瞬时失败：歇 3 秒重试一轮，两轮都败才是真异常。
-if ! smoke_once; then
-  echo "    首轮烟测未过（$SMOKE_FAIL；多为 Defender 瞬时锁），3s 后重试…"
-  taskkill //IM pi-flash.exe //F > /dev/null 2>&1 || true
-  sleep 3
-  if ! smoke_once; then
-    echo "✗ 打包后烟测失败（两轮，$SMOKE_FAIL）："; cat "$SMOKE_LOG"; exit 1
+
+# 完整烟测（含 Defender 瞬时锁重试）：0 = 通过；1 = 失败（原因 $SMOKE_FAIL，
+# 现场 $SMOKE_LOG / $SMOKE_HOME 保留供排查）。
+smoke_run() {
+  if smoke_once; then
+    rm -rf "$SMOKE_HOME"
+    return 0
   fi
+  local first="$SMOKE_FAIL"
+  smoke_kill || true   # 超时等提前返回路径：先把本轮实例清干净再重试
+  # Defender 实时扫描对刚拷出的 exe 会短暂持锁 → 首启 Permission denied（0.5.0 实录，
+  # 重跑即过）＝瞬时失败：歇 3 秒重试一轮，两轮都败才是真异常。
+  echo "    首轮烟测未过（$first；多为 Defender 瞬时锁），3s 后重试…"
+  sleep 3
+  if smoke_once; then
+    rm -rf "$SMOKE_HOME"
+    return 0
+  fi
+  smoke_kill || true
+  return 1
+}
+# SMOKE_END
+if ! smoke_run; then
+  echo "✗ 打包后烟测失败（两轮，$SMOKE_FAIL）："
+  echo "--- stdout/stderr ---"; cat "$SMOKE_LOG"
+  echo "--- 隔离 home pfctx.log ---"; cat "$SMOKE_PFCTX" 2>/dev/null || echo "(无)"
+  exit 1
 fi
 rm -f "$SMOKE_LOG"
-echo "    启动正常"
+echo "    启动正常（就绪信号已到，stdout/stderr 零输出）"
 
 TODAY=$(date +%F)
 echo "==> 5/8 更新 CHANGELOG.md / CHANGELOG_EN.md"
