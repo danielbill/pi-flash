@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use chrono::{Datelike, Days, Local, LocalResult, NaiveDate, TimeZone, Timelike};
 
 use pf_context::domain::tasks::TaskStore;
-use pf_context::domain::tasks::{Outcome, RUN_KEEP_LIMIT, ScheduleUnit, TaskSpec, Trigger};
+use pf_context::domain::tasks::{Outcome, RUN_KEEP_LIMIT, ScheduleUnit, TaskSpec};
 
 use crate::services::scheduler::{DueJob, JobOutcome};
 
@@ -313,7 +313,7 @@ fn floor_div(a: i64, b: i64) -> i64 {
 mod tests {
     use super::*;
     use pf_context::domain::DbSource;
-    use pf_context::domain::tasks::{AgentSpec, TaskKind, TaskSchedule};
+    use pf_context::domain::tasks::{AgentSpec, TaskKind, TaskSchedule, Trigger};
 
     /// 测试窗口全落 1–2 月（南北半球 DST 均不切换），本地时区无关断言。
     fn local_ms(y: i32, m: u32, d: u32, h: u32, mi: u32) -> i64 {
