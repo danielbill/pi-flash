@@ -102,14 +102,15 @@ pub(crate) fn page(
 // ---------------------------------------------------------------------------
 
 /// 行结果槽：running = spinner / ok = 绿点 / failed = 红点 / timeout = 黄点 /
-/// skipped = 空槽（截图拍板：灰名无点）。
+/// skipped = 灰点（2026-11-23 用户令改：原「灰名无点」读不出这是跳过账，
+/// 原因 hover 也无处落——灰点 = 可 hover 出「跳过 · 原因」，仍不可点开）。
 pub(crate) fn run_slot(r: &TaskRun, t: &'static Theme) -> Option<AnyElement> {
     match r.outcome {
         Outcome::Running => Some(spark_spinner(12., t.accent)),
         Outcome::Ok => Some(status_dot(theme::UNREAD)),
         Outcome::Failed => Some(status_dot(t.danger)),
         Outcome::Timeout => Some(status_dot(theme::WARN)),
-        Outcome::Skipped => None,
+        Outcome::Skipped => Some(status_dot(t.text_faint)),
     }
 }
 
