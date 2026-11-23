@@ -2,6 +2,26 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.1] - 2026-11-23
+
+Highlights of this release:
+1. Fixed scheduled-task log errors: a single due trigger spamming a dozen-plus "skipped" entries, re-triggers during a run being dropped; "skipped" entries are no longer recorded
+2. Task log list rebuilt: inset row dividers lighter than card borders, height adapts to content
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and update
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively download the zip portable build, extract it and double-click `pi-flash.exe`. Windows x64 only.
+
+### Bug fixes
+- Scheduled-task log errors: a single due trigger spammed a dozen-plus "skipped" entries; a due tick while a task was already running was recorded as "skipped" and dropped (the log entry spinner stuck on the old item, with no result dot to click after the run). "Skipped" is no longer recorded — the ledger only contains real executions, and legacy skipped rows are hidden; an overlapping due tick now relays automatically once the running task settles. (2cd60bf8, 581e3c4c, 247915f3)
+
+### Improvements
+- Task log list rebuilt: row dividers are inset to align with the content padding and render lighter than card borders (new shared list component list_row_divider, also adopted by the models list); the log area keeps a stable half-window height with the table card top-aligned, its height adapting to the number of entries and scrolling past one screen. (2c959ed7, 60bc5c89, ed5239e5)
 ## [0.6.0] - 2026-11-22
 
 Highlights of this release:
