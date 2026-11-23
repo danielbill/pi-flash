@@ -178,7 +178,7 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 
 | 症状 | 处置 |
 |---|---|
-| 烟测 ✗ 启动有输出 | 脚本已自动歇 3s 重试一轮（Defender 对新拷 exe 的瞬时锁属瞬时失败，0.5.0 实录）；两轮都败才看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑 |
+| 烟测 ✗ 启动有输出 | 脚本已自动歇 3s 重试一轮（Defender 对新拷 exe 的瞬时锁属瞬时失败，0.5.0 实录）；两轮都败才看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑；其它前缀行（如 `[scheduler]`）同理 = 该模块诊断没落 pfctx.log 的门控回归，修码重跑（排查判据见 `docs/agents/engineering.md` 发版脚本节） |
 | 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。预写的 CHANGELOG 段自行提交后再整脚重跑。中止重跑被**同版本版本三件套残迹**卡住的情况脚本已自动放行，无需手工还原 |
 | 体积守卫 ✗（>250MB 或 > 上一版 ×1.8） | 打包现场混入异物（0.5.0：extensions 里 target-check 4.3GB 随包）；step 0.5 预清理只清已知模式，按 `du -sh dist/pi-flash/*` 查体积构成，清完重跑 |
 | ship.sh ✗ tag 已存在 / push 断网 / release 撞名 | 分别见 §0 永不复用、§6 git push 断网、§6 release 撞名；脚本各步失败信息已带对应处置 |

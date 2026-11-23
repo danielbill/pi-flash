@@ -13,7 +13,8 @@
 //! - misfire 宽限等通用判定以纯函数 helper 提供在消费侧（tasks/sched.rs）。
 //!
 //! log 约定 `[scheduler]`：source 注册/移除、recover 清理条数、tick 认领/
-//! 派发条数（仅变化时记，防刷屏）。
+//! 派发条数（仅变化时记，防刷屏）。一律经 [`sched_log`] 落 pfctx.log
+//! （debug 构建另回显终端）——release 不得 eprintln 直打（烟测零输出门禁）。
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,6 +129,18 @@ pub(crate) fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+/// `[scheduler]` 诊断日志：落 pfctx.log（宿主模块留痕入口，pfctx_ops 的
+/// `[agent]` 行同款），debug 构建另回显终端（cargo run 排障习惯不变）。
+/// 不 eprintln 直打——发版烟测要求启动 stdout/stderr 零输出：2026-11-23 0.6.1
+/// 重跑实录：source 注册 / recover 两行无条件直打，实例走到调度泵即卡门禁
+/// （0.6.0 起就在，此前烟测是实例没走到这步才侥幸放行）。
+fn sched_log(msg: impl std::fmt::Display) {
+    let msg = msg.to_string();
+    #[cfg(debug_assertions)]
+    eprintln!("[scheduler] {msg}");
+    pf_context::log("scheduler", &msg);
+}
+
 /// 注册调度源（幂等不查重——启动期一次调用；S4 dev-flag 门住注册点）。
 pub(crate) fn register(source: Arc<dyn ScheduleSource>) {
     let id = source.id();
@@ -135,7 +148,7 @@ pub(crate) fn register(source: Arc<dyn ScheduleSource>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(source);
-    eprintln!("[scheduler] source 注册: {id}");
+    sched_log(format!("source 注册: {id}"));
 }
 
 /// in-flight 快照（任务状态面 running 读点；已排序）。
@@ -248,8 +261,8 @@ async fn tick_round(this: &gpui::WeakEntity<Chat>, cx: &mut gpui::AsyncApp) -> b
 fn recover_all() {
     for source in sources() {
         match source.recover(now_ms()) {
-            Ok(n) => eprintln!("[scheduler] recover {} 清理 {n} 条", source.id()),
-            Err(e) => eprintln!("[scheduler] recover {} 失败: {e}", source.id()),
+            Ok(n) => sched_log(format!("recover {} 清理 {n} 条", source.id())),
+            Err(e) => sched_log(format!("recover {} 失败: {e}", source.id())),
         }
     }
 }
@@ -276,7 +289,7 @@ fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> bool {
                 Err(e) => {
                     // 派发失败：v1 不自动重试，直接结算 failed，下轮按周期继续
                     // （ZCode automationRepo 退避重试列为 v2）
-                    eprintln!("[scheduler] 派发失败 {} task={}: {e}", source.id(), job.key);
+                    sched_log(format!("派发失败 {} task={}: {e}", source.id(), job.key));
                     source.settle(job, JobOutcome::dispatch_failed(&e), now_ms());
                 }
             }
@@ -329,7 +342,7 @@ pub(crate) fn dispatch_manual(
             spawn_settle(source, job, rx, cx);
         }
         Err(e) => {
-            eprintln!("[scheduler] 手动派发失败 {}: {e}", job.key);
+            sched_log(format!("手动派发失败 {}: {e}", job.key));
             source.settle(job, JobOutcome::dispatch_failed(&e), now_ms());
             chat.tasks_refresh();
             cx.notify();
@@ -345,7 +358,7 @@ fn sources() -> Vec<Arc<dyn ScheduleSource>> {
 fn log_tick_counts(claimed: usize, dispatched: usize) {
     let mut last = LAST_TICK_LOG.lock().unwrap_or_else(|e| e.into_inner());
     if *last != (claimed, dispatched) {
-        eprintln!("[scheduler] tick 认领 {claimed} 派发 {dispatched}");
+        sched_log(format!("tick 认领 {claimed} 派发 {dispatched}"));
         *last = (claimed, dispatched);
     }
 }
