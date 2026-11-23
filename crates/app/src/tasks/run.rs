@@ -10,8 +10,8 @@
 //!   620 弹窗消费）。
 //! - **立即运行**：[`Chat::task_run_now`]，trigger = manual——manual 派发
 //!   不走 claim、不碰周期指针（「manual 不污染 cron 节奏」，ZCode
-//!   automationRepo.ts:666-751）；manual 占用中再撞 schedule 触发由 claim
-//!   撞车分支记一条 skip + 前推（tasks/sched.rs）。
+//!   automationRepo.ts:666-751）；运行中再触发的 schedule 到点由 claim
+//!   接力排队（保持到期，结算后补跑，tasks/sched.rs）。
 //!
 //! 两类执行体都经 oneshot 回报 [`JobOutcome`]，结算统一走 scheduler
 //! `spawn_settle` → TasksSource::settle → settle_job（单一路径；只写结果

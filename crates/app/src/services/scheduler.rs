@@ -94,7 +94,8 @@ pub(crate) trait ScheduleSource: Send + Sync {
     /// 启动时自清上个实例残留 → 清理条数（log 用）。
     fn recover(&self, now: i64) -> Result<usize, String>;
     /// 认领到期作业。`in_flight` = 已派发未结算 key（防重复派发）；
-    /// skip 类作业（in-flight 撞车 / misfire 超窗）由 source 自己落账后**不返回**。
+    /// 运行中再触发 = 接力（保持到期不返回，结算后补跑）；misfire 超窗
+    /// 类作业由 source 自己落账后**不返回**。
     fn claim(&self, now: i64, in_flight: &HashSet<String>) -> Vec<DueJob>;
     /// 派发（spawn 执行体，oneshot 回报）。Err = 派发失败——v1 不自动重试，
     /// 直接结算 failed，下轮按周期继续。

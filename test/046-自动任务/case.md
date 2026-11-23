@@ -22,10 +22,13 @@
 | next_run：daily 跨日回滚 | app `daily_rolls_to_next_day_when_today_passed` | |
 | next_run：weekly 周一=1 位次/最近周几 | app `weekly_monday_is_one_and_nearest_weekday_wins` | 2026-01-05 是周一 |
 | next_run：monthly 溢出日跳过 | app `monthly_skips_overflow_day` | 1/31 → 3/31（2 月无效跳过） |
-| claim：due/宽限内/in-flight 撞车 skip/misfire 超窗 skip+前推 | app `claim_filters_inflight_misfire_and_due` | 5min 宽限边界；busy 落 skipped；misfire 锚点不动前推 next |
-| settle：整行结算+锚点保留重算 | app `settle_writes_outcome_and_reschedules_from_anchor` | |
+| claim：due/宽限内/in-flight 接力保持到期/misfire 超窗 skip+前推 | app `claim_filters_inflight_misfire_and_due` | 5min 宽限边界；busy 零落账指针不动；misfire 锚点不动前推 next |
+| 运行中接力：跨格零落账、结算后补跑 | app `in_flight_overlap_relays_after_settle` | 重叠触发保持到期；结算后认领 scheduled_at=重叠格；指针再前推 |
+| 接力上界：超长运行拖过宽限 → 一条 skipped | app `relay_exceeding_grace_drops_single_skip_row` | 不追债不排队爆炸；skip 挂计划触发时刻 |
+| 运行期 tick 零刷屏（刷屏事故回归） | app `running_task_ticks_do_not_spam_ledger` | 运行期多 tick 台账恒 1 行 |
+| settle：整行结算不碰指针 | app `settle_writes_outcome_and_never_touches_pointer` | 指针归 claim 认领即消费 |
 | settle：manual 不污染周期 | app `settle_manual_never_touches_schedule` | next_run/锚点原样 |
-| settle：无 running 行（派发失败）周期照常推进 | app `settle_without_running_row_still_advances_schedule` | S2 stub 路径 |
+| settle：无 running 行（派发前置失败）空转 | app `settle_without_running_row_is_noop` | 指针已由 claim 前推 |
 | settle：timeout 细分键映射 | app `settle_timeout_maps_by_kind` | |
 | recover：running 残留置 failed(app_exit)+首轮 prune | app `recover_marks_orphans_failed_and_prunes_first_round` | 二轮幂等 |
 | 脚本 runner：exit 0/非零/超时强杀/kill 旗标/不支持扩展名 | app `tasks::run::tests::*`（5 例） | CREATE_NO_WINDOW；输出尾进 result_json |

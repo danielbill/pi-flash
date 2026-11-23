@@ -11,9 +11,11 @@
 //!   候选（认领前推以当下为基准 → 恒给未来值，跑超一个周期也不产生追债）。
 //! - claim：due = enabled ∧ next_run_at ≤ now → **认领即消费**（指针当场
 //!   前推到严格未来值；ZCode markDispatched 是「派发结算」而非运行完成
-//!   结算，automationRepo.ts:998-1050）→ in-flight 撞车 / misfire 超窗各
-//!   记**一条** skipped run（at = 计划触发时刻）+ 指针前推，一触发至多一
-//!   行账 → 交调度泵派发。
+//!   结算，automationRepo.ts:998-1050）→ 运行中再触发**接力不丢弃**：触发
+//!   保持到期（不落账、指针不动），结算后下一轮 tick 认领补跑（ZCode
+//!   claimDue 只认领 running=0 行，重叠触发天然排队）；misfire 超窗（超
+//!   5min 宽限）记一条 skipped run（at = 计划触发时刻）+ 前推 → 交调度泵
+//!   派发。
 //! - settle：只结算 running 台账行，**不碰调度指针**（2026-11-23 修：原
 //!   settle 重算使运行期每 tick 重复判定到期，每 tick 落一条 skip 刷屏
 //!   任务日志）。「manual 不污染 cron 节奏」由 manual 派发不走 claim 保证
@@ -33,7 +35,8 @@ use super::{tasks_err, tasks_log};
 
 /// misfire 宽限：next_run_at 早于 now 超过该值 → 视为「关机/休眠/退出期间
 /// 错过的窗口」→ 记 skipped 不补跑。取值明显大于一次正常轮询延迟（ZCode
-/// MISFIRE_GRACE_MS 同值）。
+/// MISFIRE_GRACE_MS 同值）。也是接力等待的上界：运行拖到触发超窗 → 放弃
+/// 该次不追债（防排队爆炸）。
 pub(crate) const MISFIRE_GRACE_MS: i64 = 5 * 60_000;
 
 /// daily/weekly 搜索边界（100 年；ZCode 36_600/5_220 同值——无未来候选 =
@@ -145,10 +148,11 @@ pub(crate) fn next_run_at(spec: &TaskSpec, anchor_at: i64, from: i64) -> Option<
 // claim / settle / recover（&TaskStore 界面）
 // ---------------------------------------------------------------------------
 
-/// 认领到期作业（046-0 claim 流程，2026-11-23 重构「认领即消费」）：
-/// due（enabled ∧ next_run_at ≤ now）→ spec 解析失败入休眠 → in-flight
-/// 撞车 / misfire 超窗各落一条 skipped run + 指针前推 → 正常认领当场把
-/// 指针前推到严格未来值再交派发（派发失败/崩溃都不会重复触发）。
+/// 认领到期作业（046-0 claim 流程，2026-11-23 重构「认领即消费 + 接力」）：
+/// due（enabled ∧ next_run_at ≤ now）→ spec 解析失败入休眠 → 运行中再触发
+/// 接力（保持到期不落账，结算后补跑）→ misfire 超窗落一条 skipped + 前推
+/// → 正常认领当场把指针前推到严格未来值再交派发（派发失败/崩溃都不会
+/// 重复触发）。
 pub(crate) fn claim_due(
     store: &TaskStore<'_>,
     now: i64,
@@ -174,22 +178,23 @@ pub(crate) fn claim_due(
             continue;
         };
         let anchor = def.anchor_at.unwrap_or(next);
-        // 运行中再触发（manual 占用 / 上轮超期压格）→ 真实被挤掉的触发：
-        // 记一条 skipped（at = 计划触发时刻）+ 指针前推，与 misfire 同构。
-        // 一条 skip 行 ↔ 一个被消费的触发（原实现指针结算才推进，运行期每
-        // tick 重复判定到期 → 每 tick 落一条 skip，任务日志 14 条的根因）。
+        // 运行中再触发（manual 占用 / 上轮超期压格）→ **接力不丢弃**：触发
+        // 保持到期（不落账、指针不动），等当前运行结算后下一轮 tick 认领
+        // 补跑——ZCode 原型 claimDue 只认领 running=0 行，重叠触发天然排队，
+        // 无 overlap-skip 概念（2026-11-23 二修：记 skip 丢触发不符
+        // 「每触发必跑」预期，用户实测点名 08:46 触发被丢）。
         if in_flight.contains(&def.id) {
-            skip_run(store, &def.id, next, "上一轮仍在运行");
-            advance_pointer(store, &def.id, &spec, anchor, now);
             continue;
         }
-        // misfire：计划触发时刻早于 now-5min → 错过窗口，skip 不补跑
+        // misfire：计划触发时刻早于 now-5min → 错过窗口，skip 不补跑。
+        // 覆盖两类：应用未运行期间错过的；接力等待中被超长运行拖过宽限的
+        // （后者是接力的天然上界，防追债排队爆炸）。
         if next < now - MISFIRE_GRACE_MS {
             skip_run(
                 store,
                 &def.id,
                 next,
-                "错过触发窗口（应用未运行期间），不补跑",
+                "错过触发窗口（超过 5 分钟宽限），不补跑",
             );
             advance_pointer(store, &def.id, &spec, anchor, now);
             continue;
@@ -512,7 +517,7 @@ mod tests {
             Some(now - 10 * 60_000),
             Some(now - 86_400_000),
         );
-        // in-flight 撞车
+        // in-flight 接力等待（重叠触发保持到期）
         make_def(
             &store,
             "busy",
@@ -544,15 +549,12 @@ mod tests {
         let keys: Vec<&str> = jobs.iter().map(|j| j.key.as_str()).collect();
         assert_eq!(keys, vec!["due"], "只有宽限内到期且不撞车的进派发");
 
-        // busy：in-flight skip 落账（at = 计划触发时刻）+ 指针前推
-        let busy = store.last_run("busy").unwrap().unwrap();
-        assert_eq!(busy.outcome, Outcome::Skipped);
-        assert_eq!(busy.started_at, now - 60_000);
-        let busy_fwd =
-            next_run_at(&agent_def_spec(ScheduleUnit::Daily), now - 86_400_000, now).unwrap();
+        // busy：运行中再触发 → 接力保持到期（不落账、指针不动，等结算补跑）
+        assert!(store.last_run("busy").unwrap().is_none(), "接力等待不落账");
         assert_eq!(
             store.get_def("busy").unwrap().unwrap().next_run_at,
-            Some(busy_fwd)
+            Some(now - 60_000),
+            "重叠触发保持到期"
         );
 
         // due：认领即消费——指针当场前推，且认领本身不落 run 行
@@ -619,31 +621,84 @@ mod tests {
         assert_eq!(jobs[0].scheduled_at, t0 + 20 * 60_000);
     }
 
-    /// in-flight 真实重叠（manual 占用 / 上轮超期压格）：一个被挤掉的触发
-    /// 只落一条 skipped（at = 计划触发时刻）+ 指针前推，后续 tick 零新增。
+    /// 运行中再触发 = 接力不丢弃（2026-11-23 二修，用户令）：重叠触发保持
+    /// 到期（零落账、指针不动），结算后下一轮认领补跑（宽限内）。
     #[test]
-    fn in_flight_overlap_skips_once_and_forwards() {
+    fn in_flight_overlap_relays_after_settle() {
         let (_dir, db) = db();
         let store = TaskStore::new(&db);
-        let now = local_ms(2026, 2, 10, 12, 0);
-        let anchor = local_ms(2026, 2, 10, 8, 0);
-        let spec = agent_def_spec(ScheduleUnit::Daily); // 每天 08:30
-        make_def(&store, "t", &spec, Some(now), Some(anchor));
+        let t0 = local_ms(2026, 2, 10, 12, 0);
+        let spec = mk_spec(ScheduleUnit::Minute, 20, 0, 0, vec![], 0);
+        make_def(&store, "t", &spec, Some(t0), Some(t0));
 
+        // 第一轮认领派发：指针前推 t0+20min；run 行由 dispatch 落
+        assert_eq!(claim_due(&store, t0, &HashSet::new()).len(), 1);
+        store.start_run("t", Trigger::Schedule, t0, None).unwrap();
+
+        // 运行跨过下一格（t0+20min）：重叠触发保持到期——零落账、指针不动
         let inflight: HashSet<String> = ["t".to_string()].into();
-        let jobs = claim_due(&store, now, &inflight);
-        assert!(jobs.is_empty());
-        let skip = store.last_run("t").unwrap().unwrap();
-        assert_eq!(skip.outcome, Outcome::Skipped);
-        assert_eq!(skip.started_at, now, "skip 行挂计划触发时刻");
-        let fwd = next_run_at(&spec, anchor, now).unwrap();
-        assert_eq!(store.get_def("t").unwrap().unwrap().next_run_at, Some(fwd));
-
-        // 后续 tick（仍在运行）：指针已前推，零新增行
-        for s in [20_000, 40_000] {
-            assert!(claim_due(&store, now + s, &inflight).is_empty());
+        for s in [20 * 60_000 + 5_000, 20 * 60_000 + 25_000] {
+            assert!(claim_due(&store, t0 + s, &inflight).is_empty());
+            assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
         }
+        assert_eq!(
+            store.get_def("t").unwrap().unwrap().next_run_at,
+            Some(t0 + 20 * 60_000),
+            "重叠触发保持到期"
+        );
+
+        // 结算后下一轮 tick：宽限内（overdue ~1min10s）→ 接力补跑，指针再前推
+        settle_job(&store, "t", &JobOutcome::ok(None), t0 + 21 * 60_000).unwrap();
+        let jobs = claim_due(&store, t0 + 21 * 60_000 + 10_000, &HashSet::new());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].scheduled_at,
+            t0 + 20 * 60_000,
+            "接力的是重叠那次触发"
+        );
+        assert_eq!(
+            store.get_def("t").unwrap().unwrap().next_run_at,
+            Some(t0 + 40 * 60_000)
+        );
+        assert_eq!(
+            store.list_runs(Some("t"), -1).unwrap().len(),
+            1,
+            "接力认领不落账（run 行归 dispatch）"
+        );
+    }
+
+    /// 接力有界：运行超长拖到触发超 5min 宽限 → 结算后认领按 misfire 落
+    /// 一条 skipped + 前推重同步——不追债、不排队爆炸。
+    #[test]
+    fn relay_exceeding_grace_drops_single_skip_row() {
+        let (_dir, db) = db();
+        let store = TaskStore::new(&db);
+        let t0 = local_ms(2026, 2, 10, 12, 0);
+        let spec = mk_spec(ScheduleUnit::Minute, 20, 0, 0, vec![], 0);
+        make_def(&store, "t", &spec, Some(t0), Some(t0));
+
+        assert_eq!(claim_due(&store, t0, &HashSet::new()).len(), 1);
+        store.start_run("t", Trigger::Schedule, t0, None).unwrap();
+
+        // 运行 30min（跨 t0+20min 格）：重叠触发保持到期零落账
+        let inflight: HashSet<String> = ["t".to_string()].into();
+        assert!(claim_due(&store, t0 + 20 * 60_000 + 5_000, &inflight).is_empty());
         assert_eq!(store.list_runs(Some("t"), -1).unwrap().len(), 1);
+
+        // 结算后认领：overdue 10min10s > 5min 宽限 → 一条 skipped，不补跑
+        settle_job(&store, "t", &JobOutcome::ok(None), t0 + 30 * 60_000).unwrap();
+        let jobs = claim_due(&store, t0 + 30 * 60_000 + 10_000, &HashSet::new());
+        assert!(jobs.is_empty());
+        let rows = store.list_runs(Some("t"), -1).unwrap();
+        assert_eq!(rows.len(), 2, "ok + 一条 skipped");
+        let skip = &rows[0]; // started_at 倒序，skip 最新
+        assert_eq!(skip.outcome, Outcome::Skipped);
+        assert_eq!(skip.started_at, t0 + 20 * 60_000, "挂计划触发时刻");
+        assert_eq!(
+            store.get_def("t").unwrap().unwrap().next_run_at,
+            Some(t0 + 40 * 60_000),
+            "前推重同步，不追债"
+        );
     }
 
     // ---- settle ----
