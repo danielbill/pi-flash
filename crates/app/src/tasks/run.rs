@@ -33,6 +33,7 @@ use crate::session::runtime::SessionRuntime;
 use crate::{Chat, services};
 
 use super::store::open_store;
+use super::tasks_log;
 
 /// 脚本任务超时（§1.3 说明行：超时 30 分钟自动终止）。
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -112,11 +113,11 @@ pub(crate) fn dispatch(
     };
     match spawned {
         Ok(()) => {
-            eprintln!(
-                "[tasks] 派发: task={def_id} trigger={} title={}",
+            tasks_log(&format!(
+                "派发: task={def_id} trigger={} title={}",
                 trigger.as_str(),
                 def.title
-            );
+            ));
             Ok(rx)
         }
         Err(e) => {
@@ -408,14 +409,14 @@ pub(crate) fn on_turn_settled(
     } else {
         JobOutcome::ok(None)
     };
-    eprintln!(
-        "[tasks] turn 终态: task={} run={} outcome={} session={}",
+    tasks_log(&format!(
+        "turn 终态: task={} run={} outcome={} session={}",
         ctx.def_id,
         ctx.run_id,
         outcome.kind,
         file.map(|f| f.to_string_lossy().to_string())
             .unwrap_or_default()
-    );
+    ));
     let _ = ctx.tx.send(outcome);
 }
 
@@ -439,7 +440,9 @@ pub(crate) fn task_driver_rekey(
         ctx.rt = Some(rt.clone());
         chat.tasks.pending.insert(new_key.clone(), ctx);
     }
-    eprintln!("[tasks] 任务会话让出路径 key 给观察窗: {path_key} -> {new_key}");
+    tasks_log(&format!(
+        "任务会话让出路径 key 给观察窗: {path_key} -> {new_key}"
+    ));
 }
 
 /// `Chat::on_file_bound`（draft 晋级）：任务会话绑到真实文件 → 迁移在途

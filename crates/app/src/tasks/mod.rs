@@ -34,12 +34,17 @@ use crate::ui::text_input::TextInput;
 /// prune 顺带跑周期（046-0：泵每小时 tick 计数器到点执行；启动 recover 已跑首轮）。
 const PRUNE_EVERY_MS: i64 = 3_600_000;
 
+/// `[tasks]` 诊断日志：落 pfctx.log（宿主模块留痕入口），debug 构建另回显终端。
+/// release 不 eprintln 直打——发版烟测零输出门禁，与 scheduler.rs 的
+/// sched_log 同款（2026-11-23 0.6.1 发版：scheduler 一族直打卡门禁后一并收口）。
 fn tasks_log(msg: &str) {
+    #[cfg(debug_assertions)]
     eprintln!("[tasks] {msg}");
+    pf_context::log("tasks", msg);
 }
 
 fn tasks_err(msg: &str) {
-    eprintln!("[tasks] {msg}");
+    tasks_log(msg);
 }
 
 // ---------------------------------------------------------------------------
