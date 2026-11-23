@@ -19,6 +19,7 @@ Requires Node.js ≥ 22.19. Alternatively download the zip portable build, extra
 
 ### Bug fixes
 - Scheduled-task log errors: a single due trigger spammed a dozen-plus "skipped" entries; a due tick while a task was already running was recorded as "skipped" and dropped (the log entry spinner stuck on the old item, with no result dot to click after the run). "Skipped" is no longer recorded — the ledger only contains real executions, and legacy skipped rows are hidden; an overlapping due tick now relays automatically once the running task settles. (2cd60bf8, 581e3c4c, 247915f3)
+- Task list title truncation misaligned: rows of tasks that had never run showed no timestamp, so the time column narrowed and the name ran further than on other rows; rows without a timestamp now pad the time column with a placeholder, so every name is truncated at the time column's left edge. (50907ce7)
 
 ### Improvements
 - Task log list rebuilt: row dividers are inset to align with the content padding and render lighter than card borders (new shared list component list_row_divider, also adopted by the models list); the log area keeps a stable half-window height with the table card top-aligned, its height adapting to the number of entries and scrolling past one screen. (2c959ed7, 60bc5c89, ed5239e5)
