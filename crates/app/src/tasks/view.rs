@@ -116,6 +116,9 @@ pub(crate) fn run_slot(r: &TaskRun, t: &'static Theme) -> Option<AnyElement> {
 }
 
 /// mono 时间戳 `MM-DD HH:MM:SS`（截图拍板格式）。
+/// 时间列占位串（与 fmt_stamp 同格式同长，定时间列宽）
+const STAMP_PLACEHOLDER: &str = "00-00 00:00:00";
+
 pub(crate) fn fmt_stamp(ms: i64) -> String {
     match chrono::Local.timestamp_millis_opt(ms) {
         chrono::LocalResult::Single(t) => t.format("%m-%d %H:%M:%S").to_string(),
@@ -249,7 +252,8 @@ fn task_row(
         // 盖在时间上——visibility 互斥（notification.rs 同款 invisible ⇄
         // visible；invisible 不吃命中，时间区点击照常选中行）。槽 min_w =
         // 三钮宽（22×3 + SP2×2，与 task_act_btn 尺寸同源），时间短于钮区时
-        // 名字也不被 hover 钮盖住。日志行无动作钮，恒显时间。
+        // 名字也不被 hover 钮盖住。日志行无动作钮，恒显时间。无时间戳行
+        // 以占位串撑满时间列宽——名字截断位 = 时间列左缘，各行对齐。
         .child({
             // 时间在 hover 组内反向隐身（reveal 组挂行容器，见上）
             let stamp_el = div()
@@ -260,7 +264,15 @@ fn task_row(
                 .text_size(ui_size(11.))
                 .text_color(rgb(t.text_faint))
                 .when_some(reveal, |d, r| d.group_hover(r, |s| s.invisible()))
-                .child(SharedString::from(stamp));
+                // 无时间戳（未跑过）行占位同宽假串：时间列恒定宽，名字统一
+                // 截断在时间列左缘（否则退到三钮 min_w，截断位落到时间列中间
+                // ——2026-11-23 用户报）；invisible 只留布局宽、不吃命中
+                .when(stamp.is_empty(), |d| d.invisible())
+                .child(SharedString::from(if stamp.is_empty() {
+                    STAMP_PLACEHOLDER.to_string()
+                } else {
+                    stamp
+                }));
             let mut slot = div()
                 .relative()
                 .h(px(crate::ui::tokens::row::TASK))
