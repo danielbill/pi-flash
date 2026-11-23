@@ -180,6 +180,9 @@ pub mod divider {
     /// 感应带厚度（三处统一；竖直分隔线的摆位另定：面板侧 3px 避让列表
     /// 滚动条，其余落在内容侧）
     pub const HIT: f32 = 12.;
+    /// 列表行内缩分隔线 alpha（`theme::border_alpha` 入参；2026-11-23 用户
+    /// 令：行隔线要比卡片边框细且淡——alpha 0x66 ≈ 40%，明显淡于满色边框）
+    pub const ROW_ALPHA: u32 = 0x66;
 }
 
 /// §2 渲染特例固定字号（px）：markdown 内部 chrome 不经 ui_size（§2 禁止

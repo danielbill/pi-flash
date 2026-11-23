@@ -2,7 +2,7 @@
 //! `group_header`）与详情区（`detail_shell`），列宽 `LIST_W = 450`。见 §10.2。
 
 use gpui::prelude::*;
-use gpui::{AnyElement, FontWeight, SharedString, div, px, rgb};
+use gpui::{AnyElement, FontWeight, SharedString, div, px, rgb, rgba};
 
 use crate::appearance::theme::theme as T;
 
@@ -87,10 +87,11 @@ pub(crate) fn group_header(label: &str, aside: Option<AnyElement>) -> AnyElement
 }
 
 /// 列表行分隔线（2026-11-23 用户令）：1px hairline **左右内缩对齐行内容
-/// 留白**，不满铺顶两头。绝对定位 overlay 不占布局（divider 高亮线同款
-/// 手法，border 参与布局会推挤行内容）；色取 `t.border`（调用方不传灰）。
-/// 挂行容器（容器须 `.relative()`），首行不挂。模型列表 / 任务日志等
-/// 行式列表共用，禁就地手画 border_t。
+/// 留白**，不满铺顶两头；色 = `border_alpha(ROW_ALPHA=0x66)`，**比卡片
+/// 边框细且淡**（2026-11-23 二令）。绝对定位 overlay 不占布局（divider
+/// 高亮线同款手法，border 参与布局会推挤行内容）。挂行容器（容器须
+/// `.relative()`），首行不挂。模型列表 / 任务日志等行式列表共用，禁就
+/// 地手画 border_t。
 pub(crate) fn list_row_divider(left: f32, right: f32) -> AnyElement {
     let t = T();
     div()
@@ -99,7 +100,10 @@ pub(crate) fn list_row_divider(left: f32, right: f32) -> AnyElement {
         .left(px(left))
         .right(px(right))
         .h(px(1.))
-        .bg(rgb(t.border))
+        .bg(rgba(crate::appearance::theme::border_alpha(
+            t,
+            crate::ui::tokens::divider::ROW_ALPHA,
+        )))
         .into_any_element()
 }
 
