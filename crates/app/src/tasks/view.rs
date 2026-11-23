@@ -23,7 +23,7 @@ use crate::services::format::fmt_msg_time;
 use crate::tasks::DefRow;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::ui::icon;
-use crate::ui::kit::{Btn, config_button, icon_btn, sidebar_item, status_dot};
+use crate::ui::kit::{Btn, config_button, icon_btn, list_row_divider, sidebar_item, status_dot};
 use crate::ui::overlay;
 use crate::ui::spark_spinner;
 use crate::ui::tooltip::WithTip;
@@ -576,10 +576,17 @@ fn run_log_panel(
                 .h(px(crate::ui::tokens::row::TASK))
                 .pl(px(crate::ui::tokens::space::SP6))
                 .pr(px(crate::ui::tokens::space::SP6))
+                .relative()
                 .flex()
                 .items_center()
                 .gap(px(crate::ui::tokens::space::SP4))
-                .when(ix > 0, |d| d.border_t_1().border_color(rgb(t.border)))
+                // 行分隔线内缩对齐内容留白（2026-11-23 用户令：不满铺顶两头）
+                .when(ix > 0, |d| {
+                    d.child(list_row_divider(
+                        crate::ui::tokens::space::SP6,
+                        crate::ui::tokens::space::SP6,
+                    ))
+                })
                 // 结果点（hover 摘要同前）
                 .child(
                     div()

@@ -86,6 +86,23 @@ pub(crate) fn group_header(label: &str, aside: Option<AnyElement>) -> AnyElement
         .into_any_element()
 }
 
+/// 列表行分隔线（2026-11-23 用户令）：1px hairline **左右内缩对齐行内容
+/// 留白**，不满铺顶两头。绝对定位 overlay 不占布局（divider 高亮线同款
+/// 手法，border 参与布局会推挤行内容）；色取 `t.border`（调用方不传灰）。
+/// 挂行容器（容器须 `.relative()`），首行不挂。模型列表 / 任务日志等
+/// 行式列表共用，禁就地手画 border_t。
+pub(crate) fn list_row_divider(left: f32, right: f32) -> AnyElement {
+    let t = T();
+    div()
+        .absolute()
+        .top_0()
+        .left(px(left))
+        .right(px(right))
+        .h(px(1.))
+        .bg(rgb(t.border))
+        .into_any_element()
+}
+
 /// ConfigDetail 基座：flex-1 滚动 + 20px 内边距。
 pub(crate) fn detail_shell(id: &'static str) -> gpui::Stateful<gpui::Div> {
     div()

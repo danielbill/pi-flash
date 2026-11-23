@@ -82,10 +82,14 @@ pub(crate) fn model_list_vlist(
                 // 左 12 内容留白；右 24 = 12 内容 + 12 滚动条让位（不压 switch）
                 .pl(px(12.))
                 .pr(px(24.))
+                .relative()
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .when(ix > 0, |d| d.border_t_1().border_color(rgb(t.border)))
+                // 行分隔线内缩对齐内容留白（2026-11-23 用户令：不满铺顶两头）
+                .when(ix > 0, |d| {
+                    d.child(crate::ui::kit::list_row_divider(12., 24.))
+                })
                 .child(
                     div()
                         .flex_1()

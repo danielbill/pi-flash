@@ -426,6 +426,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 说明 / 错误 | ui(11)，`text_dim` / `t.danger` | `note` / `error_note` |
 | mono 值块 | ui(11) + `MONO_FAMILY`，`nowrap + ellipsis` | `mono_text` |
 | 统计/计数 | mono ui(10) `text_dim`（如组头 `3/12`） | `group_switch` |
+| 列表行分隔线 `list_row_divider` | 1px `t.border`，**左右内缩对齐行内容留白**（模型列表 12/24、任务日志 12/12），绝对定位 overlay 不占布局（行容器须 `.relative()`，首行不挂）；**禁就地手画满宽 border_t**（2026-11-23 用户令：分隔线不满铺顶两头） | `layout::list_row_divider` |
 
 ### 10.4 控件族
 
