@@ -340,9 +340,13 @@ RESULT: fail=0。
 
 - `ui.hit_probe` 的 `chain` 是**全量** hitbox 列表，不是该点命中链——按
   `hovered == true` 过滤后取面积最小者，才是该点上的元素；
-- `wait --eq 2` 等数字值实测不成立（45s 超时，末帧快照里已是
-  `"defs":2`）——数字断言用 `snapshot + grep`，`wait` 只留给字符串/布尔；
-- `input.keys --arg keys=1` 这类纯数字键名被 `--arg` 按 JSON 数字解析，
-  到不了 handler（同上一条「单字符」陷阱，需 `--params-file`）；
+- `wait --surface dialogs --path …`：路径相对**该面的 JSON**（回包就是
+  `{"dialog":…,"tasks":{…}}`），写 `tasks.defs` 即可——多带面名前缀
+  `dialogs.tasks.defs` 永远取不到值（本轮 45s 超时即此：末帧快照已是
+  `"defs":2`）。`--eq` 对数字是好用的（值按 JSON 解析后比较），别误记成
+  「数字断言不成立」；
+- `input.keys --arg keys=1`：`--arg` 的值合法 JSON 就按 JSON 解析，纯数字
+  键名成了 number，handler 的 `as_str()` 取不到（`keys=t` 正常）——数字键
+  用 `--params-file` 传 `{"keys":"1"}`；
 - `shot` 是物理像素：目测坐标 × (逻辑宽 1706.67 / 图宽) 才是逻辑坐标——
   精确定位仍以 hit_probe 的 bounds 为准。
