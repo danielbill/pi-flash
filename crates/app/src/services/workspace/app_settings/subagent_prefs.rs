@@ -83,7 +83,7 @@ pub fn subagent_envs() -> Vec<(String, String)> {
             pi_link::agents::agents_dir().to_string_lossy().into_owned(),
         ),
         // PF 数据目录（001-2 §5 路径类白名单）：扩展由此定位 ext-context.json
-        // 投影。子进程同时继承父进程 env——PI_FLASH_DIR / PI_FLASH_PI_BIN 在
+        // 投影。子进程同时继承父进程 env——PI_FLASH_DIR 在
         // 父进程显式设置时自动传递，这里补的是「未显式设置 = 默认目录」情形。
         (
             "PI_FLASH_DIR".into(),

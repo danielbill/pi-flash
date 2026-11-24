@@ -10,12 +10,12 @@ cargo run -p app                                # 运行（bin: pi-flash）
 cargo test -p pi-link                           # 协议/路径测试都在 pi-link（deep_tree 用例自抬 32MB 栈，无需配 env）
 ```
 
-- 环境变量：`PI_FLASH_PI_BIN` 覆盖内置 pi；`PI_FLASH_THEME` 切主题（default/dark/rose）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；`PI_FLASH_DIR` 数据目录显式指定永远优先（未设时 debug/test 落 `./pi-flash-dev`、release 落 `~/.pi-flash`）；dev-flags 开发旗标（键表 = pi-link `dev_flags::KNOWN`，env `PI_FLASH_<键大写>=1/0` 最高优先）——机制详见 `docs/agents/engineering.md`「dev-flags」节
+- 环境变量：`PI_FLASH_VENDOR_DIR` 覆盖内置 pi（换整个 vendor 形状目录：node_modules/pi + node 运行时）；`PI_FLASH_NODE` 单换 node 运行时；`PI_FLASH_THEME` 切主题（内置八套主题名，如 mist/rose/one-dark，见 `appearance/theme.rs` 的 `ALL`）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；`PI_FLASH_DIR` 数据目录显式指定永远优先（未设时 debug/test 落 `./pi-flash-dev`、release 落 `~/.pi-flash`）；dev-flags 开发旗标（键表 = pi-link `dev_flags::KNOWN`，env `PI_FLASH_<键大写>=1/0` 最高优先）——机制详见 `docs/agents/engineering.md`「dev-flags」节
 - UI 测试：agent 调试 UI 一律走 pif-ui 自动化链路（`.agents/skills/pi-flash-ui-test/SKILL.md`），禁抢真实屏幕/鼠标/键盘，禁 OS 截图
 
 # 铁律
 - **快是第一卖点**：启动/首帧/输入/渲染热路径**禁止同步重活**，一律后台线程 + 过揭幕，能沉成缓存的必经缓存（自校验、失配自动回退）；改热路径要带实测数字（`Instant`/`[perf]` 计时进日志）
-- **内置pi**：vendored `@earendil-works/pi-coding-agent`，**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试（wire 陷阱与升级复核点见 `docs/agents/pi-rpc.md`）；开发期 `PI_FLASH_PI_BIN` 可覆盖
+- **内置pi**：vendored `@earendil-works/pi-coding-agent`，**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试（wire 陷阱与升级复核点见 `docs/agents/pi-rpc.md`）；开发期 `PI_FLASH_VENDOR_DIR`（换整个 vendor 形状目录）/ `PI_FLASH_NODE`（换 node 运行时）可覆盖
 - 完成任务保证编译通过后提交git并push，验收交给用户，禁非授权UI测试
 - 复杂需求编写testcase，存 `test/` 目录，按功能模块编号分目录存放
 - **GitHub 推送**：origin 已直连 SSH，`git push`/`git fetch` 直接推拉即可；勿走 HTTPS 远端、勿手拼 GIT_SSH_COMMAND
