@@ -73,6 +73,21 @@ pub(crate) fn icon_btn(
     locked: bool,
     on_click: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
 ) -> AnyElement {
+    icon_btn_lg(id, weak, icon_name, tip_key, locked, icon_tok::MD, on_click)
+}
+
+/// LG 18 档变体（046-T2 任务行尾动作钮四钮统一升档，2026-11-24 用户令：
+/// MD 在行尾尺度偏小；钮盒仍 22 = ib::SM）。同类钮要新档从本函数扩，不
+/// 要手搓。
+pub(crate) fn icon_btn_lg(
+    id: impl Into<SharedString>,
+    weak: &gpui::WeakEntity<Chat>,
+    icon_name: &'static str,
+    tip_key: &'static str,
+    locked: bool,
+    icon_px: f32,
+    on_click: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
+) -> AnyElement {
     let t = theme();
     let weak = weak.clone();
     div()
@@ -93,6 +108,6 @@ pub(crate) fn icon_btn(
             }
             let _ = weak.update(cx, |c, cx| on_click(c, cx));
         })
-        .child(icon(icon_name, icon_tok::MD, t.text_muted))
+        .child(icon(icon_name, icon_px, t.text_muted))
         .into_any_element()
 }

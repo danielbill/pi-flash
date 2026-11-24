@@ -85,7 +85,10 @@ stop（lucide square，占运行钮原槽），停用/移除隐藏。点击 `tas
 （square.svg 是 12×12 细描边轮廓 16px 下净宽仅 8px，且被 titlebar 窗口控件
 复用不可改）；②stop 后两枚 22px 幽灵占位撑出三钮同宽，stop 钉在 play 原槽
 （右边第三位）不跳动；③运行中恒显不 hover 显影、时间恒隐；日志列表原设计
-不变。
+不变。同日三轮反馈：kit 新增 `icon_btn_lg`（LG 18 档变体，钮盒仍 22，
+`icon_btn` 委托同体），行尾四钮（stop/play/停用/移除）图标统一 LG；
+stop.svg 方块 15→17 视框单位（LG 下净宽 ≈12.7px，与输入栏停止钮同观感）。
+（tokens 档位：INDICATOR 10/XS 12/SM 14/MD 16/LG 18/CHECK_CARD 24，无 20 档）
 
 人工验收（真机项）：①点运行中任务日志行 → tab 开、可发消息介入（steer）
 且不杀进程；②关闭页签任务继续跑、到期正常退役结算；③退役后点 tab 秒开

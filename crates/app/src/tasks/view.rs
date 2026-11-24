@@ -23,7 +23,7 @@ use crate::services::format::fmt_msg_time;
 use crate::tasks::DefRow;
 use crate::tasks::form::{field, form_head, kind_block, sched_row, type_seg};
 use crate::ui::icon;
-use crate::ui::kit::{Btn, config_button, icon_btn, list_row_divider, sidebar_item, status_dot};
+use crate::ui::kit::{Btn, config_button, icon_btn_lg, list_row_divider, sidebar_item, status_dot};
 use crate::ui::overlay;
 use crate::ui::spark_spinner;
 use crate::ui::tooltip::WithTip;
@@ -398,7 +398,9 @@ fn task_row_actions(
 }
 
 /// 22px 小图标动作钮（§5.2 IB_SM 行尾动作钮）：2026-11-22 收编至
-/// [`crate::ui::kit::icon_btn`]（几何逐值平移，kit 版为唯一画法）。
+/// [`crate::ui::kit::icon_btn`]（几何逐值平移，kit 版为唯一画法）；
+/// 2026-11-24 用户令行尾四钮（stop/play/停用/移除）图标统一升 LG 18
+/// ——kit LG 变体 [`crate::ui::kit::icon_btn_lg`]，钮盒仍 22。
 fn task_act_btn(
     id: String,
     name: &'static str,
@@ -407,7 +409,15 @@ fn task_act_btn(
     weak: &gpui::WeakEntity<Chat>,
     on_click: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
 ) -> AnyElement {
-    icon_btn(id, weak, name, tip_key, locked, on_click)
+    icon_btn_lg(
+        id,
+        weak,
+        name,
+        tip_key,
+        locked,
+        crate::ui::tokens::icon::LG,
+        on_click,
+    )
 }
 
 // ---------------------------------------------------------------------------
