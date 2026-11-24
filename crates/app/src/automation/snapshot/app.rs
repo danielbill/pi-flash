@@ -188,6 +188,7 @@ pub(super) fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>
                     json!({"kind": "file", "path": p.display().to_string()})
                 }
                 crate::PanelTab::Observer { key } => json!({"kind": "observer", "key": key}),
+                crate::PanelTab::Task { key } => json!({"kind": "task", "key": key}),
                 crate::PanelTab::Plugin { pkg, page } => {
                     json!({"kind": "plugin", "pkg": pkg, "page": page})
                 }

@@ -51,6 +51,12 @@ impl Chat {
             self.close_observer_tab(key, cx);
             return;
         }
+        // 046-T 任务页签：仅摘牌不杀进程（任务后台照跑）+ 前台回退主会话
+        // 全在 close_task_tab——同上不走通用回退
+        if let PanelTab::Task { key } = &tab {
+            self.close_task_tab(key, cx);
+            return;
+        }
         let view = tab.view();
         let was_active = self.ws.active_panel_tab == Some(ix) && self.layout.content_view == view;
         self.close_panel_tab(ix, cx);
@@ -124,6 +130,12 @@ impl Chat {
                 // close_observer_tab——它的前台回退由批量收尾统一裁决）
                 PanelTab::Observer { key } => {
                     self.pool.runtimes.remove(&key);
+                    self.pool.tab_labels.remove(&key);
+                    self.close_panel_tab(*ix, cx);
+                }
+                // 任务页签批量摘除：仅摘牌（runtime 留池由退役泵按窗清账，
+                // 046-T 关闭不杀进程；前台回退由批量收尾统一裁决）
+                PanelTab::Task { key } => {
                     self.pool.tab_labels.remove(&key);
                     self.close_panel_tab(*ix, cx);
                 }

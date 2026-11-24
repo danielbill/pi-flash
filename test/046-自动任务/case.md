@@ -56,6 +56,32 @@
   group_hover 同 div，gpui compute_style 先于自身 push——修法 = group 挪
   行容器，详见 ui.md 执行记录 8 与 docs/buglist.md）。
 
+## 046-T 可交互任务页签（2026-11-24 拍板：永不降级只读）
+
+点任务日志行名 = 开该会话的**普通可交互 tab**（可看可聊可介入 steering），
+原只读观察窗口径作废（子代理观察窗不受影响）。派发照旧后台跑不自动开页；
+关闭页签不杀进程（runtime 留池按退役窗清账）。
+
+| 项 | 落点 |
+|---|---|
+| 页签打开/重建/关闭 | `session::pool::open::open_task_session` / `build_task_rt` / `close_task_tab`（唯一入口：tasks/view.rs 日志行点击） |
+| 三态激活分流（不抢固定段） | `session::pool::runtime_link::switch_to`（task_tab 分支：在 panel_tabs 找 Observer\|Task 双变体激活，主指针不动） |
+| 草稿/last-open 护栏 | switch_to `!r.task_owned` 守卫（任务页输入不落用户草稿） |
+| rekey 迁移 | `pool::session_ops` on_file_bound 迁移循环扩 Observer\|Task 双匹配 |
+| tab 激活/批量关/摘牌 | `editor::tabs::activate_content_tab`（池缺失重建）/ `tabs::close`（Task 仅摘牌）/ psp_actions 项目删除双匹配 |
+| 退役窗协商 | `retire_due(…, task_tab_open)`：页签开 ⇒ 通用窗 600s+阻塞件保护；页签关 ⇒ 任务窗 30s+跳保护 |
+| 徽标 | titlebar/tabs `task_tab_badge`：运行中橙点 > 红!（外部错误）> 黄点（中断）> 青蓝点（完成未读），读 psp 三集 |
+| 快照 | automation/snapshot：tabs `kind=task` / open_tabs `task_tab` |
+
+单测：`session::retire::tests::task_tab_open_upgrades_to_general_window`
+（页签开 ⇒ 599s 不退 / 601s+新鲜阻塞件拦 / 601s 无阻塞件退）。
+
+人工验收（真机项）：①点运行中任务日志行 → tab 开、可发消息介入（steer）
+且不杀进程；②关闭页签任务继续跑、到期正常退役结算；③退役后点 tab 秒开
+重开为可交互（非只读）；④任务 tab 打开期间固定段（用户会话）不被顶替；
+⑤任务页输入切走不串用户草稿；⑥徽标四态颜色正确；⑦重开/持久化后任务
+tab 不复活（不进 persist）。
+
 ## 人工验收（真机项）
 
 1. 建一个「每 1 分钟」agent 任务（指定任意存在目录）→ 20s 内派发 →

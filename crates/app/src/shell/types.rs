@@ -359,6 +359,15 @@ pub(crate) enum PanelTab {
     Observer {
         key: String,
     },
+    /// 046-T 定时任务会话页签：自由区一枚**可交互**会话 tab——内容区
+    /// 复用 Chat 视图（active_key 指向任务 runtime），composer 不隐藏，
+    /// 用户可插话/停止/结算后继续聊。永不降级只读；关闭 = 仅摘牌不杀
+    /// 进程（任务后台照跑）。key = 池 key（会话文件路径串，FileBound 后
+    /// draft-N → path 迁移，tab 键随 rekey 走）。瞬态不进存档；runtime
+    /// 退役窗随 tab 开合协商（retire.rs：tab 开 = 通用窗，关 = 任务窗）。
+    Task {
+        key: String,
+    },
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -376,6 +385,7 @@ pub(crate) enum TabKey {
     SessionSearch,
     Plugin { pkg: String, page: String },
     Observer { key: String },
+    Task { key: String },
 }
 
 impl PanelTab {
@@ -394,6 +404,7 @@ impl PanelTab {
                 page: page.clone(),
             },
             PanelTab::Observer { key } => TabKey::Observer { key: key.clone() },
+            PanelTab::Task { key } => TabKey::Task { key: key.clone() },
         }
     }
 }
@@ -413,7 +424,7 @@ impl PanelTab {
     /// 激活它 = 切池指针（switch_to），固定段主会话 tab 同时退出高亮。
     pub(crate) fn view(&self) -> ContentView {
         match self {
-            PanelTab::Observer { .. } => ContentView::Chat,
+            PanelTab::Observer { .. } | PanelTab::Task { .. } => ContentView::Chat,
             PanelTab::Term(_) => ContentView::Term,
             PanelTab::File(_) => ContentView::File,
             PanelTab::Changelog => ContentView::Changelog,
@@ -430,7 +441,7 @@ impl PanelTab {
     /// 判据）。绝大多数 tab 就是 `view() == to` 的同义反复。
     pub(crate) fn owns_view(&self, to: ContentView) -> bool {
         match self {
-            PanelTab::Observer { .. } => to == ContentView::Chat,
+            PanelTab::Observer { .. } | PanelTab::Task { .. } => to == ContentView::Chat,
             PanelTab::Term(_) => to == ContentView::Term,
             PanelTab::File(_) => to == ContentView::File,
             PanelTab::Changelog => to == ContentView::Changelog,

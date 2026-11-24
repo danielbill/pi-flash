@@ -310,10 +310,13 @@ impl Chat {
                 );
                 // 草稿页切走即落盘（持久化 flush 点，2026-11-07）：出场的
                 // 未晋级草稿把刚换下去的输入写进草稿文件，重启不丢；
-                // FileBound 会话不落（输入属会话本体，随文件走）
+                // FileBound 会话不落（输入属会话本体，随文件走）；任务会
+                // 话也不落——它 file=None 窗口的输入是任务 prompt/任务草
+                // 稿，覆写用户同 cwd 草稿就是污染（046-T）
                 let draft_out = {
                     let r = old.read(cx);
-                    (r.file.is_none() && !r.observer).then(|| r.cwd.to_string_lossy().to_string())
+                    (r.file.is_none() && !r.observer && !r.task_owned)
+                        .then(|| r.cwd.to_string_lossy().to_string())
                 };
                 if let Some(cwd) = draft_out {
                     pi_link::drafts::save(&cwd, &input);
@@ -347,18 +350,21 @@ impl Chat {
             self.composer.history_ix = None;
         }
         self.pool.active_key = key.clone();
-        // tab 姿态（044-0 验收②）：普通会话 = 主会话指针跟进 + 标题快照刷
-        // 新 + 自由区全灭（chat 前台高亮归固定段）；observer 观察窗 = 激活
-        // 自由区对应 tab（open_session 保证已在 panel_tabs），主会话指针
-        // 不动——固定段永远显示主会话/新会话。
+        // tab 姿态（044-0 验收②；046-T 三态）：普通会话 = 主会话指针跟进 +
+        // 标题快照刷新 + 自由区全灭（chat 前台高亮归固定段）；observer 观察
+        // 窗/任务页签 = 激活自由区对应 tab（入口保证已在 panel_tabs），主
+        // 会话指针不动——固定段永远显示用户主会话/新会话，任务会话永不
+        // 抢位（2026-11-10 挤占教训的静态化：分流按姿态，不靠入口自觉）。
         let observer = rt.read(cx).observer;
-        if observer {
-            if let Some(ix) = self
-                .ws
-                .panel_tabs
-                .iter()
-                .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if *k == key))
-            {
+        let task_tab = !observer && rt.read(cx).task_owned;
+        if observer || task_tab {
+            let ix = self.ws.panel_tabs.iter().position(|t| match t {
+                crate::PanelTab::Observer { key: k } | crate::PanelTab::Task { key: k } => {
+                    *k == key
+                }
+                _ => false,
+            });
+            if let Some(ix) = ix {
                 self.ws.active_panel_tab = Some(ix);
             }
         } else {
@@ -390,10 +396,11 @@ impl Chat {
         }
         if let Some(f) = &file {
             // 无项目态不存在可切会话（switch_pool_rt 已先重挂），防御式取 Some。
-            // observer 观察窗不写 last-open：子会话不是恢复目标（044-0 验收
-            // ①教训——旧版污染后启动会恢复成子会话，父 catalog 无从解析）
+            // observer 观察窗/任务页签不写 last-open：子会话不是恢复目标（044-0
+            // 验收①教训——旧版污染后启动会恢复成子会话，父 catalog 无从解析），
+            // 任务会话不进用户会话口径同理（046-T）
             if let Some(cwd) = &self.ws.cwd {
-                if !observer && !self.plugin_claimed(&f.to_string_lossy()) {
+                if !observer && !task_tab && !self.plugin_claimed(&f.to_string_lossy()) {
                     set_last_open(&cwd.to_string_lossy(), &f.to_string_lossy());
                 }
             }

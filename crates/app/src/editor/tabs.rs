@@ -94,10 +94,20 @@ impl Chat {
             }
             return;
         }
+        // 046-T 任务页签：同观察窗机制，但可交互——池命中缺失时
+        // open_task_session 重建（退役重开；身份由 tab 携带，不过防呆闸）
+        if let Some(PanelTab::Task { key }) = self.ws.panel_tabs.get(ix).cloned() {
+            self.activate_panel_tab(ix, cx);
+            match self.pool.runtimes.get(&key).cloned() {
+                Some(rt) => self.switch_pool_rt(rt, cx),
+                None => self.open_task_session(PathBuf::from(&key), cx),
+            }
+            return;
+        }
         let view = match self.ws.panel_tabs.get(ix) {
             Some(PanelTab::Term(_)) => ContentView::Term,
-            // 观察窗已在上方提前 return（穷尽性兜底臂）
-            Some(PanelTab::Observer { .. }) => ContentView::Chat,
+            // 观察窗/任务页签已在上方提前 return（穷尽性兜底臂）
+            Some(PanelTab::Observer { .. }) | Some(PanelTab::Task { .. }) => ContentView::Chat,
             Some(PanelTab::Changelog) => ContentView::Changelog,
             Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
             Some(PanelTab::Tasks) => ContentView::Tasks,

@@ -472,32 +472,6 @@ pub(crate) fn on_turn_settled(
     let _ = ctx.tx.send(outcome);
 }
 
-/// 任务会话在跑被「点名开观察窗」：驱动 runtime 让出会话路径 key（观察
-/// 窗 identity = 会话路径，见 open_subagent_session_window）——进程照跑
-/// （abort 会杀运行中任务），池 key 换成 `task:{path}` 继续驱动，在途账
-/// 随 key 迁移（TurnSettled 按 runtime key 查账）。结算后驱动体留在池里
-/// 按新 key 静置（session/retire.rs 任务窗 30s 到期即退役——结算后内存
-/// 无消费者，回看走 observer 磁盘重建），不再与任何路径键相撞。
-pub(crate) fn task_driver_rekey(
-    chat: &mut Chat,
-    rt: &gpui::Entity<SessionRuntime>,
-    path_key: &str,
-    cx: &mut gpui::Context<Chat>,
-) {
-    let new_key = format!("task:{path_key}");
-    if let Some(entity) = chat.pool.runtimes.remove(path_key) {
-        chat.pool.runtimes.insert(new_key.clone(), entity);
-    }
-    rt.update(cx, |r, _| r.key = new_key.clone());
-    if let Some(mut ctx) = chat.tasks.pending.remove(path_key) {
-        ctx.rt = Some(rt.clone());
-        chat.tasks.pending.insert(new_key.clone(), ctx);
-    }
-    tasks_log(&format!(
-        "任务会话让出路径 key 给观察窗: {path_key} -> {new_key}"
-    ));
-}
-
 /// `Chat::on_file_bound`（draft 晋级）：任务会话绑到真实文件 → 迁移在途
 /// 上下文的 key + session_path **即知即写**（2026-11-22 用户报障：运行中
 /// 日志行点击开不了会话——此前只在 TurnSettled 回填，运行中 run 行

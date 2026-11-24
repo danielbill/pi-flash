@@ -8,9 +8,10 @@
 //! 口径（2026-11-24 拍板）：
 //! - 参数**模块内定，不进 app_settings**——内存策略不是用户决策面；
 //! - **双窗**：通用会话 [`IDLE_RETIRE_SECS`]（600s）；定时任务会话
-//!   [`TASK_IDLE_RETIRE_SECS`]（30s）——任务结算后驱动体内存无任何消费者
-//!   （日志行回看走 observer 从磁盘 tail 重建，pool/open.rs「进程闲置，
-//!   杀了正好清账」），30s 即弃，零 UX 回退；
+//!   [`TASK_IDLE_RETIRE_SECS`]（30s）——任务结算后驱动体内存无消费者
+//!   且页签已关（046-T：任务页签开着 = 页面上有消费者，用户可能回来
+//!   插话，按通用窗待遇；关了才落回 30s 快窗），30s 即弃，零 UX 回退；
+//!   回看/续聊走 [`Chat::open_task_session`] 可交互重开（不再走 observer）；
 //! - 任务会话**跳过**扩展阻塞件保护窗：任务无输入通道，阻塞件永远无人
 //!   兑现（放弃是必然），留着只会把 30s 快窗钉回保护窗时长；
 //! - 豁免闸不变：`agent_running`（跑着不动）、`has_live_service`（090-6
@@ -37,8 +38,9 @@ pub(crate) const EXT_BLOCKING_TTL_SECS: u64 = 600;
 /// 泵 tick（秒）：≤ 任务窗，保证 30s 快窗不被 tick 粒度稀释到翻倍以上。
 pub(crate) const TICK_SECS: u64 = 30;
 
-/// 双窗口径：任务派发铸造的会话（`task_owned`，置位点唯一
-/// `spawn_agent_turn`，FileBound/rekey 不清理）走任务窗，其余走通用窗。
+/// 双窗口径：任务派发铸造的会话（`task_owned`）默认走任务窗；页签开着
+/// 时（`task_tab_open`，046-T）按通用窗待遇——页面上有消费者。其余走
+/// 通用窗。
 pub(crate) fn idle_cap_for(task_owned: bool) -> Duration {
     if task_owned {
         Duration::from_secs(TASK_IDLE_RETIRE_SECS)
@@ -61,22 +63,26 @@ pub(crate) fn ext_queue_allows_retire(q: &[ExtPending]) -> bool {
 
 /// 退役判定（纯函数，单测钉死）：`idle` = `last_activity.elapsed()`。
 /// 硬闸（运行中 / 活插件 / 无进程）先挡，再看窗口，最后阻塞件保护窗
-/// （任务会话跳过——见模块头注释）。
+/// （任务页签关着的任务会话跳过——见模块头注释）。`task_tab_open` =
+/// 该会话有 [`crate::PanelTab::Task`] 页签开着（046-T）：任务窗只在页签
+/// 关闭后生效，开着按通用窗待遇（阻塞件保护窗同样恢复）。
 pub(crate) fn retire_due(
     task_owned: bool,
+    task_tab_open: bool,
     agent_running: bool,
     has_process: bool,
     live_service: bool,
     idle: Duration,
     ext_queue: &[ExtPending],
 ) -> bool {
+    let fast = task_owned && !task_tab_open;
     if agent_running || live_service || !has_process {
         return false;
     }
-    if idle <= idle_cap_for(task_owned) {
+    if idle <= idle_cap_for(fast) {
         return false;
     }
-    task_owned || ext_queue_allows_retire(ext_queue)
+    fast || ext_queue_allows_retire(ext_queue)
 }
 
 // ---------------------------------------------------------------------------
@@ -104,12 +110,16 @@ pub(crate) fn spawn_idle_retire(cx: &mut gpui::Context<Chat>) {
                             // 时，pi 进程 = 轮询器本体；回收它 = 远程消息没人
                             // 收、ui.json 的绑定指针却还在 → icon 假绿
                             //（2026-10-30 真机「发消息收不到」主因之一）。
-                            // 可变借用先行（has_live_service 要 &mut cx），
-                            // 再进 rt.read 的不可变借用。
+                            // 046-T 页签开合先行查（不可变借用，顺序在
+                            // has_live_service 的 &mut 之前）。
+                            let tab_open = chat.ws.panel_tabs.iter().any(
+                                |t| matches!(t, crate::PanelTab::Task { key: k } if *k == *key),
+                            );
                             let live_service = chat.has_live_service(key, cx);
                             let r = rt.read(cx);
                             retire_due(
                                 r.task_owned,
+                                tab_open,
                                 r.agent_running,
                                 r.agent.session.is_some(),
                                 live_service,
@@ -172,11 +182,11 @@ mod tests {
     #[test]
     fn hard_gates_block_regardless_of_idle() {
         let long = Duration::from_secs(3600);
-        assert!(!retire_due(false, true, true, false, long, &[]));
-        assert!(!retire_due(false, false, true, true, long, &[]));
+        assert!(!retire_due(false, false, true, true, false, long, &[]));
+        assert!(!retire_due(false, false, false, true, true, long, &[]));
         // 无进程不退役：observer 观察窗永不 spawn，天然豁免——
         // 驻留期 = tab 打开期，释放靠 close_observer_tab。
-        assert!(!retire_due(false, false, false, false, long, &[]));
+        assert!(!retire_due(false, false, false, false, false, long, &[]));
     }
 
     #[test]
@@ -184,9 +194,10 @@ mod tests {
         let fresh = Duration::from_secs(599);
         let stale = Duration::from_secs(601);
         // 通用窗内不退
-        assert!(!retire_due(false, false, true, false, fresh, &[]));
+        assert!(!retire_due(false, false, false, true, false, fresh, &[]));
         // 通用窗外 + 新鲜阻塞件拦（P0-4）
         assert!(!retire_due(
+            false,
             false,
             false,
             true,
@@ -195,7 +206,7 @@ mod tests {
             &q(true, Duration::ZERO)
         ));
         // 通用窗外 + 无阻塞件放行
-        assert!(retire_due(false, false, true, false, stale, &[]));
+        assert!(retire_due(false, false, false, true, false, stale, &[]));
     }
 
     #[test]
@@ -204,19 +215,41 @@ mod tests {
         assert!(!retire_due(
             true,
             false,
+            false,
             true,
             false,
             Duration::from_secs(29),
             &[]
         ));
-        // 任务窗外即退——新鲜阻塞件不拦（任务无输入通道，放弃是必然）
+        // 任务窗外即退——新鲜阻塞件不拦（页签关着 = 无消费者，放弃是必然）
         assert!(retire_due(
             true,
+            false,
             false,
             true,
             false,
             Duration::from_secs(31),
             &q(true, Duration::ZERO)
         ));
+    }
+
+    #[test]
+    fn task_tab_open_upgrades_to_general_window() {
+        // 046-T：页签开着 = 有消费者，按通用窗待遇（阻塞件保护窗同步恢复）
+        let fresh = Duration::from_secs(599);
+        let stale = Duration::from_secs(601);
+        assert!(!retire_due(true, true, false, true, false, fresh, &[]));
+        // 通用窗外 + 新鲜阻塞件拦（页签开着恢复保护窗）
+        assert!(!retire_due(
+            true,
+            true,
+            false,
+            true,
+            false,
+            stale,
+            &q(true, Duration::ZERO)
+        ));
+        // 通用窗外 + 无阻塞件放行
+        assert!(retire_due(true, true, false, true, false, stale, &[]));
     }
 }

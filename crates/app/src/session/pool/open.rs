@@ -163,22 +163,19 @@ impl Chat {
     ///（044-0 验收②，不抢固定段第一位）；已开过只激活不重复 push。
     pub(crate) fn open_subagent_session_window(&mut self, child: PathBuf, cx: &mut Context<Self>) {
         let path = pi_link::sessions::canonical_session_path(&child);
+        // 046-T：任务会话文件永不落观察窗（2026-11-24 拍板：任务页签恒可
+        // 交互，退役后重开也走 [`Chat::open_task_session`]）——历史入口
+        // （自动化/误调）一律改道，防下方「拆掉重建」臂杀运行中任务。
+        if pi_link::sessions::session_kind(&path) == pi_link::sessions::SessionKind::Task {
+            self.open_task_session(path, cx);
+            return;
+        }
         let key = path.to_string_lossy().to_string();
         let rt = match self.pool.runtimes.get(&key).cloned() {
             Some(rt) if rt.read(cx).observer => Some(rt),
-            // 任务会话（046）在跑：驱动 runtime 让出路径 key 给观察窗（identity
-            // = 会话路径），进程照跑——abort/shutdown 会杀运行中任务（2026-11-22
-            // 用户报障：运行中日志行点击开不了/不敢开）
-            Some(rt)
-                if rt.read(cx).task_owned && self.tasks.pending.contains_key(&rt.read(cx).key) =>
-            {
-                crate::tasks::run::task_driver_rekey(self, &rt, &key, cx);
-                self.build_observer_rt(&path, cx)
-            }
             // 同 key 被当普通会话开着（进程内不应发生——open_session 有防
             // 呆闸改道；留着是防自动化/外部直开的历史态）：拆掉重建，保住
-            // 「子会话文件 ⟹ 观察窗 runtime」不变量。任务会话已结算的静置
-            // 驱动体也走这里收尸（进程闲置，杀了正好清账）
+            // 「子会话文件 ⟹ 观察窗 runtime」不变量
             Some(rt) => {
                 rt.update(cx, |r, _| {
                     r.rpc(&Command::Abort);
@@ -217,6 +214,154 @@ impl Chat {
             let _ = rt.update(cx, |r, cx| r.spawn_observer_snapshot(cx));
         })
         .detach();
+    }
+
+    /// 046-T 定时任务会话页签**唯一入口**（意图直达，不过嗅探——2026-11-10
+    /// 挤占主会话 tab 同款纪律）：日志行名点击 / 任务页签激活 / 退役后重开。
+    /// 任务会话 = 自由区一枚**可交互** tab（`PanelTab::Task`），内容区复用
+    /// Chat 视图，composer 不隐藏——用户可插话（steering）、停止、结算后
+    /// 继续聊；**永不降级只读**（2026-11-24 拍板）。固定段主会话指针不动
+    /// （switch_to 的 task 姿态分支）。关闭页签仅摘牌不杀进程（任务后台
+    /// 照跑，结算回写不受影响）。
+    ///
+    /// 三分：池中有活任务 runtime（FileBound 后 key = 会话路径，任务窗
+    /// 退役前都在）→ 直连，tab 已开只激活不重复 push；同 key 被别的
+    /// runtime 占着 → 拆掉重建（保「任务路径 ⟹ 可交互任务 runtime」
+    /// 不变量，防双 pi 同抢一份转录）；无 runtime（已退役/跨实例）→ 铸
+    /// task 姿态 runtime resume 该文件（tail 秒开 + 后台 spawn，与
+    /// open_session 同一条路）。
+    pub(crate) fn open_task_session(&mut self, child: PathBuf, cx: &mut Context<Self>) {
+        let path = pi_link::sessions::canonical_session_path(&child);
+        let key = path.to_string_lossy().to_string();
+        let rt = match self.pool.runtimes.get(&key).cloned() {
+            Some(rt) if !rt.read(cx).observer && rt.read(cx).task_owned => Some(rt),
+            Some(rt) => {
+                rt.update(cx, |r, _| {
+                    r.rpc(&Command::Abort);
+                    r.shutdown_process();
+                });
+                self.pool.runtimes.remove(&key);
+                self.build_task_rt(&path, cx)
+            }
+            None => self.build_task_rt(&path, cx),
+        };
+        let Some(rt) = rt else { return };
+        let new_key = rt.read(cx).key.clone();
+        // tab：已开只激活，未开追加末尾（044-0 验收②同款，不抢固定段）；
+        // 标题 = 任务名（subagent_tab_label 先走 run 台账反查，任务名即
+        // 会话名，2026-11-22 用户令）
+        let ix = match self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Task { key: k } if *k == new_key))
+        {
+            Some(ix) => ix,
+            None => {
+                let label = self.subagent_tab_label(&path, &new_key, cx);
+                self.pool.tab_labels.insert(new_key.clone(), label);
+                self.ws
+                    .panel_tabs
+                    .push(crate::PanelTab::Task { key: new_key });
+                self.ws.panel_tabs.len() - 1
+            }
+        };
+        self.activate_panel_tab(ix, cx);
+        self.switch_pool_rt(rt.clone(), cx);
+        // 重建路（无进程）后台 spawn resume；活驱动路 session.is_some()
+        // 守卫直接跳过（与 open_session 同款）
+        cx.spawn(async move |_this, cx| {
+            let _ = rt.update(cx, |r, cx| {
+                if r.agent.session.is_none() {
+                    if let Some(rx) = r.spawn() {
+                        let epoch = r.agent.epoch;
+                        session::runtime::SessionRuntime::attach_pump(&rt, rx, epoch, cx);
+                    }
+                }
+                r.rpc(&Command::GetMessages);
+                r.refresh_anchors();
+                r.refresh_state();
+            });
+        })
+        .detach();
+    }
+
+    /// 任务页签 runtime 铸造（[`Chat::open_task_session`] 退役/跨实例重开
+    /// 专用）：tail 秒开 + task 姿态（task_owned/session_type 随文件
+    /// marker）入池挂泵。扩展清单由 `SessionRuntime::new` 按 key 自台账
+    /// 恢复（FileBound 时已从 draft 键迁到会话键）；tools/thinking 模型
+    /// 覆盖不追认（继续聊走当前默认，会话连续性在转录不在 spawn 旗标）。
+    /// 不进最近列表/不写 last-open/不挂伪标签（task_owned 护栏接管，
+    /// 与派发路同一口径）。
+    fn build_task_rt(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
+        let Some(cwd) = self.cwd_for_session(path) else {
+            return None;
+        };
+        let key = path.to_string_lossy().to_string();
+        let tail = self.session_tail(path);
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(
+                key.clone(),
+                cwd.clone(),
+                Some(path.to_path_buf()),
+            );
+            r.default_model = services::workspace::default_model_pref();
+            r.task_owned = true;
+            r.session_type = match pi_link::sessions::session_kind(path) {
+                pi_link::sessions::SessionKind::Task => Some("task"),
+                _ => None,
+            };
+            r.messages = tail;
+            r.messages_loaded = !r.messages.is_empty();
+            r.pager.reload(r.messages.len());
+            r.status = "resuming".into();
+            r
+        });
+        self.pool
+            .runtimes
+            .insert(rt.read(cx).key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        Some(rt)
+    }
+
+    /// 关一枚任务页签（自由区 × / 右键菜单 Close 同源）：**仅摘牌不杀
+    /// 进程**——运行中任务后台照跑，结算回写不受影响；静置 runtime 留池
+    /// 由退役泵按任务窗清账（tab 关了即无消费者）。tab 摘除走
+    /// close_panel_tab（激活位下标平移）。被关的是前台时切回主会话
+    ///（primary）；primary 不在池 → 落新草稿（同 close_observer_tab）。
+    pub(crate) fn close_task_tab(&mut self, key: &str, cx: &mut Context<Self>) {
+        while let Some(ix) = self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Task { key: k } if k == key))
+        {
+            self.close_panel_tab(ix, cx);
+        }
+        self.pool.tab_labels.remove(key);
+        if self.pool.active_key == key {
+            self.psp.active_file = None;
+            let next = self
+                .pool
+                .runtimes
+                .get(&self.pool.primary_key)
+                .cloned()
+                .filter(|rt| !rt.read(cx).observer && !rt.read(cx).task_owned);
+            match next {
+                Some(rt) => {
+                    self.switch_pool_rt(rt, cx);
+                }
+                None => {
+                    self.pool.primary_key.clear();
+                    self.new_session(cx);
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// 观察窗 runtime 铸造（[`Chat::open_subagent_session_window`] 专用）：
@@ -342,12 +487,10 @@ impl Chat {
         if self.pool.primary_key == key {
             self.pool.primary_key.clear();
         }
-        while let Some(ix) = self
-            .ws
-            .panel_tabs
-            .iter()
-            .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if *k == key))
-        {
+        while let Some(ix) = self.ws.panel_tabs.iter().position(|t| {
+            matches!(t, crate::PanelTab::Observer { key: k } if *k == key)
+                || matches!(t, crate::PanelTab::Task { key: k } if *k == key)
+        }) {
             self.close_panel_tab(ix, cx);
         }
         self.psp.unread.remove(&path);

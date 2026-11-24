@@ -260,6 +260,7 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 json!({"plugin_tab": {"pkg": pkg, "page": page}})
             }
             crate::PanelTab::Observer { key } => json!({"observer": key}),
+            crate::PanelTab::Task { key } => json!({"task_tab": key}),
         }).collect::<Vec<_>>(),
         // 文件树标题项目下拉（树根跨项目快切）：开合/键盘高亮/项目清单，
         // files.project_menu + input.keys 的事务断言靠这条

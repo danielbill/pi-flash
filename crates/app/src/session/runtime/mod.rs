@@ -59,12 +59,14 @@ pub(crate) struct SessionRuntime {
     pub observer: bool,
     /// 046 任务派发铸造的会话（tasks/run.rs dispatch）：「新会话」复用逻辑
     /// 不许捡走它（任务 prompt 不是用户的输入页）；FileBound 也不许清用户
-    /// 同 cwd 草稿。置位点唯一：spawn_agent_turn。
+    /// 同 cwd 草稿。置位点：spawn_agent_turn、open_task_session
+    /// （046-T 可交互任务页签，task 姿态直铸）。
     pub task_owned: bool,
     /// 会话 type 属性（046，2026-11-22 拍板 user/sub/task）：spawn 期注入
     /// env `PF_SESSION_TYPE`，session_type.ts 扩展据此落 pf/session-type
     /// custom entry 进会话文件（显示口径的事实源在文件里）。None = user。
-    /// 置位点唯一：spawn_agent_turn。
+    /// 置位点：spawn_agent_turn（Some("task")）、build_task_rt（随文件
+    /// marker，046-T）。
     pub session_type: Option<&'static str>,
     /// disk-side message count at open time — get_messages shorter than
     /// this means pi's restored leaf chain is truncated (mis-parented

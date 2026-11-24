@@ -134,15 +134,20 @@ impl Chat {
             self.pool.active_key = path_key.clone();
         }
         // tab 身份跟随迁移（draft-N → 会话文件键）：主会话指针、标题快照、
-        // 自由区观察窗 tab 的 key（草稿标题「新会话」由 bind 尾随的
-        // refresh_sessions 对齐真名，见 sync_primary_tab_label）
+        // 自由区观察窗/任务页签的 key（草稿标题「新会话」由 bind 尾随的
+        // refresh_sessions 对齐真名，见 sync_primary_tab_label；任务页签
+        // 046-T 同迁——派发 draft 阶段不可能开页签，防自动化早期直开）
         if self.pool.primary_key == old_key {
             self.pool.primary_key = path_key.clone();
         }
         for t in &mut self.ws.panel_tabs {
-            if let crate::PanelTab::Observer { key } = t {
-                if *key == old_key {
-                    *key = path_key.clone();
+            let tab_key = match t {
+                crate::PanelTab::Observer { key } | crate::PanelTab::Task { key } => Some(key),
+                _ => None,
+            };
+            if let Some(k) = tab_key {
+                if *k == old_key {
+                    *k = path_key.clone();
                 }
             }
         }

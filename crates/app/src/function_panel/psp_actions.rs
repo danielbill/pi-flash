@@ -202,12 +202,10 @@ impl Chat {
             if self.pool.primary_key == gone {
                 self.pool.primary_key.clear();
             }
-            while let Some(ix) = self
-                .ws
-                .panel_tabs
-                .iter()
-                .position(|t| matches!(t, crate::PanelTab::Observer { key } if *key == gone))
-            {
+            while let Some(ix) = self.ws.panel_tabs.iter().position(|t| {
+                matches!(t, crate::PanelTab::Observer { key } if *key == gone)
+                    || matches!(t, crate::PanelTab::Task { key } if *key == gone)
+            }) {
                 self.close_panel_tab(ix, cx);
             }
             let _ = std::fs::remove_file(p);

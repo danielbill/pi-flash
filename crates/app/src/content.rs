@@ -187,6 +187,8 @@ pub(crate) fn term_view(
             crate::PanelTab::Plugin { .. } => div().into_any_element(),
             // 观察窗不是终端（Chat 视图，防御臂）
             crate::PanelTab::Observer { .. } => div().into_any_element(),
+            // 任务页签不是终端（Chat 视图，防御臂，046-T）
+            crate::PanelTab::Task { .. } => div().into_any_element(),
             crate::PanelTab::Term(id) => {
                 let tix = chat.ws.terminals.iter().position(|t| t.id == id);
                 let Some(tix) = tix else {
