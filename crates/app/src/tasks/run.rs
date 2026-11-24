@@ -476,7 +476,8 @@ pub(crate) fn on_turn_settled(
 /// 窗 identity = 会话路径，见 open_subagent_session_window）——进程照跑
 /// （abort 会杀运行中任务），池 key 换成 `task:{path}` 继续驱动，在途账
 /// 随 key 迁移（TurnSettled 按 runtime key 查账）。结算后驱动体留在池里
-/// 按新 key 静置，不再与任何路径键相撞。
+/// 按新 key 静置（session/recycle.rs 任务窗 30s 到期即退役——结算后内存
+/// 无消费者，回看走 observer 磁盘重建），不再与任何路径键相撞。
 pub(crate) fn task_driver_rekey(
     chat: &mut Chat,
     rt: &gpui::Entity<SessionRuntime>,

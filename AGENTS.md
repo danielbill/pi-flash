@@ -87,7 +87,7 @@ crates/app/src/         GPUI 界面（组织方式：Chat = 全应用状态实�
                           token_probe/watcher/shell_open/asset_evict/pi_extension_updates（082）/session_clean（052）/
                           custom_models_store/mj_doc_cache/pf_state/pfctx_ops（001）/script_exec/win_pin/
                           scheduler（046 定时调度）
-  session/                会话域：runtime（030）/messages（032）/input（031）/nav_panel（033）/
+  session/                会话域：recycle（047 空闲退役双窗 600s/30s，参数内定）/runtime（030）/messages（032）/input（031）/nav_panel（033）/
                           pool/chat_list/footer_bar·fn_bar（034）/menu+menu_rows/attachments/fork/diff/
                           model·mcp·pi_extension picker/new_session（012）/tools_recipe（034）/
                           subagent_panel（044-3）/template/actions_bar

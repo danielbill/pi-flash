@@ -1,7 +1,9 @@
 //! ext_queue 阻塞件退役闸时效（047-内存削减 P0-4）：新鲜阻塞件拦退役、
-//! 超过保护窗放行、fire-and-forget 恒放行。
+//! 超过保护窗放行、fire-and-forget 恒放行。闸本体迁 session/recycle.rs，
+//! 文件留 runtime 域随 ext_queue 数据类型就近。
 
 use super::*;
+use crate::session::recycle::ext_queue_allows_recycle;
 use pi_link::protocol::ExtUiMethod;
 
 fn pending(age: std::time::Duration, blocking: bool) -> ExtPending {

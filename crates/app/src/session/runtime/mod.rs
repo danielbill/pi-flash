@@ -35,24 +35,11 @@ use super::*;
 const LEAF_REPAIR_MAX: usize = usize::MAX;
 
 /// ext_queue 条目壳：入队时刻 + 请求本体（047-内存削减 P0-4）。时刻只服务
-/// 于空闲退役闸的阻塞件时效。
+/// 于空闲退役闸的阻塞件时效（闸本体在 session/recycle.rs）。
 #[derive(Debug, Clone)]
 pub(crate) struct ExtPending {
     pub at: std::time::Instant,
     pub req: pi_link::protocol::ExtensionUiRequest,
-}
-
-/// 阻塞件拦退役的保护窗（047-内存削减 P0-4，600s = 对齐空闲阈值）：未兑现
-/// 阻塞件窗内拦退役（parked toast + 侧栏橙点召回用户切回作答，见 pi-rpc.md
-/// 「扩展 UI 请求的阻塞口径」）；超过一个空闲周期仍未兑现 = 泵死扩展或用户
-/// 已放弃——旧口径「有阻塞件永不退役」会让会话+进程钉死到进程退出。
-const EXT_BLOCKING_TTL: std::time::Duration = std::time::Duration::from_secs(600);
-
-/// 空闲退役闸口径（startup/pumps.rs spawn_idle_recycle 消费）：无保护窗内的
-/// 未兑现阻塞件即放行；fire-and-forget 从不拦（黄点事故口径）。
-pub(crate) fn ext_queue_allows_recycle(q: &[ExtPending]) -> bool {
-    q.iter()
-        .all(|p| !p.req.method.is_blocking() || p.at.elapsed() >= EXT_BLOCKING_TTL)
 }
 use crate::i18n::tr;
 use crate::services::format::status_line;

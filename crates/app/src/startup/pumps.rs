@@ -60,7 +60,8 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     });
     spawn_pump_120ms(cx);
     spawn_external_append_watch(cx);
-    spawn_idle_recycle(cx);
+    // 空闲退役泵（047 内存削减）：机制本体在 session/recycle.rs，启动只拉起
+    crate::session::recycle::spawn_idle_recycle(cx);
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
@@ -210,69 +211,6 @@ fn spawn_external_append_watch(cx: &mut gpui::Context<Chat>) {
                 .update(cx, |chat, cx| {
                     for rt in chat.pool.runtimes.values() {
                         rt.update(cx, |r, cx| r.check_external_append(cx));
-                    }
-                })
-                .is_ok();
-            if !ok {
-                break;
-            }
-        }
-    })
-    .detach();
-}
-
-/// 60s 空闲回收（pi-web idle-timeout parity）：非活动会话空闲超 10 分钟就
-/// 杀掉 pi 进程，并连 runtime 实体一起退役——transcript（messages 含工具
-/// 结果全文、system_msgs 含整份系统提示词）随实体释放，是长跑内存的
-/// 大头；清单/psp 标记不动，回开走 open_session 的 tail 秒开路径（磁盘
-/// 尾巴 + 后台重挂），与冷启动打开旧会话同一条路。活跃会话永不退役。
-fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(60))
-                .await;
-            let ok = this
-                .update(cx, |chat, cx| {
-                    let idle_cap = std::time::Duration::from_secs(600);
-                    // 先收集后摘除：退役即 drop 实体，不在遍历中动 map
-                    let mut retire: Vec<String> = Vec::new();
-                    for (key, rt) in &chat.pool.runtimes {
-                        if *key == chat.pool.active_key {
-                            continue;
-                        }
-                        // 执行域豁免（90-6）：该会话挂着绑定中的插件实例时，
-                        // pi 进程 = 轮询器本体；回收它 = 远程消息没人收、
-                        // ui.json 的绑定指针却还在 → icon 假绿（2026-10-30
-                        // 真机「发消息收不到」主因之一）。
-                        if chat.has_live_service(key, cx) {
-                            continue;
-                        }
-                        let idle = {
-                            let r = rt.read(cx);
-                            !r.agent_running
-                                && r.last_activity.elapsed() > idle_cap
-                                && r.agent.session.is_some()
-                                // 阻塞件未兑现不得退役（切回要浮卡兑现）；
-                                // fire-and-forget 队尾残留不拦退役——旧口径
-                                // 整队非空即拦，服务会话 park 期间猛发
-                                // setStatus 后进程永不退休（2026-11-05 黄点同源）。
-                                // 阻塞件另带 600s 保护窗时效（047-内存削减
-                                // P0-4）：泵死扩展/用户长期不回不再钉死退役
-                                && crate::session::runtime::ext_queue_allows_recycle(
-                                    &r.ext_queue,
-                                )
-                        };
-                        if idle {
-                            retire.push(key.clone());
-                        }
-                    }
-                    for key in retire {
-                        if let Some(rt) = chat.pool.runtimes.remove(&key) {
-                            rt.update(cx, |r2, _| r2.shutdown_process());
-                            // rt 在此 drop：transcript 随实体释放；
-                            // session_tail_cache 不动，供秒开回切
-                        }
                     }
                 })
                 .is_ok();

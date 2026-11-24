@@ -115,10 +115,11 @@ Chat 是壳:池(runtimes map)+ 注意力指针 + 侧栏/git/文件/终端/设置
 工具集无活改 RPC:档位与插件集是 spawn 参数配方(`session/tools_recipe.rs`),
 变更即重绑进程——`full` 档发 `--tools` 名单,`full+` 档不发 `--tools`、
 由扩展在 `session_start` 调 `setActiveTools`。模型/思考强度走活改 RPC。
-空闲退役:非 active 且空闲 10 分钟**连 runtime 实体一起退役**——杀进程,
-transcript(消息含工具结果全文、system_msgs 含整份系统提示词)随实体释放;
-回开走 open_session 的 tail 秒开路径。未应答的阻塞型扩展 UI 请求有同样
-600s 的保护窗(`EXT_BLOCKING_TTL`),窗内拦退役。
+空闲退役(session/recycle.rs 模块,参数内定不进 app_settings):非 active 空闲
+超窗**连 runtime 实体一起退役**——杀进程,transcript(消息含工具结果全文、
+system_msgs 含整份系统提示词)随实体释放;双窗:通用 600s,定时任务会话 30s
+(结算后内存无消费者,即弃)。回开走 open_session 的 tail 秒开路径。未应答的
+阻塞型扩展 UI 请求有保护窗(对齐通用窗;任务会话无输入通道,跳过),窗内拦退役。
 
 ## 3. 状态所有权
 
