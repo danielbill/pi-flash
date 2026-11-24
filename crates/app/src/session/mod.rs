@@ -21,7 +21,7 @@ pub(crate) mod new_session;
 pub(crate) mod pi_extension_picker;
 pub(crate) mod picker_shell;
 pub(crate) mod pool;
-pub(crate) mod recycle;
+pub(crate) mod retire;
 pub(crate) mod runtime;
 pub(crate) mod subagent_panel;
 pub(crate) mod template;

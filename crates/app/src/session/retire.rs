@@ -1,6 +1,10 @@
 //! 047-内存削减：空闲退役独立模块——进程 + runtime 实体 + transcript
 //! 一起弃（回开走 open_session 的磁盘 tail 秒开路径，与冷启动同一条路）。
 //!
+//! 定位：这是**内存回收**（何时释放），不是内存管理全域——预算化缓存、
+//! 虚拟化、节流等管理纪律仍在各自域（047 文档钉口径），本模块只管退役
+//! 决策与执行。
+//!
 //! 口径（2026-11-24 拍板）：
 //! - 参数**模块内定，不进 app_settings**——内存策略不是用户决策面；
 //! - **双窗**：通用会话 [`IDLE_RETIRE_SECS`]（600s）；定时任务会话
@@ -49,7 +53,7 @@ pub(crate) fn idle_cap_for(task_owned: bool) -> Duration {
 
 /// 扩展阻塞件拦退役闸（自 session/runtime/mod.rs 迁入）：无保护窗内的未兑现
 /// 阻塞件即放行；fire-and-forget 从不拦（黄点事故口径）。消费方 = [`retire_due`]。
-pub(crate) fn ext_queue_allows_recycle(q: &[ExtPending]) -> bool {
+pub(crate) fn ext_queue_allows_retire(q: &[ExtPending]) -> bool {
     let ttl = Duration::from_secs(EXT_BLOCKING_TTL_SECS);
     q.iter()
         .all(|p| !p.req.method.is_blocking() || p.at.elapsed() >= ttl)
@@ -72,7 +76,7 @@ pub(crate) fn retire_due(
     if idle <= idle_cap_for(task_owned) {
         return false;
     }
-    task_owned || ext_queue_allows_recycle(ext_queue)
+    task_owned || ext_queue_allows_retire(ext_queue)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ pub(crate) fn retire_due(
 /// 空闲退役泵：`TICK_SECS` 一跳，先收集后摘除（退役即 drop 实体，不在遍历
 /// 中动 map）。transcript（消息含工具结果全文、system_msgs 含整份系统提示词）
 /// 随实体释放，是长跑内存的大头；清单/psp 标记/tab 标题快照不动。
-pub(crate) fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
+pub(crate) fn spawn_idle_retire(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         loop {
             cx.background_executor()

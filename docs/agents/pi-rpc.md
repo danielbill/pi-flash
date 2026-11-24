@@ -121,7 +121,7 @@
 
 1. **parked 入队**（`pool.rs` ExtUi 臂）：阻塞件才叫人（toast + 侧栏橙点）；fire-and-forget 只入队等切回时重放，不亮点。
 2. **侧栏橙点**（`psp_row_views.rs` awaiting）：只数队列里的阻塞件。真机事故：微信桥/监控类服务会话 park 期间猛发 setStatus，旧口径整个队列非空就点亮，徽标常亮且切回不清（切回 flush 只兑现队首、其余无差别回队 → 永远非空）。
-3. **空闲退役闸**（`startup.rs` spawn_idle_recycle）：只拦未兑现阻塞件；fire-and-forget 队尾残留不拦（退役即丢，发出方语义本就不保证送达）。
+3. **空闲退役闸**（session/retire.rs spawn_idle_retire）：只拦未兑现阻塞件；fire-and-forget 队尾残留不拦（退役即丢，发出方语义本就不保证送达）。
 
 切回 flush 两段式（`switch_to`）：fire-and-forget 全部立即兑现（此刻 active_key 已切到本会话，on_ext_ui 写的 self.rt() 就是本 runtime）；阻塞件只浮队首供作答，其余回队。新增 ExtUiMethod 变体时同步复核 is_blocking 归类。
 

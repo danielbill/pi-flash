@@ -60,8 +60,8 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     });
     spawn_pump_120ms(cx);
     spawn_external_append_watch(cx);
-    // 空闲退役泵（047 内存削减）：机制本体在 session/recycle.rs，启动只拉起
-    crate::session::recycle::spawn_idle_recycle(cx);
+    // 空闲退役泵（047 内存削减）：机制本体在 session/retire.rs，启动只拉起
+    crate::session::retire::spawn_idle_retire(cx);
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);

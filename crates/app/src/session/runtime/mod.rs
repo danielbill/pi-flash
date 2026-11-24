@@ -35,7 +35,7 @@ use super::*;
 const LEAF_REPAIR_MAX: usize = usize::MAX;
 
 /// ext_queue 条目壳：入队时刻 + 请求本体（047-内存削减 P0-4）。时刻只服务
-/// 于空闲退役闸的阻塞件时效（闸本体在 session/recycle.rs）。
+/// 于空闲退役闸的阻塞件时效（闸本体在 session/retire.rs）。
 #[derive(Debug, Clone)]
 pub(crate) struct ExtPending {
     pub at: std::time::Instant,
@@ -80,7 +80,7 @@ pub(crate) struct SessionRuntime {
     /// 最近一次 get_messages 快照的条数：磁盘计数（后台）晚到时用它补做
     /// leaf 修复对账——计数 > 快照才值得重读（对抗失败无副作用）
     pub last_rpc_msg_count: Option<usize>,
-    /// pi process ownership (None while recycled/lazy)
+    /// pi process ownership (None while retired/lazy)
     pub agent: AgentSession,
 
     // ---- message log ----
@@ -245,7 +245,7 @@ pub(crate) struct SessionRuntime {
     /// 失效 → finalize 时校验角色，失配就补一张完成卡）
     pending_bash: Option<usize>,
 
-    /// last user-visible activity (idle recycle)
+    /// last user-visible activity (idle retire)
     pub last_activity: std::time::Instant,
     /// queued ext requests while not active (G+ surfaces a badge)；条目带
     /// 入队时刻（ExtPending）——退役闸按阻塞件时效放行（047-内存削减 P0-4）
@@ -421,7 +421,7 @@ impl SessionRuntime {
         }
     }
 
-    /// Kill the process but keep everything else (idle recycle / soft drop).
+    /// Kill the process but keep everything else (idle retire / soft drop).
     pub(crate) fn shutdown_process(&mut self) {
         self.agent.session = None;
         // 进程即刻不在：跑动标志就地复位。pump 退出事件可能永不到达（渠道
