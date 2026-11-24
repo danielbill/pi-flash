@@ -73,18 +73,9 @@ impl Chat {
                     | ContentView::SessionSearch
                     | ContentView::Plugin
             ) {
-                match self.ws.active_panel_tab {
-                    Some(nix) => {
-                        let v = self
-                            .ws
-                            .panel_tabs
-                            .get(nix)
-                            .map(|t| t.view())
-                            .unwrap_or(ContentView::Chat);
-                        self.set_content_view(v);
-                    }
-                    None => self.set_content_view(ContentView::Chat),
-                }
+                // 新激活位可能是任务页签/观察窗：池指针必须跟上，不能只换
+                // 视图（见 route_content_to_active_tab 注）
+                self.route_content_to_active_tab(cx);
             } else if self.ws.active_panel_tab.is_none() {
                 self.fallback_after_closes(cx);
             }
@@ -149,9 +140,10 @@ impl Chat {
         match focus_tab.and_then(|t| self.ws.panel_tabs.iter().position(|p| p == &t)) {
             Some(f) => {
                 // 右键 tab 存活（Others/Left/Right 必然）：激活它，视野跟上
-                let v = self.ws.panel_tabs[f].view();
+                //（回退路由统一走 route_content_to_active_tab——右键的若是
+                // 任务页签/观察窗，池指针跟上，内容不滞留主会话）
                 self.activate_panel_tab(f, cx);
-                self.set_content_view(v);
+                self.route_content_to_active_tab(cx);
             }
             None => self.fallback_after_closes(cx),
         }
@@ -174,6 +166,36 @@ impl Chat {
             }
         }
         cx.notify();
+    }
+
+    /// 关闭回退共用尾：让内容区跟上 close_panel_tab 平移出的新激活位。
+    /// 池会话 tab（Task/Observer）走激活核（activate_pool_session_tab，池
+    /// 指针跟上）——Chat 视图渲染的是 active_key 那枚 runtime，只
+    /// set_content_view(Chat) 会把主会话顶在前台、高亮却停在任务页签/
+    /// 观察窗上（2026-11-25 用户报障：关最后一个文件 tab，激活位落到
+    /// 任务页签、内容却还是主会话）；其余 tab = 各自视图；无自由 tab =
+    /// 回主会话。
+    pub(crate) fn route_content_to_active_tab(&mut self, cx: &mut Context<Self>) {
+        match self.ws.active_panel_tab {
+            Some(ix)
+                if matches!(
+                    self.ws.panel_tabs.get(ix),
+                    Some(crate::PanelTab::Task { .. }) | Some(crate::PanelTab::Observer { .. })
+                ) =>
+            {
+                self.activate_pool_session_tab(ix, cx)
+            }
+            Some(ix) => {
+                let v = self
+                    .ws
+                    .panel_tabs
+                    .get(ix)
+                    .map(|t| t.view())
+                    .unwrap_or(ContentView::Chat);
+                self.set_content_view(v);
+            }
+            None => self.set_content_view(ContentView::Chat),
+        }
     }
 
     /// 关了一批 tab 后没人可激活（Close All / focus 也被关）时的内容区
@@ -231,9 +253,12 @@ impl Chat {
                     self.activate_panel_tab(fix, cx);
                 }
                 None => {
-                    // 文档全关：直接回会话（会话 tab 常驻；browse_last 可能
-                    // 记着 File，回 File 只会渲染「选择一个文件」空提示页）
-                    self.set_content_view(ContentView::Chat);
+                    // 文档全关：内容区跟新激活位走（激活位可能平移到任务
+                    // 页签/观察窗/终端——池指针/视图跟着换位，不再无条件回
+                    // 主会话；只有自由 tab 一枚不剩才回会话。会话 tab 常驻；
+                    // browse_last 可能记着 File，回 File 只会渲染「选择一个
+                    // 文件」空提示页）
+                    self.route_content_to_active_tab(cx);
                 }
                 _ => {}
             }

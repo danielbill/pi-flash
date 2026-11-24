@@ -67,6 +67,34 @@ impl Chat {
         cx.notify();
     }
 
+    /// 池会话 tab（Task/Observer）激活核：激活位 + 池指针跟上。Chat 视图
+    /// 渲染的是 active_key 那枚 runtime，只换高亮不切指针就会「页签是任务
+    /// 页签、内容是主会话」（2026-11-25 用户报障的错位根源）。runtime 在
+    /// 池直连切；命中缺失（退役/跨实例）走各自重建入口（身份由 tab 携带，
+    /// 不过 open_session 防呆闸）。window-less 供关闭回退复用；
+    /// activate_content_tab 的同型臂转调这里（那边 window 只用于焦点收回）。
+    pub(crate) fn activate_pool_session_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        // 046-T 任务页签可交互（观察窗同机制只读）：重建 = open_task_session
+        // / open_subagent_session_window
+        match self.ws.panel_tabs.get(ix).cloned() {
+            Some(PanelTab::Task { key }) => match self.pool.runtimes.get(&key).cloned() {
+                Some(rt) => {
+                    self.activate_panel_tab(ix, cx);
+                    self.switch_pool_rt(rt, cx);
+                }
+                None => self.open_task_session(PathBuf::from(&key), cx),
+            },
+            Some(PanelTab::Observer { key }) => match self.pool.runtimes.get(&key).cloned() {
+                Some(rt) => {
+                    self.activate_panel_tab(ix, cx);
+                    self.switch_pool_rt(rt, cx);
+                }
+                None => self.open_subagent_session_window(PathBuf::from(&key), cx),
+            },
+            _ => {}
+        }
+    }
+
     /// 激活内容区 tab（鼠标点标签与 Ctrl+←/→ 共用的唯一入口）。082 四期
     /// 用户拍板：**切 tab 不再自动聚焦内容区**（终端不抢键盘）——只改状
     /// 态，并在视图真变化时把焦点收回 content-main 锚点（`layout.focus`，
@@ -82,26 +110,14 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        // 子代理观察窗（044-0 验收②）：复用 Chat 视图——内容区渲染
-        // active_key runtime，激活它 = 切池指针到该子会话。池命中缺失时
-        // open_subagent_session_window 重建（key 即子会话文件路径；身份
-        // 由 tab 本身携带，不走 open_session 防呆闸）。
-        if let Some(PanelTab::Observer { key }) = self.ws.panel_tabs.get(ix).cloned() {
-            self.activate_panel_tab(ix, cx);
-            match self.pool.runtimes.get(&key).cloned() {
-                Some(rt) => self.switch_pool_rt(rt, cx),
-                None => self.open_subagent_session_window(PathBuf::from(&key), cx),
-            }
-            return;
-        }
-        // 046-T 任务页签：同观察窗机制，但可交互——池命中缺失时
-        // open_task_session 重建（退役重开；身份由 tab 携带，不过防呆闸）
-        if let Some(PanelTab::Task { key }) = self.ws.panel_tabs.get(ix).cloned() {
-            self.activate_panel_tab(ix, cx);
-            match self.pool.runtimes.get(&key).cloned() {
-                Some(rt) => self.switch_pool_rt(rt, cx),
-                None => self.open_task_session(PathBuf::from(&key), cx),
-            }
+        // 子代理观察窗（044-0 验收②）/ 046-T 任务页签：复用 Chat 视图——
+        // 内容区渲染 active_key runtime，激活它 = 切池指针到该子会话（激活
+        // 核见 activate_pool_session_tab）
+        if matches!(
+            self.ws.panel_tabs.get(ix),
+            Some(PanelTab::Observer { .. }) | Some(PanelTab::Task { .. })
+        ) {
+            self.activate_pool_session_tab(ix, cx);
             return;
         }
         let view = match self.ws.panel_tabs.get(ix) {
