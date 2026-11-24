@@ -147,23 +147,25 @@ impl Chat {
             }
             None => self.fallback_after_closes(cx),
         }
-        // 批量可能关掉前台观察窗：active_key 悬空时回主会话（primary 在池
-        // → 切回；否则落新草稿）
-        if !self.pool.runtimes.contains_key(&self.pool.active_key) {
-            self.psp.active_file = None;
-            let pri = self
-                .pool
-                .runtimes
-                .get(&self.pool.primary_key)
-                .cloned()
-                .filter(|rt| !rt.read(cx).observer);
-            match pri {
-                Some(rt) => self.switch_pool_rt(rt, cx),
-                None => {
-                    self.pool.primary_key.clear();
-                    self.new_session(cx);
-                }
-            }
+        // 批量可能关掉前台池会话 tab：观察窗 runtime 随批量摘除（active_key
+        // 悬空），任务页签仅摘牌（runtime 留池、tab 已不在）——两种都算
+        // 前台失去 tab，落点按邻位补位结果统一裁决（reseat，与单关同源；
+        // 旧版此处 switch 主会话还会把 focus 分支刚立起的激活位/前台视图
+        // 冲掉，同为跳过左邻的不一致）
+        let front_pool_tab_gone = {
+            let has_tab = self.ws.panel_tabs.iter().any(|t| {
+                matches!(t,
+                crate::PanelTab::Task { key: k } | crate::PanelTab::Observer { key: k }
+                if *k == self.pool.active_key)
+            });
+            let kind = self.pool.runtimes.get(&self.pool.active_key).map(|rt| {
+                let r = rt.read(cx);
+                (r.observer, r.task_owned)
+            });
+            !has_tab && matches!(kind, None | Some((true, _)) | Some((_, true)))
+        };
+        if front_pool_tab_gone {
+            self.reseat_front_after_pool_tab_close(cx);
         }
         cx.notify();
     }
@@ -195,6 +197,57 @@ impl Chat {
                 self.set_content_view(v);
             }
             None => self.set_content_view(ContentView::Chat),
+        }
+    }
+
+    /// 前台池会话（任务页签/观察窗）失去其 tab 后的落点（close_task_tab /
+    /// close_observer_tab / close_tabs_batch 收尾三处同源）。左邻补位一致
+    /// 性（2026-11-25 用户指出：关任务页签不该跳过左邻直落固定段会话，
+    /// 文件 tab 关闭走的是 close_panel_tab 邻位补位）：新激活位也是池会话
+    /// tab → 池指针直接切过去（route 的激活核）；是普通自由 tab（文件/
+    /// 终端/任务管理页…）→ 池指针回主会话（Chat 轴不得悬在已摘牌的
+    /// runtime 上），但激活位/前台视图仍跟邻位走——switch_to 的普通会话
+    /// 臂会把激活位清回固定段，须复原补位结果；自由区不剩 → 回固定段
+    /// 会话（primary 不在池 → 落新草稿，旧语义）。
+    pub(crate) fn reseat_front_after_pool_tab_close(&mut self, cx: &mut Context<Self>) {
+        match self.ws.active_panel_tab {
+            Some(ix)
+                if matches!(
+                    self.ws.panel_tabs.get(ix),
+                    Some(crate::PanelTab::Task { .. }) | Some(crate::PanelTab::Observer { .. })
+                ) =>
+            {
+                self.route_content_to_active_tab(cx)
+            }
+            Some(ix) => {
+                self.switch_front_to_primary(cx);
+                // switch_to 的普通会话臂把激活位清回固定段：前台是邻位
+                // 自由 tab，复原补位结果再路由内容区
+                self.ws.active_panel_tab = Some(ix);
+                self.route_content_to_active_tab(cx);
+            }
+            None => {
+                self.psp.active_file = None;
+                self.switch_front_to_primary(cx);
+            }
+        }
+    }
+
+    /// Chat 轴回主会话（primary 不在池 → 清键落新草稿）。只切池指针，
+    /// 不裁激活位/前台视图——那是调用方按邻位补位结果裁决的事。
+    fn switch_front_to_primary(&mut self, cx: &mut Context<Self>) {
+        let pri = self
+            .pool
+            .runtimes
+            .get(&self.pool.primary_key)
+            .cloned()
+            .filter(|rt| !rt.read(cx).observer && !rt.read(cx).task_owned);
+        match pri {
+            Some(rt) => self.switch_pool_rt(rt, cx),
+            None => {
+                self.pool.primary_key.clear();
+                self.new_session(cx);
+            }
         }
     }
 

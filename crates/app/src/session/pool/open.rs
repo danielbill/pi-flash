@@ -331,8 +331,9 @@ impl Chat {
     /// 关一枚任务页签（自由区 × / 右键菜单 Close 同源）：**仅摘牌不杀
     /// 进程**——运行中任务后台照跑，结算回写不受影响；静置 runtime 留池
     /// 由退役泵按任务窗清账（tab 关了即无消费者）。tab 摘除走
-    /// close_panel_tab（激活位下标平移）。被关的是前台时切回主会话
-    ///（primary）；primary 不在池 → 落新草稿（同 close_observer_tab）。
+    /// close_panel_tab（激活位下标平移）。被关的是前台时落点按邻位补位
+    /// 结果裁决（reseat_front_after_pool_tab_close，与文件 tab 关闭同语义
+    /// ——2026-11-25 用户指出的不一致：旧版无条件回主会话，跳过左邻）。
     pub(crate) fn close_task_tab(&mut self, key: &str, cx: &mut Context<Self>) {
         while let Some(ix) = self
             .ws
@@ -344,22 +345,7 @@ impl Chat {
         }
         self.pool.tab_labels.remove(key);
         if self.pool.active_key == key {
-            self.psp.active_file = None;
-            let next = self
-                .pool
-                .runtimes
-                .get(&self.pool.primary_key)
-                .cloned()
-                .filter(|rt| !rt.read(cx).observer && !rt.read(cx).task_owned);
-            match next {
-                Some(rt) => {
-                    self.switch_pool_rt(rt, cx);
-                }
-                None => {
-                    self.pool.primary_key.clear();
-                    self.new_session(cx);
-                }
-            }
+            self.reseat_front_after_pool_tab_close(cx);
         }
         cx.notify();
     }
@@ -545,9 +531,9 @@ impl Chat {
 
     /// 关一枚观察窗 tab（自由区 × / 右键菜单 Close 同源）：observer 无进程，
     /// runtime 纯 drop 即可（不 abort 不 shutdown）。tab 摘除走
-    /// close_panel_tab（激活位下标平移）。被关的是前台时切回主会话
-    /// （primary）；primary 不在池 → 落新草稿（同 delete_session was_active）。
-    /// tail cache 不动——再点面板行秒开重开。
+    /// close_panel_tab（激活位下标平移）。被关的是前台时落点按邻位补位
+    /// 结果裁决（reseat_front_after_pool_tab_close，与任务页签/文件 tab
+    /// 关闭同语义）。tail cache 不动——再点面板行秒开重开。
     pub(crate) fn close_observer_tab(&mut self, key: &str, cx: &mut Context<Self>) {
         let is_observer = self
             .pool
@@ -569,22 +555,7 @@ impl Chat {
             self.close_panel_tab(ix, cx);
         }
         if self.pool.active_key == key {
-            self.psp.active_file = None;
-            let next = self
-                .pool
-                .runtimes
-                .get(&self.pool.primary_key)
-                .cloned()
-                .filter(|rt| !rt.read(cx).observer);
-            match next {
-                Some(rt) => {
-                    self.switch_pool_rt(rt, cx);
-                }
-                None => {
-                    self.pool.primary_key.clear();
-                    self.new_session(cx);
-                }
-            }
+            self.reseat_front_after_pool_tab_close(cx);
         }
         cx.notify();
     }
