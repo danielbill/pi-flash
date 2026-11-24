@@ -568,7 +568,6 @@ impl Chat {
         };
         let rt = ctx.rt.clone();
         let kill = ctx.kill.clone();
-        drop(ctx);
         let active = rt
             .as_ref()
             .is_some_and(|rt| rt.read(cx).key == self.rt().read(cx).key);
