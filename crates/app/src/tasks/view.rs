@@ -253,8 +253,9 @@ fn task_row(
         // 右槽（2026-11-22 用户令）：时间恒右对齐；列表行 hover 时三动作钮
         // 盖在时间上——visibility 互斥（notification.rs 同款 invisible ⇄
         // visible；invisible 不吃命中，时间区点击照常选中行）。槽 min_w =
-        // 三钮宽（22×3 + SP2×2，与 task_act_btn 尺寸同源），时间短于钮区时
-        // 名字也不被 hover 钮盖住。日志行无动作钮，恒显时间。无时间戳行
+        // 三钮宽（22×3 + 盒间 11×2，2026-11-24 用户令视觉图标间距 15 →
+        // 盒 gap 11；与 task_row_actions 同源），时间短于钮区时名字也不被
+        // hover 钮盖住。日志行无动作钮，恒显时间。无时间戳行
         // 以占位串撑满时间列宽——名字截断位 = 时间列左缘，各行对齐。
         .child({
             // 时间在 hover 组内反向隐身（reveal 组挂行容器，见上）
@@ -288,7 +289,7 @@ fn task_row(
             if let Some(def_id) = select_act {
                 slot = slot
                     .justify_end()
-                    .min_w(px(22. * 3. + crate::ui::tokens::space::SP2 * 2.))
+                    .min_w(px(22. * 3. + 11. * 2.))
                     .child(task_row_actions(&def_id, &title_act, !gray, running, weak));
             }
             slot
@@ -328,7 +329,9 @@ fn task_row_actions(
         .right(px(0.))
         .flex()
         .items_center()
-        .gap(px(crate::ui::tokens::space::SP2))
+        // 视觉图标间距 15（2026-11-24 用户令）：盒 gap 11 + 图标内衬
+        // 2×2（钮 22 − 图标 18）；原 SP2=4 视觉仅 8 太挤
+        .gap(px(11.))
         // 非运行态 hover 显影（visibility 互斥：时间组内反向隐身）；运行
         // 态恒显，不挂 invisible/group_hover
         .when(!running, |d| {
