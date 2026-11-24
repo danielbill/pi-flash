@@ -46,10 +46,10 @@ pub struct TextInput {
     /// 平面档（无组件底色/边框）：行内编辑的 chrome（边框/底色）由所在
     /// 行提供，Zed project_panel 编辑行同款——行 = 唯一的框
     flat: bool,
-    /// 设计稿表单档（040-2 pi.dev 目录页）：44px 高 + 等宽 15px + 零圆角。
+    /// 设计稿表单档（040-1 pi.dev 目录页）：44px 高 + 等宽 15px + 零圆角。
     /// 只改「高度/字号/族」，chrome 仍由宿主给（配 flat 用）。
     form: bool,
-    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）。深肤页（040-2
+    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）。深肤页（040-1
     /// 原生市场）需要浅色光标，而主题 token 是按 PF 主题算的。
     caret_color: Option<u32>,
     /// 占位符色覆盖（None = 主题 `muted_foreground`）：同理，深肤页要用页内灰。
@@ -159,14 +159,14 @@ impl TextInput {
         self
     }
 
-    /// 设计稿表单档（040-2）：44px 高、等宽字体 15px、零圆角。**只**用于
+    /// 设计稿表单档（040-1）：44px 高、等宽字体 15px、零圆角。**只**用于
     /// 照抄设计稿的表单行；配 `flat()` 让宿主（设计稿的 44px 框）出 chrome。
     pub fn form(mut self) -> Self {
         self.form = true;
         self
     }
 
-    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）：深肤页（040-2
+    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）：深肤页（040-1
     /// 原生市场）需浅色光标，而主题 token 是按 PF 主题算的。
     pub fn caret_color(mut self, rgb24: u32) -> Self {
         self.caret_color = Some(rgb24);

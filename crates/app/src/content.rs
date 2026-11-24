@@ -31,8 +31,7 @@ pub(crate) fn content_main(
         }
         // 081 更新日志 tab（新版本首启自动打开）
         ContentView::Changelog => changelog_view(chat).into_any_element(),
-        // 040-1 Pi 扩展市场标准页
-        // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植）
+        // 040-1 Pi 原生扩展市场（pi.dev Package Catalog 移植）
         ContentView::PiNativeMarket => crate::market::pi_native_market::page(chat, weak, window),
         ContentView::PfMarket => crate::market::pf_market::page(chat, weak, window),
         // 046 任务管理页（内容区页签；页头横向【任务】【日志】双 tab）

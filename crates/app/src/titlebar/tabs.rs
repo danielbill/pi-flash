@@ -93,7 +93,7 @@ pub(super) fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::
                 Some("history"),
                 ContentView::Changelog,
             ),
-            // 040-2 Pi 原生扩展市场（pi.dev 目录页移植）
+            // 040-1 Pi 原生扩展市场（pi.dev 目录页移植）
             crate::PanelTab::PiNativeMarket => (
                 tr("market.native_tab").into(),
                 None,

@@ -1,4 +1,4 @@
-//! 扩展市场（040-1 / 040-2 pi.dev / 090-4 PF 插件）。
+//! 扩展市场（040 设置-扩展 / 040-1 pi.dev / 090-4 PF 插件）。
 //! 列格式 / 空译回落 / audit 解析口径等约定见同目录 mod.rs。
 
 /// (key, zh-CN, zh-TW, en)
@@ -6,7 +6,7 @@
 pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.btn.install", "安装", "安裝", "Install"),
     ("market.btn.update", "更新", "更新", "Update"),
-    // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案照抄设计稿英文，只收需跟随界面的词）
+    // 040-1 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案照抄设计稿英文，只收需跟随界面的词）
     ("market.native_tab", "Pi Dev 扩展社区", "Pi Dev 擴展社区", "Pi Dev Packages"),
     ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
     ("market.pf.empty", "无可用PF插件", "無可用PF外掛", "No PF plugins available"),
@@ -27,7 +27,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.stale_invalid", "清单无效，无法装载：{reason}", "清單無效，無法載入：{reason}", "Invalid manifest, cannot load: {reason}"),
     // 插件包内 pi 扩展挂载：忙时会话延迟重启的提示（name = 插件 id）
     ("plugin.ext_wait_idle", "插件 {name} 的扩展将在当前任务完成后生效", "外掛 {name} 的擴充將在當前任務完成後生效", "Extension of plugin {name} will take effect after the current task finishes"),
-    // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
+    // 040-1 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.prev", "← 上一页", "← 上一頁", "← Previous"),
     ("market.next", "下一页 →", "下一頁 →", "Next →"),

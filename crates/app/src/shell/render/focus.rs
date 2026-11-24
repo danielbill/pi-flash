@@ -107,7 +107,7 @@ impl Chat {
             && self.tasks_page_input_focused(window, cx)
         {
             // 046 任务页表单输入持焦不回收（名称/指令输入框），否则每帧
-            // 仲裁把焦点推回 composer（083/040-2 白名单同款分支）
+            // 仲裁把焦点推回 composer（083/040-1 白名单同款分支）
         } else if matches!(
             self.layout.content_view,
             crate::ContentView::Search | crate::ContentView::SessionSearch
@@ -127,7 +127,7 @@ impl Chat {
                 .as_ref()
                 .is_some_and(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
         {
-            // 040-2：原生市场搜索框持焦不回收
+            // 040-1：原生市场搜索框持焦不回收
         } else if !std::mem::take(&mut self.composer.menu_refocus)
             && self.menu_search_focused(window, cx)
         {

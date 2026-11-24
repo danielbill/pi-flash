@@ -20,7 +20,7 @@ pub(crate) fn open_in_browser(path: &std::path::Path) {
     }
 }
 
-/// 用系统默认浏览器打开 URL（040-2 市场页的 npm/repo/report 链接）。
+/// 用系统默认浏览器打开 URL（040-1 市场页的 npm/repo/report 链接）。
 pub(crate) fn open_url(url: &str) {
     #[cfg(windows)]
     {

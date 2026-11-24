@@ -128,7 +128,7 @@ impl Render for TextInput {
             // compact：槽高与 XSmall 内件（vendor input_h 20px）同高、零富余
             //（曾 22px，stretch 对定高子件退化为 top-align，2px 全落底部把
             // 输入基线顶高 1px——改名行文字上跳根因）；items_center 兜底。
-            // form（040-2）：44px 槽 + 30px 内件，同样必须居中，否则 placeholder
+            // form（040-1）：44px 槽 + 30px 内件，同样必须居中，否则 placeholder
             // 贴着上边（用户实测「文字没垂直居中」）。
             .when(self.compact, |d| d.items_center())
             // form：items_center 对 vendor 内件不生效（内件 layout 高被
@@ -152,7 +152,7 @@ impl Render for TextInput {
             } else {
                 crate::appearance::ui_size(if self.compact { 11. } else { 12. })
             })
-            // form（040-2）：内件行高**取整行高**（默认 1.5em = 22.5 → 22.5px
+            // form（040-1）：内件行高**取整行高**（默认 1.5em = 22.5 → 22.5px
             // 非"整"，44 槽居中后文字偏上 5px——用户实测「placeholder 没有垂直
             // 居中」）。指定 20px 行高后文字在 44px 槽里几何居中。
             .when(self.form, |d| d.line_height(gpui::px(20.)))

@@ -50,7 +50,7 @@ pub(crate) fn menu_item<S: Into<SharedString>>(
 /// 带图标尺寸的菜单条（`menu_item` 的通用体）。
 ///
 /// **图标档位**：菜单默认 14（`ICON_SM`）；市场菜单传 12（`ICON_XS`）——
-/// 菜单项的图标与 topbar 同名标签的图标（040-2 定夺 = 12）必须同尺寸，
+/// 菜单项的图标与 topbar 同名标签的图标（040-1 定夺 = 12）必须同尺寸，
 /// 否则同一个 plug 在标签里一个样、在菜单里一个样（2026-10-23 用户定夺）。
 pub(crate) fn menu_item_sized<S: Into<SharedString>>(
     id: S,

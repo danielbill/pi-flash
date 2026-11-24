@@ -112,7 +112,7 @@ pub(crate) enum ContentView {
     File,
     /// 081 更新日志 tab（PanelTab::Changelog；markdown 渲染）
     Changelog,
-    /// 040-2 Pi 原生扩展市场 tab（PanelTab::PiNativeMarket；pi.dev 目录页移植）
+    /// 040-1 Pi 原生扩展市场 tab（PanelTab::PiNativeMarket；pi.dev 目录页移植）
     PiNativeMarket,
     /// 090-4 PF 插件市场 tab（PanelTab::PfMarket；内置索引 + 台账）
     PfMarket,
@@ -331,7 +331,7 @@ pub(crate) enum PanelTab {
     File(PathBuf),
     /// 081 更新日志（新版本首启自动打开；无外部资源，纯渲染）
     Changelog,
-    /// 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；菜单-三横按钮打开）
+    /// 040-1 Pi 原生扩展市场（pi.dev Package Catalog 移植；菜单-三横按钮打开）
     PiNativeMarket,
     /// 090-4 PF 插件市场（内置索引 + 台账；菜单-三横按钮打开）
     PfMarket,

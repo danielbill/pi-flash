@@ -1,4 +1,4 @@
-//! Pi 原生扩展市场 —— 单张包卡（040-2，设计 `article[data-package-card]`）：
+//! Pi 原生扩展市场 —— 单张包卡（040-1，设计 `article[data-package-card]`）：
 //! 左预览块（16:10 占位图）| 右信息列（名/描述/元信息/徽标/链接/命令条）。
 
 use gpui::prelude::*;

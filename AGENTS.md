@@ -59,7 +59,7 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   agents/ pf_plugins/     内置子代理实现 + 模块配置（044）/ PF 插件目录扫描、安装/迁移/卸载（090-4）
   drafts.rs hidden_sessions.rs session_names.rs  输入草稿持久化 / 隐藏会话 / 会话名台账（session-names.json）
   model_ref.rs model_test.rs model_price/  模型引用 / 连通性测试 / 价格目录 models.dev
-  pf_auth.rs pfctx_manager.rs service_ext.rs  PF 凭据 / pf-context 守护客户端（001）/ 服务端扩展清单
+  pfctx_manager.rs service_ext.rs  pf-context 守护客户端（001）/ 服务端扩展清单
   dev_flags.rs paths.rs   dev-flags 开发旗标 / PF 自有文件路径（010）
   market/ automation.rs   扩展市场 pi-link 侧（040-1 索引 / PF 插件扫描 090-4）/ pif-ui 自动化协议
   bin/                    附属可执行（pif-ui CLI、pif-secret 取 key、pi 全局前置 shim、token-count/probe-sample 统计探查）

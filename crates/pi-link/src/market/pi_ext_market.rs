@@ -43,7 +43,7 @@ impl MarketKind {
         ("subagents", MarketKind::Subagent),
     ];
 
-    /// 清单键名（单数形式，`extensions` → `extension`）：040-2 pi.dev 目录页的
+    /// 清单键名（单数形式，`extensions` → `extension`）：040-1 pi.dev 目录页的
     /// 类型徽标 / 类型筛选按这个口径对齐 npm 侧 `kinds`。
     pub fn key(self) -> &'static str {
         match self {
@@ -306,7 +306,7 @@ pub fn search(query: &str, from: usize, size: usize) -> Result<MarketPage, Strin
 /// npm 搜索的 size 上限（服务端钳制，超了也只会回 250）。
 pub const SEARCH_SIZE_MAX: usize = 250;
 
-/// 「最近发布」一栏的数据面（040-2）：npm 搜索**没有排序参数**（`sort=` 被忽略，
+/// 「最近发布」一栏的数据面（040-1）：npm 搜索**没有排序参数**（`sort=` 被忽略，
 /// 实测 `sort=updated` 与默认同序），所以只能取一页上限 250 条、本地按发布时间
 /// 倒序后截前 N 条。语义 = 「按相关度取到的这一批里最近发布的」，不是全库最新
 /// ——页面文案按这个口径写，不装懂。

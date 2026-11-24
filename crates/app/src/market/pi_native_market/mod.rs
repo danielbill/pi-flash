@@ -1,8 +1,8 @@
-//! Pi 原生扩展市场（040-2）——pi.dev `Package Catalog` 页的桌面移植。
+//! Pi 原生扩展市场（040-1）——pi.dev `Package Catalog` 页的桌面移植。
 //!
 //! 设计稿：`docs/UI设计/仿-pi.dev-Packages-页面设计/pi-packages.html`
 //! （同目录 `DESIGN-HANDOFF.md` 是导出工具给的视觉契约：**像素优先**）。
-//! 规格：`docs/模块设计/040-2-Pi 扩展市场.md`。
+//! 规格：`docs/模块设计/040-1-Pi的扩展市场.md`。
 //!
 //! 文件组织：页状态机（`NativeState`）与页内助手在本文件；Chat 动作链
 //! （打开/拉页/过滤/安装）在 [`actions`]、页面渲染在 [`render`]；卡分段与

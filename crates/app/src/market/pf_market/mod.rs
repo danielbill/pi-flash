@@ -47,7 +47,7 @@ mod render;
 
 pub(crate) use render::{centered, page, slice_shell};
 
-/// mono 字体（与 040-2 design::MONO 同值；该常量在私有 mod 里不可引）。
+/// mono 字体（与 040-1 design::MONO 同值；该常量在私有 mod 里不可引）。
 pub(crate) const MONO: &str = "JetBrains Mono";
 
 // ---------------------------------------------------------------------------

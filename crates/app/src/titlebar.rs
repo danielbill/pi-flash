@@ -227,7 +227,7 @@ fn icon_btn(
     icon_btn_sized(id, icon_name, _tip, align::TOGGLE_ICON, handler)
 }
 
-/// 同 [`icon_btn`]，图标尺寸可指定（040-2：菜单三横是细线图形，18 档视觉
+/// 同 [`icon_btn`]，图标尺寸可指定（040-1：菜单三横是细线图形，18 档视觉
 /// 质量比收放钮的 18×18 实心盒小一圈——用户定夺升 20 光学对齐）。
 #[allow(clippy::too_many_arguments)]
 fn icon_btn_sized(

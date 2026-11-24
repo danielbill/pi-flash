@@ -1,4 +1,4 @@
-//! Pi 原生扩展市场 —— 工具栏（搜索 + 类型 + 排序 + 两个按钮）与页码条（040-2）。
+//! Pi 原生扩展市场 —— 工具栏（搜索 + 类型 + 排序 + 两个按钮）与页码条（040-1）。
 //!
 //! 结构照设计稿 `.action-bar.packages-action-bar`（`grid-template-columns:
 //! minmax(0,1fr) 12rem 13rem auto`，`<1024` 折成一列）与 `.pagination`。

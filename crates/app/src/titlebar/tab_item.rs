@@ -102,7 +102,7 @@ pub(super) fn content_tab(
     let ghost = drag.clone();
     tab_shell(
         tab_id,
-        // 040-2：topbar 标签图标统一 ICON_XS(12)（2026-10-22 用户定夺；
+        // 040-1：topbar 标签图标统一 ICON_XS(12)（2026-10-22 用户定夺；
         // 原值 15 是非法档，规范 §3 五档之外）。
         // 例外：`plug` 图形本身细长（墨迹只占 ~13/24 宽），12 档下与方形图标
         // 并排显得小一圈，光学上补到 ICON_SM(14)（2026-10-23 用户定夺，
