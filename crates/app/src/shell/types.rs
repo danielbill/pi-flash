@@ -351,8 +351,11 @@ pub(crate) enum PanelTab {
     },
     /// 子代理观察窗 tab（044-0 验收）：普通自由 tab 姿态——追加末尾、
     /// 标题 = 任务名（主会话反查）、× 可关；key = 池 key（会话文件路径串），
-    /// runtime 驻留会话池（observer 不 spawn）。瞬态不进存档；空闲退役
-    /// 只摘 runtime 不摘 tab，点击走 open_session 秒开重开。
+    /// runtime 驻留会话池（observer 不 spawn）。瞬态不进存档；observer
+    /// 不受空闲退役管辖（回收条件要求 agent.session.is_some()，观察窗
+    /// 永不 spawn 恒不满足）——驻留期 = tab 打开期，关 tab 走
+    /// close_observer_tab 纯 drop 释放；tab 激活重建走
+    /// open_subagent_session_window。
     Observer {
         key: String,
     },
