@@ -220,11 +220,10 @@ pub(super) fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::
                     .into_any_element(),
                 )
             })
-            // 046-T 任务页签行尾标记：运行中橙点 > 红!（外部错误）>
-            // 黄点（内部中断）> 青蓝点（完成未读）——psp 通知点三色
-            // 分类同口径（appearance::NOTICE/WARN，红 = danger），文件
-            // tab 徽标同形
-            .or_else(|| task_tab_badge(chat, &tab, cx));
+            // 046-T 任务页签无徽标：状态看任务日志列表（行首状态点已
+            // 足），页签每帧零 Entity 读（2026-11-24 用户令：徽标撤除，
+            // 免每帧 rt.read 开销；ea2b34bc 曾加后撤）
+        ;
         let active = chat
             .ws
             .panel_tabs
@@ -319,62 +318,4 @@ fn session_tabs(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEleme
     // 禁透传（2026-11-07 用户令）：同 content_tab
     .block_mouse_except_scroll()
     .into_any_element()
-}
-
-/// 046-T 任务页签行尾标记：运行中橙点（appearance::ATTENTION）> 红!
-/// （外部错误）> 黄点（内部中断）> 青蓝点（完成未读）——psp 通知点三色
-/// 分类同口径（NOTICE/WARN，红 = danger），文件 tab 脏点同形。通知态读
-/// psp 三集（switch_to 激活即清）；退役后 runtime 出池 = 无标记，纯静
-/// 态快照页签。
-fn task_tab_badge(chat: &Chat, tab: &crate::PanelTab, cx: &gpui::App) -> Option<gpui::AnyElement> {
-    let crate::PanelTab::Task { key } = tab else {
-        return None;
-    };
-    let rt = chat.pool.runtimes.get(key)?;
-    let (running, notify) = {
-        let r = rt.read(cx);
-        (
-            r.agent_running,
-            r.file
-                .as_ref()
-                .map(|f| {
-                    (
-                        chat.psp.turn_errors.contains(f),
-                        chat.psp.turn_warnings.contains(f),
-                        chat.psp.unread.contains(f),
-                    )
-                })
-                .unwrap_or((false, false, false)),
-        )
-    };
-    let dot = |color: u32| {
-        div()
-            .size(px(7.))
-            .rounded_full()
-            .flex_shrink_0()
-            .bg(rgb(color))
-            .into_any_element()
-    };
-    if running {
-        return Some(dot(crate::appearance::theme::ATTENTION));
-    }
-    let (err, warn, unread) = notify;
-    if err {
-        return Some(
-            div()
-                .flex_shrink_0()
-                .text_size(crate::appearance::ui_size(11.))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(0xf87171))
-                .child(tr("status.alert"))
-                .into_any_element(),
-        );
-    }
-    if warn {
-        return Some(dot(crate::appearance::theme::WARN));
-    }
-    if unread {
-        return Some(dot(crate::appearance::theme::NOTICE));
-    }
-    None
 }

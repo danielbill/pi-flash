@@ -70,7 +70,7 @@
 | rekey 迁移 | `pool::session_ops` on_file_bound 迁移循环扩 Observer\|Task 双匹配 |
 | tab 激活/批量关/摘牌 | `editor::tabs::activate_content_tab`（池缺失重建）/ `tabs::close`（Task 仅摘牌）/ psp_actions 项目删除双匹配 |
 | 退役窗协商 | `retire_due(…, task_tab_open)`：页签开 ⇒ 通用窗 600s+阻塞件保护；页签关 ⇒ 任务窗 30s+跳保护 |
-| 徽标 | titlebar/tabs `task_tab_badge`：运行中橙点 > 红!（外部错误）> 黄点（中断）> 青蓝点（完成未读），读 psp 三集 |
+| 徽标 | 无（2026-11-24 用户令撤除：状态看任务日志列表行首点即可，页签每帧零 Entity 读；ea2b34bc 曾加后撤） |
 | 快照 | automation/snapshot：tabs `kind=task` / open_tabs `task_tab` |
 
 单测：`session::retire::tests::task_tab_open_upgrades_to_general_window`
@@ -79,7 +79,7 @@
 人工验收（真机项）：①点运行中任务日志行 → tab 开、可发消息介入（steer）
 且不杀进程；②关闭页签任务继续跑、到期正常退役结算；③退役后点 tab 秒开
 重开为可交互（非只读）；④任务 tab 打开期间固定段（用户会话）不被顶替；
-⑤任务页输入切走不串用户草稿；⑥徽标四态颜色正确；⑦重开/持久化后任务
+⑤任务页输入切走不串用户草稿；⑥重开/持久化后任务
 tab 不复活（不进 persist）。
 
 ## 人工验收（真机项）
