@@ -551,6 +551,38 @@ impl Chat {
         scheduler::dispatch_manual(src, job, self, cx);
     }
 
+    /// 行尾 stop（2026-11-24 用户令：运行中三 icon 换单枚 stop）：与
+    /// InputPanel 停止按钮同效——先清在途扩展 UI，再对该任务 runtime
+    /// Abort+ClearQueue（rt.abort_stream）。ext_cancel_all 仅任务为活跃
+    /// 会话时调（aux 弹窗只属于活跃会话——后台任务无弹窗可清，乱清会误
+    /// 伤用户会话的在途弹窗）；撤回的排队消息由 RecallInput 按 runtime
+    /// 归位（后台任务进自己草稿，不串用户输入框）；该轮照常结算
+    /// （aborted）。脚本任务无 runtime，走 kill 旗标（与超时中止同源，
+    /// poll 循环看见即提前 kill）。
+    pub(crate) fn task_stop_now(&mut self, def_id: &str, cx: &mut Context<Self>) {
+        let Some(key) = run::pending_key_for(self, def_id) else {
+            return;
+        };
+        let Some(ctx) = self.tasks.pending.get(&key) else {
+            return;
+        };
+        let rt = ctx.rt.clone();
+        let kill = ctx.kill.clone();
+        drop(ctx);
+        let active = rt
+            .as_ref()
+            .is_some_and(|rt| rt.read(cx).key == self.rt().read(cx).key);
+        if active {
+            self.ext_cancel_all(cx);
+        }
+        if let Some(rt) = rt {
+            rt.update(cx, |r, rcx| r.abort_stream(rcx));
+        } else if let Some(flag) = kill {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        cx.notify();
+    }
+
     /// 移除确认通过：运行中先中止再删（同事务连带删 runs）。
     pub(crate) fn task_delete_confirmed(&mut self, def_id: &str, cx: &mut Context<Self>) {
         if let Some(key) = run::pending_key_for(self, def_id) {

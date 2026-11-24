@@ -138,6 +138,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("task.delete", "删除", "刪除", "Delete"),
     ("task.delete_confirm", "删除任务「{title}」?运行中的会先中止。", "刪除任務「{title}」？執行中的會先中止。", "Delete task \"{title}\"? A running run is aborted first."),
     ("task.run_now", "立即运行", "立即執行", "Run now"),
+    ("task.stop", "停止", "停止", "Stop"),
     ("task.enable", "启用", "啟用", "Enable"),
     ("task.disable", "停用", "停用", "Disable"),
     ("task.edit_menu", "编辑", "編輯", "Edit"),

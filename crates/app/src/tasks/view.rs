@@ -295,9 +295,10 @@ fn task_row(
 
 /// 行尾 hover 显影动作钮（2026-11-22 用户令：立即运行/停用/移除从详情表头
 /// 挪来；同日用户令：绝对定位盖时间——时间右对齐，hover 时钮/时间 visibility
-/// 互斥）。钮 = kit icon_btn（§5.2 IB_SM，2026-11-22 收编）。运行中
-/// 「立即运行」置灰（原表头同守卫）；停用/启用钮图标 = 当前状态（rotate-clock
-/// / pause，2026-11-22 用户令：状态与 icon 对应）；移除走确认浮层（confirm_del）。
+/// 互斥）。钮 = kit icon_btn（§5.2 IB_SM，2026-11-22 收编）。移除走确认浮
+/// 层（confirm_del）。**运行中**（2026-11-24 用户令）：三 icon 换单枚
+/// stop（占运行钮原槽，lucide square），停用/移除隐藏——点击与 InputPanel
+/// 停止按钮同效（task_stop_now）。
 fn task_row_actions(
     def_id: &str,
     title: &str,
@@ -329,39 +330,54 @@ fn task_row_actions(
         .group_hover(reveal, |s| s.visible())
         .font_weight(gpui::FontWeight::NORMAL)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(task_act_btn(
-            format!("task-act-run-{id_run}"),
-            "play",
-            "task.run_now",
-            running,
-            &weak_run,
-            move |c, cx| c.task_run_now(&id_run, cx),
-        ))
-        .child(task_act_btn(
-            format!("task-act-toggle-{id_tog}"),
-            // 图标 = 当前状态（2026-11-22 用户令：状态与 icon 对应，不反着）
-            // ：可执行态 rotate-clock / 暂停态 pause；点击翻状态
-            if enabled { "rotate-clock" } else { "pause" },
-            if enabled {
-                "task.disable"
-            } else {
-                "task.enable"
-            },
-            false,
-            &weak_tog,
-            move |c, cx| c.task_toggle(&id_tog, cx),
-        ))
-        .child(task_act_btn(
-            format!("task-act-del-{id_del}"),
-            "trash",
-            "task.remove",
-            false,
-            &weak_del,
-            move |c, cx| {
-                c.tasks.page.confirm_del = Some((id_del.clone(), title_del.clone()));
-                cx.notify();
-            },
-        ))
+        .child(if running {
+            // 046-T2 stop：占运行钮原槽；点击 = InputPanel 停止按钮同效
+            task_act_btn(
+                format!("task-act-stop-{id_run}"),
+                "square",
+                "task.stop",
+                false,
+                &weak_run,
+                move |c, cx| c.task_stop_now(&id_run, cx),
+            )
+        } else {
+            task_act_btn(
+                format!("task-act-run-{id_run}"),
+                "play",
+                "task.run_now",
+                false,
+                &weak_run,
+                move |c, cx| c.task_run_now(&id_run, cx),
+            )
+        })
+        .when(!running, |d| {
+            // 停用/移除仅非运行态显影（运行中只留 stop，2026-11-24 用户令）
+            d.child(task_act_btn(
+                format!("task-act-toggle-{id_tog}"),
+                // 图标 = 当前状态（2026-11-22 用户令：状态与 icon 对应，不反着）
+                // ：可执行态 rotate-clock / 暂停态 pause；点击翻状态
+                if enabled { "rotate-clock" } else { "pause" },
+                if enabled {
+                    "task.disable"
+                } else {
+                    "task.enable"
+                },
+                false,
+                &weak_tog,
+                move |c, cx| c.task_toggle(&id_tog, cx),
+            ))
+            .child(task_act_btn(
+                format!("task-act-del-{id_del}"),
+                "trash",
+                "task.remove",
+                false,
+                &weak_del,
+                move |c, cx| {
+                    c.tasks.page.confirm_del = Some((id_del.clone(), title_del.clone()));
+                    cx.notify();
+                },
+            ))
+        })
         .into_any_element()
 }
 

@@ -53,11 +53,11 @@ pub(crate) struct RunCtx {
     pub trigger: Trigger,
     /// 派发时冻结的模型（"provider/id"；None = pi 默认）。
     pub model_frozen: Option<String>,
-    /// agent 派发：会话实体（S4 删除中止走 Interrupt；None = script）。
-    #[allow(dead_code)] // 046-S4 删除接线
+    /// agent 派发：会话实体（删除/行尾 stop 中止走 Abort+ClearQueue；
+    /// None = script）。
     pub rt: Option<gpui::Entity<SessionRuntime>>,
-    /// script 派发：中止旗标（poll 循环看见即提前 kill；S4 删除接线）。
-    #[allow(dead_code)] // 046-S4 删除接线
+    /// script 派发：中止旗标（poll 循环看见即提前 kill；删除/行尾 stop
+    /// 接线）。
     pub kill: Option<Arc<AtomicBool>>,
     tx: futures::channel::oneshot::Sender<JobOutcome>,
 }

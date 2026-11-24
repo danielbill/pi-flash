@@ -76,6 +76,13 @@
 单测：`session::retire::tests::task_tab_open_upgrades_to_general_window`
 （页签开 ⇒ 599s 不退 / 601s+新鲜阻塞件拦 / 601s 无阻塞件退）。
 
+**046-T2 行尾 stop（2026-11-24）**：运行中任务行尾三 icon（▷/↻/垃圾）换单枚
+stop（lucide square，占运行钮原槽），停用/移除隐藏。点击 `task_stop_now`：
+与 InputPanel 停止按钮同效——ext_cancel_all（仅任务为活跃会话时；aux 弹窗
+只属活跃会话，乱清会误伤用户会话弹窗）+ rt.abort_stream（Abort+ClearQueue，
+撤回排队按 RecallInput 归位）；脚本任务无 runtime 走 kill 旗标（超时中止同
+源）。i18n `task.stop`。
+
 人工验收（真机项）：①点运行中任务日志行 → tab 开、可发消息介入（steer）
 且不杀进程；②关闭页签任务继续跑、到期正常退役结算；③退役后点 tab 秒开
 重开为可交互（非只读）；④任务 tab 打开期间固定段（用户会话）不被顶替；
