@@ -81,7 +81,11 @@ stop（lucide square，占运行钮原槽），停用/移除隐藏。点击 `tas
 与 InputPanel 停止按钮同效——ext_cancel_all（仅任务为活跃会话时；aux 弹窗
 只属活跃会话，乱清会误伤用户会话弹窗）+ rt.abort_stream（Abort+ClearQueue，
 撤回排队按 RecallInput 归位）；脚本任务无 runtime 走 kill 旗标（超时中止同
-源）。i18n `task.stop`。
+源）。i18n `task.stop`。同日二轮反馈：①图标换实心方块 `assets/icons/stop.svg`
+（square.svg 是 12×12 细描边轮廓 16px 下净宽仅 8px，且被 titlebar 窗口控件
+复用不可改）；②stop 后两枚 22px 幽灵占位撑出三钮同宽，stop 钉在 play 原槽
+（右边第三位）不跳动；③运行中恒显不 hover 显影、时间恒隐；日志列表原设计
+不变。
 
 人工验收（真机项）：①点运行中任务日志行 → tab 开、可发消息介入（steer）
 且不杀进程；②关闭页签任务继续跑、到期正常退役结算；③退役后点 tab 秒开

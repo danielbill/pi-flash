@@ -217,6 +217,9 @@ assets! {
     "icons/minus.svg",
     "icons/square.svg",
     "icons/restore.svg",
+    // 046-T2 任务行尾停止钮（实心方块，与输入栏停止钮同视觉；square.svg
+    // 是细描边轮廓且被 titlebar 窗口控件复用，不可改）
+    "icons/stop.svg",
     // v65 品牌 logo（P+闪电，侧栏头部徽章；exe/.app 图标走 assets/icon 与 assets/macos）
     "icons/logo-marks.svg",
     // v7x 设置-模型页 provider logo（pi-web ProviderIcon 的 sprite 拆分版；

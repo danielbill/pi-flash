@@ -265,6 +265,9 @@ fn task_row(
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_size(ui_size(11.))
                 .text_color(rgb(t.text_faint))
+                // 运行中恒隐（2026-11-24 用户令：运行时行不显时间，右槽
+                // 直接显 stop；日志列表保持原设计不受影响）
+                .when(running, |d| d.invisible())
                 .when_some(reveal, |d, r| d.group_hover(r, |s| s.invisible()))
                 // 无时间戳（未跑过）行占位同宽假串：时间列恒定宽，名字统一
                 // 截断在时间列左缘（否则退到三钮 min_w，截断位落到时间列中间
@@ -311,18 +314,6 @@ fn task_row_actions(
     // 显影 = visibility 互斥（invisible 默认 + hover visible，notification.rs
     // 同款）——绝对定位盖在时间上（右槽见 task_row），invisible 不吃命中
     let reveal = SharedString::from(format!("task-row-act-{def_id}"));
-    // 运行中：时间恒隐、stop 恒显（不 hover 显影，2026-11-24 用户令）；
-    // stop 后两枚 22px 幽灵占位撑出与三钮态同宽的行尾组——stop 落在 play
-    // 原槽（右边第三位），运行/非运行两态切换钮不跳动
-    let ghosts = running.then(|| {
-        div()
-            .w(px(22.))
-            .flex_none()
-            .child(div())
-            .child(div())
-            .flex()
-            .gap(px(crate::ui::tokens::space::SP2))
-    });
     let weak_run = weak.clone();
     let id_run = def_id.to_string();
     let weak_tog = weak.clone();
@@ -394,6 +385,14 @@ fn task_row_actions(
                     cx.notify();
                 },
             ))
+        })
+        .when(running, |d| {
+            // 运行中时间恒隐、stop 恒显（不 hover 显影，2026-11-24 用户
+            // 令）；stop 后两枚 22px 幽灵占位撑出与三钮态同宽（22×3+
+            // SP2×2）的行尾组——stop 落在 play 原槽（右边第三位），两态
+            // 切换钮不跳动
+            d.child(div().w(px(22.)).flex_none())
+                .child(div().w(px(22.)).flex_none())
         })
         .into_any_element()
 }
