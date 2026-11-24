@@ -118,30 +118,44 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
     // 016：设置钮下放状态栏右槽（原手机图标位；手机遥控迁 topbar 左段）。
     // 图标右缘对齐上方列表右线（容器 LIST_PX + 行 pr LIST_PX = 2×LIST_PX，
     // 2026-10-13 定夺「向上对齐」）——右对齐 + pr 直取线位，勿改回居中
-    // （居中是 15px，会比右线多伸出 5px）
+    // （居中是 15px，会比右线多伸出 5px）。hover 底对齐 topbar 图标钮
+    // （titlebar icon_btn_sized）形制：30×30 圆角 7 钮盒吃 bg_hover，
+    // 不再整格 46×40 矩形（2026-11-24 用户令）；钮盒内图标居中内边 6，
+    // 外格 pr 相应减 6，图标线位不动。
     bar = bar.child(
         div()
-            .id("statusbar-settings")
             .w(px(46.))
             .h(px(HEIGHT))
             .flex()
             .items_center()
             .justify_end()
-            .pr(px(align::LIST_PX * 2.))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                    this.open_settings(0, cx);
-                }),
-            )
-            // 大图标档 LG18（020-1 图标两档定夺：设置钮与 topbar 收放钮同档）
-            .child(crate::ui::icon_hover(
-                "sliders-horizontal",
-                18.,
-                t.text_muted,
-            )),
+            .pr(px(
+                align::LIST_PX * 2. - (align::TOGGLE_BTN - align::TOGGLE_ICON) / 2.
+            ))
+            .child(
+                div()
+                    .id("statusbar-settings")
+                    .size(px(align::TOGGLE_BTN))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    // 圆角 7 = topbar icon_btn_sized 同值（两处必须一致）
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_settings(0, cx);
+                        }),
+                    )
+                    // 大图标档 LG18（020-1 图标两档定夺：设置钮与 topbar 收放钮同档）
+                    .child(crate::ui::icon_hover(
+                        "sliders-horizontal",
+                        align::TOGGLE_ICON,
+                        t.text_muted,
+                    )),
+            ),
     );
     bar
 }
