@@ -108,7 +108,7 @@ impl SessionRuntime {
             // full：内置 7 件（--tools）+ agent（045 subagent，模块运行时
             // 开关开着才点名——allowlist 指向不存在的注册工具没有意义）
             // + 精确集（-ne + 个人扩展 + 内置扩展）⇒ 插件一个不装 ⇒
-            // 系统提示词零插件注入（034 §1.2）
+            // 系统提示词零插件注入（041 §1.3）
             "full" => {
                 extra.push("--tools".into());
                 // present_plan 同上（031-1 注册级 allowlist 点名）

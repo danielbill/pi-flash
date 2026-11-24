@@ -78,9 +78,9 @@ impl Chat {
             // 轮不到这里。
             .on_drop::<crate::titlebar::TabDrag>(move |_, _, _| {});
         if !panes_hidden {
-            // 分隔线响应区（跨线）：统一感应厚度 divider::HIT=7，面板侧只
+            // 分隔线响应区（跨线）：统一感应厚度 divider::HIT=12，面板侧只
             // 占 3px（避让列表滚动条命中区），其余落在内容侧；可视线由
-            // ui::divider 统一画（§5.12）
+            // ui::divider 统一画（§5.13）
             body = body.child(
                 div()
                     .id("slp-resizer")
@@ -154,7 +154,7 @@ impl Chat {
                     window,
                     cx,
                 ))
-                // §5.12 统一分隔线：常驻 1px / hover·拖拽 4px accent，线形由
+                // §5.13 统一分隔线：常驻 1px / hover·拖拽 3px accent，线形由
                 // ui::divider 统一算（与 dock 上下分区同一条代码）；overlay
                 // 不占布局 = hover 零推挤。
                 .when(!panes_hidden, |d| {

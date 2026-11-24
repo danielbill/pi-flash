@@ -136,7 +136,8 @@ pub(crate) enum ListMode {
     Flat,
 }
 
-/// psp 排序方式（⋯ 菜单；手动=初始序，真拖拽待实现）。
+/// psp 排序方式（手动=初始序 / 时间=最近活动；⋯ 菜单已撤，切换走列表直切钮。
+/// 项目行拖拽排序见 `psp_drag`；会话行拖拽未做）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SortMode {
     Time,

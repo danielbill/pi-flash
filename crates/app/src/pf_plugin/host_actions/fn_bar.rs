@@ -160,7 +160,7 @@ impl Chat {
 
     /// fn_bar icon 点击：command 回环（env 带 {session:{key}}，契约 v3）。
     /// 绑定目标 = 当前会话：先把包内 pi 扩展写进该会话扩展清单（出码/收发
-    /// 本体在 ext，004 §5.2），进程空闲即重启挂载，再回环命令。
+    /// 本体在 ext，挂载台账见 90-4 §9），进程空闲即重启挂载，再回环命令。
     pub(crate) fn plugin_fn_bar_click(
         &mut self,
         ix: usize,

@@ -223,7 +223,7 @@ fn action_bar(
     );
     // pi-flash 版本号（placeholder 同款淡色，用户 2026-10-07 定稿）。
     // 081：状态化——下载中转圈（faint）、就绪 = 可点击「下载完成，点击
-    // 重启更新」（青蓝 NOTICE，点击 spawn swap helper 立即切换，081 §7）、
+    // 重启更新」（青蓝 NOTICE，点击 spawn swap helper 立即切换，081 §1）、
     // 关自动更新且有新版 = 可点击「↑」开 release 页（青蓝）。
     // Idle = 淡字版本号可点击，手动开当前版本更新日志页（2026-10-14）。
     {

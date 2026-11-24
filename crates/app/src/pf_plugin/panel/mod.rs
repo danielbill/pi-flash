@@ -148,7 +148,7 @@ pub(crate) struct RenderCtx<'a> {
     pub ratios: Vec<f32>,
     /// 分区滚动句柄（每个 section 一个，跨帧存续）
     pub scrolls: Vec<gpui::ScrollHandle>,
-    /// 悬停中的分隔线序号（§5.12 统一分隔线的高亮源）
+    /// 悬停中的分隔线序号（§5.13 统一分隔线的高亮源）
     pub split_hover: Option<usize>,
     /// 拖拽中的分隔线序号（同上：hover 与拖拽同款 4px accent）
     pub split_drag: Option<usize>,

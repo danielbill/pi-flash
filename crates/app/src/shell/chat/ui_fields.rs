@@ -424,7 +424,7 @@ pub(crate) struct LayoutUi {
     pub(crate) slp_w: f32,
     pub(crate) panes_hidden: bool,
     pub(crate) slp_drag: Option<(f32, f32)>,
-    /// 分隔线响应区悬停（§5.12 分隔线统一规范：hover 与拖拽同为 4px
+    /// 分隔线响应区悬停（§5.13 分隔线统一规范：hover 与拖拽同为 3px
     /// accent 粗线，线形计算见 `ui::divider`）
     pub(crate) slp_hover: bool,
     /// dock 上下分区（横分隔线）悬停——与 slp_hover 同一机制，两处对称

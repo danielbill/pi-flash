@@ -1,4 +1,4 @@
-//! spawn 参数配方（031/034）：`full` 档与「full+」档（内部键 custom）。
+//! spawn 参数配方（031/041）：`full` 档与「full+」档（内部键 custom）。
 //!
 //! 为什么不是「full 的 `--tools` + `-e` 插件」：`--tools` 是**注册级**硬
 //! allowlist —— 不在名单里的插件工具连 `getAllTools()` 都进不去，任何

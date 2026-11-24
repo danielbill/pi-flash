@@ -134,7 +134,7 @@ pub fn read_credential_at(path: &Path, provider: &str) -> Result<Option<Value>, 
 // 写（锁内整份读改写）
 // ---------------------------------------------------------------------------
 
-/// 写 PF 标记条目（覆盖同商旧条目——含用户手写明文的覆盖，决策 042-1 §9-4）。
+/// 写 PF 标记条目（覆盖同商旧条目——含用户手写明文的覆盖，决策 docs/plan/042-1-模型管理对齐pi-web-开发计划.md §9-4）。
 pub fn store_marker(provider: &str) -> Result<(), String> {
     store_marker_at(&auth_path(), provider, &marker_key(provider))
 }
@@ -256,7 +256,7 @@ pub fn migrate_markers_pathless() -> Result<usize, String> {
 // ---------------------------------------------------------------------------
 
 /// 保存 apikey：①钥匙库写入并读回校验 ②auth.json 写标记条目（失败回滚钥匙库）。
-/// 覆盖同商旧条目（含用户手写明文的覆盖——决策 042-1 §9-4）。
+/// 覆盖同商旧条目（含用户手写明文的覆盖——决策 docs/plan/042-1-模型管理对齐pi-web-开发计划.md §9-4）。
 pub fn store_secret(provider: &str, secret: &str) -> Result<(), String> {
     let secret = secret.trim();
     if secret.is_empty() {

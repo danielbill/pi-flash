@@ -156,8 +156,8 @@ pub(crate) fn session_row_view(
                 .pr(px(align::LIST_PX))
                 .rounded(px(8.))
                 .cursor_pointer()
-                // 色条与行体分离：行保持 32 命中区，可见色条上下各缩 1px
-                // （条高 30，相邻色条间留 2px 空隙——色条贴合无美感，
+                // 色条与行体分离：行命中区 34（row::MAIN），可见色条上下各缩 1px
+                // （条高 32，相邻色条间留 2px 空隙——色条贴合无美感，
                 // 2026-11-05 用户定夺）。bg 不再挂行体：active 恒显，
                 // 非 active 走 group("psrow") + group_hover（pin 槽位同款）
                 .child(

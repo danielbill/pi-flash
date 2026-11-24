@@ -306,7 +306,7 @@ fn render_section(
 }
 
 /// 分区之间的分隔线：7px 命中区，按下后进入拖拽（比例归宿主）。
-/// 线形走 §5.12 统一实现 `ui::divider`（与 dock 上下分区、内容区左缘同一条
+/// 线形走 §5.13 统一实现 `ui::divider`（与 dock 上下分区、内容区左缘同一条
 /// 代码）：常驻 1px / hover·拖拽 4px accent，不再自开一套 hover 底色块。
 fn render_splitter(
     ix: usize,
@@ -316,7 +316,7 @@ fn render_splitter(
     ctx: &RenderCtx,
 ) -> gpui::AnyElement {
     let weak = weak.clone();
-    // 高亮态 = 悬停本条 ‖ 正在拖本条（§5.12：hover 与拖拽同款 4px accent）
+    // 高亮态 = 悬停本条 ‖ 正在拖本条（§5.13：hover 与拖拽同款 3px accent）
     let active = ctx.split_hover == Some(index) || ctx.split_drag == Some(index);
     let band = crate::ui::tokens::divider::HIT;
     div()

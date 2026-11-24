@@ -17,8 +17,9 @@ impl Chat {
         // ——启动永远从无项目态出发（ws.cwd = None），应用不捏造任何当前目录
         //（进程 cwd / exe 目录 / 主目录兜底整族删除；payload 死循环一类的根
         // 因不复存在）。cwd 的合法来源只剩：
-        //   ① 启动恢复「最后工作的会话」（startup_restore=on，recents 全局
-        //      最新一条，其所属项目随之成为 cwd）——spawn_boot_restore 负责；
+        //   ① 启动恢复「最后工作的会话」（startup_restore=on，取 projects.json
+        //      last_opened_ms 最近活动项目的最后会话，其所属项目随之成为
+        //      cwd）——spawn_boot_restore 负责；
         //   ② 显式意图：切项目/打开项目、PI_FLASH_CWD（开发覆盖，同走 ① 通道）。
         // 无项目态下 composer 发送会弹「打开项目」先要一个目录（send 门）。
         let ui = ui_state();

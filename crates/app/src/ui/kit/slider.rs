@@ -1,5 +1,5 @@
 //! 连续量控件：range slider（设置-界面「会话内容宽度」首个消费方）。
-//! 180×18 / 轨道 4 / 旋钮 12（§5.12、§10.4）。
+//! 180×18 / 轨道 4 / 旋钮 12（§5.11、§10.4）。
 
 use gpui::prelude::*;
 use gpui::{AnyElement, MouseButton, Window, div, px, rgb};

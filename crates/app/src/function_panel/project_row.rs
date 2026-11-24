@@ -47,7 +47,7 @@ pub(crate) fn project_row(
         .id(SharedString::from(format!("prj-{pi}")))
         .relative()
         .top(px(shift))
-        // §5.8 主列表档真行高 32（原 33=32+mb2 补偿，mb 写法废除）
+        // §5.8 主列表档真行高 = row::MAIN 34（旧 33=32+mb2 补偿写法已废除）
         .h(px(crate::ui::tokens::row::MAIN))
         // 滚动容器 overflow 压缩行时 flex-shrink 会把行压到内容高
         // （min-height:auto），hover 按钮一现（28 高）行高就跳变、整列

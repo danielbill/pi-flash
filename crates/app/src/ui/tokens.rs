@@ -107,7 +107,7 @@ pub mod menu {
     pub const SEP_MY: f32 = 6.;
 }
 
-/// §5.7 弹窗（px）：宽度四档 + 标准内边距/圆角/标题行高；大卡 = 0.7×0.98。
+/// §5.7 弹窗（px）：宽度四档 + 标准内边距/圆角/标题行高；大卡 = 0.8×0.98。
 pub mod dialog {
     pub const W_SM: f32 = 380.;
     pub const W_MD: f32 = 500.;
@@ -155,15 +155,15 @@ pub mod scrollbar {
     pub const THUMB_ACTIVE: f32 = 10.;
 }
 
-/// §5.10 面板控制栏（020-1 整合面板）：上下子面板控制栏统一高、一律无
-/// 下 border；分隔线感应厚度归 §5.12 divider::HIT（原 DIV_H 已并入）；
+/// §5.12 面板控制栏（020-1 整合面板）：上下子面板控制栏统一高、一律无
+/// 下 border；分隔线感应厚度归 §5.13 divider::HIT（原 DIV_H 已并入）；
 /// 钮盒高 30。
 pub mod panel_ctrl {
     pub const BAR_H: f32 = 38.;
     pub const BTN_H: f32 = 30.;
 }
 
-/// §5.12 分隔线（统一规范，2026-10-23 定夺）：常驻 1px 细线；hover 与拖拽
+/// §5.13 分隔线（统一规范，2026-10-23 定夺）：常驻 1px 细线；hover 与拖拽
 /// 同款 accent 粗线（宽度唯一落点 = [`HOVER`]）；感应厚度三处统一。高亮线
 /// 一律 absolute 覆盖、不占
 /// 布局 = hover 零推挤（border 占布局，换粗细会抖）。唯一实现
@@ -313,7 +313,7 @@ mod tests {
             [scrollbar::W, scrollbar::THUMB, scrollbar::THUMB_ACTIVE],
             [10., 6., 10.]
         );
-        // §5.10 面板控制栏（020-1） / §5.12 分隔线（统一规范）
+        // §5.12 面板控制栏（020-1） / §5.13 分隔线（统一规范）
         assert_eq!([panel_ctrl::BAR_H, panel_ctrl::BTN_H], [38., 30.]);
         assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 3., 12.]);
         // §7 图标对齐线（含推导值）

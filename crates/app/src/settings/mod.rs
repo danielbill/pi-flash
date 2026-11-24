@@ -1,8 +1,8 @@
 //! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他）。
 //! 内部页面按 pi-web 最新版重构（路径条/分组侧栏/详情表单/底栏）。表单
 //! 状态由 SettingsPanel entity 持有；mc_*/mcp_* 动作仍在 Chat 上（单一
-//! RPC 属主）。子代理页已移除——社区子代理扩展经「扩展」页安装即用，
-//! 不再建模任何 subagent 配置。
+//! RPC 属主）。子代理页（agents）常驻，`subagents_enabled()` 关闭时导航
+//! 隐藏该页签。
 
 pub(crate) mod about;
 pub(crate) mod agents;

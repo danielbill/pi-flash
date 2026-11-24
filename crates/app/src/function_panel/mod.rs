@@ -98,7 +98,7 @@ pub(crate) fn dock(
     // 改占比（拖拽即退出两侧最小态、双击复位 50%），各自可收起到控制栏
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）
     let bounds_slot = chat.layout.dock_bounds.clone();
-    // §5.12 统一分隔线：常驻 1px；**hover 与拖拽同为 4px accent**
+    // §5.13 统一分隔线：常驻 1px；**hover 与拖拽同为 3px accent**
     let split_drag = chat.layout.split_drag;
     let split_active = split_drag || chat.layout.split_hover;
     let d_hit = crate::ui::tokens::divider::HIT;
@@ -122,7 +122,7 @@ pub(crate) fn dock(
         )
         .child(psp_view::psp_view(chat, entity, weak.clone(), window, cx))
         // 子面板分隔线：7px 命中带 + 常驻 1px 视觉线（左右缩进 10 = 列表
-        // 右线），hover/拖拽按 §5.12 统一规范换 4px accent 覆盖线（absolute
+        // 右线），hover/拖拽按 §5.13 统一规范换 3px accent 覆盖线（absolute
         // 改 top/h 不占布局零推挤，带内居中 = 与常驻线同一中线）
         .child(
             div()

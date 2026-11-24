@@ -44,7 +44,7 @@ pub(crate) struct PluginEntry {
     pub split_ratios: std::cell::RefCell<Vec<f32>>,
     /// 正在拖动分隔线的瞬时状态
     pub split_drag: std::cell::RefCell<Option<crate::pf_plugin::panel::SplitDrag>>,
-    /// 悬停中的分隔线序号（§5.12 统一分隔线：hover 与拖拽同款 4px accent。
+    /// 悬停中的分隔线序号（§5.13 统一分隔线：hover 与拖拽同款 3px accent。
     /// hover 走字段而非 gpui hover 样式——后者改布局属性不可靠，且与其他
     /// 两处分隔线会成两套逻辑）
     pub split_hover: std::cell::RefCell<Option<usize>>,

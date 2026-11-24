@@ -96,8 +96,7 @@ fn drag_icon(drag: &TabDrag, size: f32, color: u32) -> Option<gpui::AnyElement> 
         .map(|n| crate::ui::icon(n, size, color).into_any_element())
 }
 
-/// topbar 高（两段同高；窗口控制钮高度跟随；2026-10-10 定夺 36→38，
-/// 2026-10-13 定夺 38→40 与 statusbar 等高）。
+/// topbar 高（两段同高 40；窗口控制钮高度跟随；与 statusbar 等高）。
 pub(crate) const HEIGHT: f32 = 40.;
 
 /// Caption-button glyph font (Win11; MDL2 covers Win10).

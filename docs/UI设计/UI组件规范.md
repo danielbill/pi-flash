@@ -267,9 +267,7 @@ composer 胶囊（rounded16、pt10 pb7、AutoGrow 3–10 行）为既有特例�
 
 不属 tooltip 的悬浮物：psp 项目路径悬浮条 / 会话·项目右键详情卡（自绘 overlay，可交互；右键召唤、点外即收，见 psp_overlays.rs）。
 
-### 5.12 滑块（range slider）
-
-（与另一节同号·历史编号：本节是**滑块**。）
+### 5.11 滑块（range slider）
 
 设置页唯一的连续量控件（首用 = 界面页「会话内容宽度」）。代码落点
 `ui/kit/slider.rs` 的 `width_slider`（settings 侧经 `widgets` 转发）：
@@ -288,13 +286,11 @@ composer 胶囊（rounded16、pt10 pb7、AutoGrow 3–10 行）为既有特例�
 `canvas` + 窗口级 `on_mouse_event`（与 §5.9 滚动条同一机制），拖拽标志放
 thread_local——paint 期每帧重注册闭包，局部变量活不过一次重绘。
 
-### 5.11 面板控制栏（020-1 整合面板）
+### 5.12 面板控制栏（020-1 整合面板）
 
-上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 12px、视觉与交互全按 §5.12 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
+上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 12px、视觉与交互全按 §5.13 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
 
-### 5.12 分隔线（统一规范）
-
-（与另一节同号·历史编号：本节是**分隔线**。）
+### 5.13 分隔线（统一规范）
 
 壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 3px accent 粗线；感应厚度统一 12px**（粗线宽度唯一落点 = `tokens::divider::HOVER`；`tokens::divider::HIT`；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局。
 
@@ -428,7 +424,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 工具条文字开关 `text_toggle` | 同槽（h**24**、`px 6`、r**6**），文字 mono ui(11) BOLD；按 = accent 16% 洗底 + accent 字 | kit/toggle.rs（083 搜索条 Aa/ab\|/.*） |
 | 键帽 Kbd | 高 **22**、`min-w 22`、`px 7`、r5、mono ui(11)；底 `cap_bg`、1px border、底部 1px 硬阴影（edge = border 混深） | shortcuts |
 | 主题卡 | 高 **36**、r5、1px border（选中 → **2px** accent）、`px 8`、gap 6、底色 = 该主题 `bg`；**每行 5 槽等宽、gap 8、mt 8**；槽位外包无 padding 容器（否则 flex 不等宽） | general 外观页 |
-| 滑块 | 180×18、轨道 4、旋钮 12（同 §5.12） | `kit/slider.rs::width_slider` |
+| 滑块 | 180×18、轨道 4、旋钮 12（同 §5.11） | `kit/slider.rs::width_slider` |
 | 步进器 `stepper` | −/+ 两钮各 **24×24** r**5** 1px border 底 `bg_panel`（ui(13) semibold `text_dim`，边界钮置灰 `text_muted`），中间值 **min-w 28** 居中 ui(12.5) semibold `text_muted`，gap **8**；点击 `cur()` 重读当前值、对齐步长网格后夹回 [min,max] 交 `apply` | `kit/stepper.rs`（misc 会话显示数/清理天数、agents 最大并发） |
 | 列表行高（可缩放页） | `max(ui(11) + 19, 30)`——随字号长个，不写死 30 | models 侧栏 |
 | 表单（子代理页） | label 列 **w96**、控件列 **w250**（下拉/输入框 30 高）、textarea **170**、行距 **8**、区块 gap **12** | agents |

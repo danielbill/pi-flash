@@ -56,7 +56,7 @@ pub(crate) fn page(
         .flex()
         .bg(rgb(t.bg))
         .child(list)
-        // 列表 ⇆ 右列竖分隔线：§5.12 统一实现（常驻 1px 细线灰，比 0x45
+        // 列表 ⇆ 右列竖分隔线：§5.13 统一实现（常驻 1px 细线灰，比 0x45
         // 自调灰重一档，2026-11-22 用户令：页面分割线统一左面板样式）。
         // 上下端缩进 15 对齐页边距（同日用户令：竖隔条也要上下留白）
         .child(
@@ -77,7 +77,7 @@ pub(crate) fn page(
                 .flex()
                 .flex_col()
                 .child(detail)
-                // 详情 ⇄ 日志横线：左面板横分隔线同款（§5.12 统一实现，
+                // 详情 ⇄ 日志横线：左面板横分隔线同款（§5.13 统一实现，
                 // 两端缩进 15 对齐本页边距，带内居中留白）
                 .child(
                     div()
@@ -311,6 +311,18 @@ fn task_row_actions(
     // 显影 = visibility 互斥（invisible 默认 + hover visible，notification.rs
     // 同款）——绝对定位盖在时间上（右槽见 task_row），invisible 不吃命中
     let reveal = SharedString::from(format!("task-row-act-{def_id}"));
+    // 运行中：时间恒隐、stop 恒显（不 hover 显影，2026-11-24 用户令）；
+    // stop 后两枚 22px 幽灵占位撑出与三钮态同宽的行尾组——stop 落在 play
+    // 原槽（右边第三位），运行/非运行两态切换钮不跳动
+    let ghosts = running.then(|| {
+        div()
+            .w(px(22.))
+            .flex_none()
+            .child(div())
+            .child(div())
+            .flex()
+            .gap(px(crate::ui::tokens::space::SP2))
+    });
     let weak_run = weak.clone();
     let id_run = def_id.to_string();
     let weak_tog = weak.clone();
@@ -326,15 +338,20 @@ fn task_row_actions(
         .flex()
         .items_center()
         .gap(px(crate::ui::tokens::space::SP2))
-        .invisible()
-        .group_hover(reveal, |s| s.visible())
+        // 非运行态 hover 显影（visibility 互斥：时间组内反向隐身）；运行
+        // 态恒显，不挂 invisible/group_hover
+        .when(!running, |d| {
+            d.invisible().group_hover(reveal, |s| s.visible())
+        })
         .font_weight(gpui::FontWeight::NORMAL)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(if running {
-            // 046-T2 stop：占运行钮原槽；点击 = InputPanel 停止按钮同效
+            // 046-T2 stop：占运行钮原槽；点击 = InputPanel 停止按钮同效；
+            // 图标 = 实心方块 assets/icons/stop.svg（square.svg 是 12×12
+            // 细描边轮廓，16px 下净宽仅 8px，2026-11-24 用户报太小）
             task_act_btn(
                 format!("task-act-stop-{id_run}"),
-                "square",
+                "stop",
                 "task.stop",
                 false,
                 &weak_run,
@@ -408,7 +425,7 @@ fn tasks_list(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme)
         .w(gpui::relative(0.4))
         .min_w(px(400.))
         .flex_none()
-        // 右缘分隔线已由页装配的 §5.12 竖 divider band 承担（2026-11-22），
+        // 右缘分隔线已由页装配的 §5.13 竖 divider band 承担（2026-11-22），
         // 这里不再叠 0x45 旧 border——双线会并肩出 1px 错位
         .overflow_y_scroll()
         .px(px(6.))
