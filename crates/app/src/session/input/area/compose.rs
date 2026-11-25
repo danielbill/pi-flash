@@ -236,7 +236,8 @@ pub(super) fn composer_wrap(
         .child(
             div()
                 .absolute()
-                // 034：永久上移 8（原 20 → 28）。状态带是 absolute 覆盖层，
+                // 034：永久让位，底距 = footer_bar::BAR_H（原 20，随状态带
+                // 28 → 30 上浮）。状态带是 absolute 覆盖层，
                 // 开闭不改变布局，所以这里不随开关变——胶囊永不动。
                 .bottom(px(crate::session::footer_bar::BAR_H))
                 .left_0()

@@ -168,7 +168,10 @@ mod tests {
     #[test]
     fn spacer_target_is_a_constant_while_pinned() {
         let avail = 1000. - PAD_TOP - PAD_BOTTOM;
-        assert_eq!(avail, 1000. - 22. - 188.);
+        assert_eq!(
+            avail,
+            1000. - 22. - (160. + crate::session::footer_bar::BAR_H)
+        );
         assert_eq!(spacer_target(avail, 0.), (avail, false));
         assert_eq!(spacer_target(avail, 130.), (avail, false));
         // 内容刚好填满 → 垫片 0 且转跟随（胶水接住，几何连续）

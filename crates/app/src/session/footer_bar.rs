@@ -1,5 +1,5 @@
 //! 034 会话区底部状态栏（模块代码 sessionStatusBar）：content-col 最底部
-//! 28px 状态带（底色 = 会话区背景 t.bg），承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
+//! 30px 状态带（底色 = 会话区背景 t.bg），承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
 //!
 //! - 数据面：`SessionRuntime::ext_status`（per-session；pi 换会话/重载会清，
 //!   放 Chat 上会串味）。
@@ -12,11 +12,13 @@ use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::appearance::theme::{Theme, theme as T};
-use crate::ui::tokens::radius;
+use crate::ui::tokens::{ib, radius};
 use crate::ui::{icon, tooltip::WithTip};
 
-/// 状态带高度（034 §3.1：inputpanel 正下方一条 28px）。
-pub(crate) const BAR_H: f32 = 28.;
+/// 状态带高度（034 §3.1：inputpanel 正下方一条；2026-11-25 用户上调 28 → 30）。
+/// **胶囊底距（compose.rs）/导航 flyout 底部（nav_panel/gutter.rs）/悬浮让位
+/// （chat_list PAD_BOTTOM）全部引用本常量**，调高度只改这里，勿在别处写数值。
+pub(crate) const BAR_H: f32 = 30.;
 
 /// 状态项动作（034 §4.2）。当前只有「执行命令」一类；将来若加面板类
 /// （如某个扩展设置页），在这里补 variant 并同步 `footer_status_act`。
@@ -58,7 +60,7 @@ fn tip_key_of(key: &str) -> &'static str {
     }
 }
 
-/// 状态带本体。None = 整条不渲染（不占 28px，也不建 element）。
+/// 状态带本体。None = 整条不渲染（不占 BAR_H，也不建 element）。
 ///
 /// 显隐四档（034 §3.4）：开关关 / 无项 / 全部文本空 / 新会话页（调用方不挂）。
 pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui::AnyElement> {
@@ -123,7 +125,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .text_size(crate::appearance::ui_size(10.))
             .text_color(rgb(color))
             // 过载处理（用户定夺 2026-11-04）：超长截断、禁止折行——单行 +
-            // 尾部省略，flex 挤压到多少都保持一行，绝不折行撑破 28px 条
+            // 尾部省略，flex 挤压到多少都保持一行，绝不折行撑破状态条
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
@@ -156,7 +158,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
 
     // 条 = chat-wrap 底缘的 absolute 覆盖层（不参与 flex 流）：显隐都不推挤
     // Inputpanel（composer 底距恒为 BAR_H，开闭之间不动）。PAD_BOTTOM 已把
-    // 这 28px 算进让位，消息不会被压在带子底下。
+    // 这 BAR_H 算进让位，消息不会被压在带子底下。
     // 不画上沿线：左邻是 dock 的 tab 栏，横线一拉就对不齐（用户定夺）。
     // 内容行与消息列/composer 同心：px15 + 内容列宽封顶，项在列内**居中**
     //（用户口径：右侧已有模型信息，项再右对齐会形成两条贴右竖排文字，碍眼）。
@@ -219,17 +221,24 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
     )
 }
 
-/// 内容管理 §2：[...] 图标钮（全库唯一「更多」= lucide ellipsis 裸三点，
-/// ICON_SM 14）。贴内容列右缘 absolute，点击打开插件勾选菜单。
+/// 发送钮中心距内容列右缘 = 胶囊边框 1 + 操作栏 px10 + 发送 mr2 + 36/2 = 31
+/// （input/bar/toggle.rs 发送钮几何；⋯ 钮水平对齐基准）。
+const SEND_CENTER_INSET: f32 = 31.;
+
+/// 内容管理 §2：[...] 图标钮（全库唯一「更多」= lucide ellipsis 裸三点）。
+/// 形制 = 规范 §5.2 IB_SM 行内 ⋯ 触发钮：22 槽 / icon 14 / 圆角 INLINE /
+/// hover bg_hover（ui::kit icon_btn 同款；因菜单定位需要点击坐标，无法
+/// 直接走 kit 入口，样式逐项对齐——槽位全取 token 勿手写）。
+/// 垂直 = (BAR_H − ib::SM)/2 顶距居中，不贴 app 底缘（2026-11-25 用户令）；
+/// 水平 = 钮中心对齐发送钮中心（right = SEND_CENTER_INSET − 11 = 20）。
 fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     div()
         .id("ext-status-mgr")
         .absolute()
-        .right_0()
-        .top_0()
-        .h(px(BAR_H))
-        .w(px(BAR_H))
+        .right(px(SEND_CENTER_INSET - ib::SM / 2.))
+        .top(px((BAR_H - ib::SM) / 2.))
+        .size(px(ib::SM))
         .flex()
         .items_center()
         .justify_center()
@@ -245,7 +254,7 @@ fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
                 cx.notify();
             }),
         )
-        .child(icon("ellipsis", 14., t.text_faint))
+        .child(icon("ellipsis", crate::ui::tokens::icon::SM, t.text_faint))
         .into_any_element()
 }
 
