@@ -122,9 +122,31 @@ pub(crate) fn topbar_l(
         .flex()
         .items_center()
         .bg(rgb(t.chrome));
+    // 头部两钮（015/040-1），两模式同序同位：收放钮贴段首
+    //（`tokens::align::TOGGLE_ML`，图标视觉线 ICON_LINE 与 psp 列表图标
+    // 对齐，2026-10-13 定稿）+ 三横紧贴（ml SP2）。面板居右时“段首”即
+    // 内容侧内缘——2026-11-26 用户定夺「顶到左前方」，不缩在窗口钮旁；
+    // icon 按面板边取 panel-left/right。
+    bar = bar.child(div().ml(px(align::TOGGLE_ML)).child(panes_toggle_btn(
+        "panes-toggle",
+        if panel_right {
+            "panel-right"
+        } else {
+            "panel-left"
+        },
+        tr("titlebar.toggle_sidebar"),
+        cx,
+    )));
+    // 040-1 「菜单」三横钮（紧贴收放钮右侧）：目前只有「Pi扩展市场」
+    // 一项，浮层渲染挂 render.rs 根（dlg.market_menu = 按钮锚点）。
+    // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
+    // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
+    if crate::services::workspace::market_menu_enabled() {
+        bar = bar.child(div().ml(px(space::SP2)).child(market_menu_btn(cx)));
+    }
     if panel_right {
-        // 居右：[拖拽填充][三横菜单][收放钮（panel-right icon）|分隔线]
-        // [min][max][close] —— 左模式的 [收放][菜单][填充] 镜像 + 窗口钮。
+        // 尾部窗口控制钮（迁入本段 = 窗口右上角定位不变）：flex_1 拖拽
+        // 填充隔开头部两钮，分隔线分组窗口钮区。
         bar = bar
             .child(
                 div()
@@ -132,16 +154,6 @@ pub(crate) fn topbar_l(
                     .h_full()
                     .window_control_area(WindowControlArea::Drag),
             )
-            .children(
-                crate::services::workspace::market_menu_enabled().then(|| market_menu_btn(cx)),
-            );
-        bar = bar
-            .child(panes_toggle_btn(
-                "panes-toggle",
-                "panel-right",
-                tr("titlebar.toggle_sidebar"),
-                cx,
-            ))
             .child(title_sep())
             .child(caption_button(WindowControlArea::Min, "minus", t))
             .child(caption_button(
@@ -155,21 +167,6 @@ pub(crate) fn topbar_l(
             ))
             .child(caption_button(WindowControlArea::Close, "\u{E8BB}", t));
         return bar;
-    }
-    // 收放钮贴左 = `tokens::align::TOGGLE_ML`（图标视觉线 ICON_LINE 与
-    // psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。
-    bar = bar.child(div().ml(px(align::TOGGLE_ML)).child(panes_toggle_btn(
-        "panes-toggle",
-        "panel-left",
-        tr("titlebar.toggle_sidebar"),
-        cx,
-    )));
-    // 040-1 「菜单」三横钮（紧贴收放钮右侧）：目前只有「Pi扩展市场」
-    // 一项，浮层渲染挂 render.rs 根（dlg.market_menu = 按钮锚点）。
-    // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
-    // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
-    if crate::services::workspace::market_menu_enabled() {
-        bar = bar.child(div().ml(px(space::SP2)).child(market_menu_btn(cx)));
     }
     bar
         // drag filler: the empty middle is the drag region (HTCAPTION —
