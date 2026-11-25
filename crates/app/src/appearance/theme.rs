@@ -236,11 +236,11 @@ pub const ALL: &[(&str, Theme)] = &[
     ("rose", ROSE),
     ("latte", LATTE),
     ("one-light", ONE_LIGHT),
+    ("monokai-pro", MONOKAI_PRO),
+    ("noctis", NOCTIS),
+    ("night-owl", NIGHT_OWL),
     ("nord-dark", NORD_DARK),
     ("one-dark", ONE_DARK),
-    ("noctis", NOCTIS), // 暗色 3 号位
-    ("night-owl", NIGHT_OWL),
-    ("monokai-pro", MONOKAI_PRO), // 暗色 5 号位
 ];
 
 /// ZED "One Dark" — ported from `zed/crates/theme/src/fallback_themes.rs`
