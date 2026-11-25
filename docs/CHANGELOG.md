@@ -2,6 +2,32 @@
 
 所有对外发布的版本变化记录于此，格式见 `docs/CHANGELOG规范.md`。
 
+## [0.6.3] - 2026-11-25
+
+本次更新核心：
+1、三套新暗色主题：Night Owl / Noctis / Monokai Pro，内置主题达十套
+2、pine 主题隐藏下架
+3、修复底部状态栏点击透传
+
+### 安装与更新
+
+```bash
+npm install -g pi-flash@latest   # 首次安装与更新同命令
+pi-flash
+```
+
+需要 Node.js ≥ 22.19。也可直接下载 zip 绿色包，解压后双击 `pi-flash.exe` 即用。仅提供 Windows x64 版本。
+
+### 新增
+- Night Owl 暗色主题：sdras Night Owl 官方色板移植——深夜蓝 #011627 底、标志蓝 #82aaff 强调、text 阶梯全取原色三档。(71859aad)
+- Noctis 暗色主题。(b3e3a713)
+- Monokai Pro 暗色主题：monokai.pro 官方公开色板移植——冷灰 #2d2a2e 底、标志黄 #ffd866 强调。(92da1b90)
+
+### 修复
+- 底部状态栏点击透传：状态栏压在消息列上方，点击扩展状态项或条身空白处，点击会漏进身后的消息列（误选中正文、误触链接）。现整条状态栏拦截鼠标，条内子件交互不受影响。(208c2ccb)
+
+### 改进
+- pine 主题从设置中隐藏（常量保留，随时可恢复）；新主题显示名 Night Owl / Noctis / Monokai Pro 不译。内置主题现共十套，暗色五套：Nord Dark / One Dark / Noctis / Night Owl / Monokai Pro。(92da1b90, b3e3a713)
 ## [0.6.2] - 2026-11-25
 
 本次更新核心：

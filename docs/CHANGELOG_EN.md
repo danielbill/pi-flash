@@ -2,6 +2,32 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.3] - 2026-11-25
+
+Highlights of this release:
+1. Three new dark themes: Night Owl / Noctis / Monokai Pro — ten built-in themes in total
+2. pine theme hidden from the picker
+3. Fixed click pass-through on the bottom status bar
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively, download the portable zip and double-click `pi-flash.exe` after extracting. Windows x64 only.
+
+### New
+- Night Owl dark theme: ported from sdras' official Night Owl palette — deep-night-blue #011627 base, signature blue #82aaff accent, text ladder taken from the original three tiers. (71859aad)
+- Noctis dark theme. (b3e3a713)
+- Monokai Pro dark theme: ported from the official monokai.pro public palette — cool gray #2d2a2e base, signature yellow #ffd866 accent. (92da1b90)
+
+### Bug fixes
+- Bottom status bar click pass-through: the bar overlays the message column, so clicks on extension status items or blank bar areas leaked through to the message list underneath (accidental text selection, accidental link opens). The whole bar now captures the mouse; interactions with items inside the bar are unaffected. (208c2ccb)
+
+### Improvements
+- pine theme is hidden from the picker (the constant stays, easy to restore); new theme display names Night Owl / Noctis / Monokai Pro are not translated. Ten built-in themes in total, five of them dark: Nord Dark / One Dark / Noctis / Night Owl / Monokai Pro. (92da1b90, b3e3a713)
 ## [0.6.2] - 2026-11-25
 
 Highlights of this release:
