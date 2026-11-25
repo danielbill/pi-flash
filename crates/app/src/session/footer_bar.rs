@@ -197,6 +197,11 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
                             .max_w(px(content_w))
                             .min_w_0()
                             .relative()
+                            // 撑满条高：这是 mgr_button 等绝对定位子件的包含块，
+                            // 高度若只有文字行高（行在条内居中），按 BAR_H 算的
+                            // 顶距会整体下坠、底部被 overflow_hidden 裁掉——
+                            // 满条高后 (BAR_H − ib::SM)/2 顶距才是真居中
+                            .h(px(BAR_H))
                             .flex()
                             .items_center()
                             .justify_center()
