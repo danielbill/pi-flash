@@ -178,6 +178,10 @@ pub struct UiState {
     /// 列表。数据面照旧收全量（ext_status），只是画的时候跳过；当前没有逐键
     /// 的 UI 入口（后续可加"隐藏这一行"），先由配置承载。
     pub ext_status_muted: Vec<String>,
+    /// 功能面板放置边（设置-界面「放置功能面板」）："left"（默认）| "right"。
+    /// 读侧过滤非法值落 left；Chat.layout.panel_right 是运行期真源，本字段
+    /// 只管跨重启还原。
+    pub panel_side: String,
 }
 
 impl Default for UiState {
@@ -196,6 +200,7 @@ impl Default for UiState {
             session_pins: Vec::new(),
             session_status_bar: None,
             ext_status_muted: Vec::new(),
+            panel_side: "left".into(),
         }
     }
 }
@@ -277,6 +282,12 @@ pub fn ui_state() -> UiState {
             })
             .unwrap_or_default(),
         session_status_bar: v.get("session_status_bar").and_then(|b| b.as_bool()),
+        panel_side: v
+            .get("panel_side")
+            .and_then(|s| s.as_str())
+            .filter(|s| *s == "right")
+            .unwrap_or("left")
+            .to_string(),
         ext_status_muted: v
             .get("ext_status_muted")
             .and_then(|c| c.as_array())
@@ -313,6 +324,12 @@ pub fn set_session_status_bar(on: bool) {
     let mut st = ui_state();
     st.session_status_bar = Some(on);
     save_ui_state(&st);
+}
+
+/// 功能面板放置边当前是否居右（缺字段/非法值 = 默认左）。设置页读值用；
+/// 运行期真源是 Chat.layout.panel_right（boot 装载、切设置即改）。
+pub fn panel_side_right() -> bool {
+    ui_state().panel_side == "right"
 }
 
 /// dock 最大化态 ↔ layout 两标志的**唯一映射**（两端共用，防漂移）。
@@ -353,6 +370,7 @@ pub fn save_ui_state(s: &UiState) {
             "session_pins": s.session_pins,
             "session_status_bar": s.session_status_bar,
             "ext_status_muted": s.ext_status_muted,
+            "panel_side": s.panel_side,
         }),
     );
     set_memory(&map);

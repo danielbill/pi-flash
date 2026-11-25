@@ -1,5 +1,7 @@
-//! 布局装配：v54 body 两栏（panel-col = topbar-l + dock + statusbar |
+//! 布局装配：v54 body 两栏（panel-col = topbar + dock + statusbar |
 //! content-col = topbar_r + content_main）+ 根外壳（全局 action/键位兜底）。
+//! 功能面板可置左（默认）或置右（设置-界面「放置功能面板」）：置右时两栏
+//! 换序、resizer/分隔线镜像、窗口控制钮迁 panel 段标题栏（titlebar.rs）。
 
 use crate::*;
 
@@ -15,6 +17,7 @@ impl Chat {
         let entity_for_body = entity.clone();
         let weak_for_body = weak.clone();
         let panes_hidden = self.layout.panes_hidden;
+        let panel_right = self.layout.panel_right;
         let slp_dragging = self.layout.slp_drag.is_some();
         let slp_hovered = self.layout.slp_hover;
         let mut body = div()
@@ -23,12 +26,17 @@ impl Chat {
             .min_h_0()
             .relative()
             .flex()
-            // slp 宽度拖拽（resizer 按下时在此跟踪）
+            // slp 宽度拖拽（resizer 按下时在此跟踪）。面板居左 = 拖右缘向
+            // 右变宽；居右 = 拖左缘向左变宽（公式变号，同一段代码）
             .on_mouse_move(move |ev: &gpui::MouseMoveEvent, _, cx| {
                 let _ = weak_for_body.update(cx, |c, cx| {
                     if let Some((start_x, start_w)) = c.layout.slp_drag {
-                        c.layout.slp_w =
-                            (start_w + f32::from(ev.position.x) - start_x).clamp(300., 500.);
+                        let dx = f32::from(ev.position.x) - start_x;
+                        c.layout.slp_w = if c.layout.panel_right {
+                            (start_w - dx).clamp(300., 500.)
+                        } else {
+                            (start_w + dx).clamp(300., 500.)
+                        };
                         cx.notify();
                     }
                     // 020-1 子面板分隔线拖拽：按 dock 实测 bounds 把窗口 y
@@ -80,65 +88,62 @@ impl Chat {
         if !panes_hidden {
             // 分隔线响应区（跨线）：统一感应厚度 divider::HIT=12，面板侧只
             // 占 3px（避让列表滚动条命中区），其余落在内容侧；可视线由
-            // ui::divider 统一画（§5.13）
-            body = body.child(
-                div()
-                    .id("slp-resizer")
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(px(self.layout.slp_w - 3.))
-                    .w(px(crate::ui::tokens::divider::HIT))
-                    .cursor_col_resize()
-                    .on_hover(cx.listener(|this, h: &bool, _w, cx| {
-                        if this.layout.slp_hover != *h {
-                            this.layout.slp_hover = *h;
+            // ui::divider 统一画（§5.13）。面板居右时贴右缘（镜像同位）
+            let resizer = div()
+                .id("slp-resizer")
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .when(panel_right, |d| d.right(px(self.layout.slp_w - 3.)))
+                .when(!panel_right, |d| d.left(px(self.layout.slp_w - 3.)))
+                .w(px(crate::ui::tokens::divider::HIT))
+                .cursor_col_resize()
+                .on_hover(cx.listener(|this, h: &bool, _w, cx| {
+                    if this.layout.slp_hover != *h {
+                        this.layout.slp_hover = *h;
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
+                        if ev.click_count == 2 {
+                            this.layout.slp_w = 300.;
+                            this.persist_ui();
                             cx.notify();
+                        } else {
+                            this.layout.slp_drag =
+                                Some((f32::from(ev.position.x), this.layout.slp_w));
                         }
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
-                            if ev.click_count == 2 {
-                                this.layout.slp_w = 300.;
-                                this.persist_ui();
-                                cx.notify();
-                            } else {
-                                this.layout.slp_drag =
-                                    Some((f32::from(ev.position.x), this.layout.slp_w));
-                            }
-                        }),
-                    ),
-            );
-            body = body.child(
-                div()
-                    .id("panel-col")
-                    .w(px(self.layout.slp_w))
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_col()
-                    .bg(rgb(t.chrome))
-                    .child(titlebar::topbar_l(self, cx))
-                    .child(function_panel::dock(
-                        self,
-                        entity_for_body.clone(),
-                        &weak,
-                        window,
-                        cx,
-                    ))
-                    .child(status_bar::control_bar(self, cx)),
-            );
-        }
-        body = body.child(
-            div()
+                    }),
+                );
+            let panel_col = div()
+                .id("panel-col")
+                .w(px(self.layout.slp_w))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .bg(rgb(t.chrome))
+                .child(titlebar::topbar_l(self, window, cx))
+                .child(function_panel::dock(
+                    self,
+                    entity_for_body.clone(),
+                    &weak,
+                    window,
+                    cx,
+                ))
+                .child(status_bar::control_bar(self, cx));
+            let content_col = div()
                 .id("content-col")
                 // 082 四期锚点宿主 = content-main（content.rs），**不是本容器**：
                 // track_focus 的 div 会注册「命中盒内 MouseDown → focus +
-                // prevent_default」监听（gpui div.rs paint），而 topbar_r（窗口
-                // 控制钮 + 拖拽区）是本容器的子——Windows 平台把 NC 按下伪装成
-                // 普通 MouseDown 派进 app（events.rs handle_nc_mouse_down_msg），
-                // 锚点监听一 prevent_default 就算 handled，平台不再记录
-                // nc_button_pressed → 最小化/最大化/关闭/拖拽全哑。Zed 同款
+                // prevent_default」监听（gpui div.rs paint），而窗口控制钮
+                // （Windows 平台把 NC 按下伪装成普通 MouseDown 派进 app，
+                // events.rs handle_nc_mouse_down_msg）是 topbar 的子——锚点
+                // 监听一 prevent_default 就算 handled，平台不再记录
+                // nc_button_pressed → 最小化/最大化/关闭/拖拽全哑。面板居右
+                // 时控制钮在 panel-col（不在 content-col 子树），同样不踩
+                //（锚点宿主始终在 content-main，见 content.rs）。Zed 同款
                 // 不踩坑：其 titlebar 不在 pane 子树内
                 .flex_1()
                 .min_w_0()
@@ -156,15 +161,49 @@ impl Chat {
                 ))
                 // §5.13 统一分隔线：常驻 1px / hover·拖拽 3px accent，线形由
                 // ui::divider 统一算（与 dock 上下分区同一条代码）；overlay
-                // 不占布局 = hover 零推挤。
+                // 不占布局 = hover 零推挤。线贴面板同侧缘（面板居左 = 本列
+                // 左缘，居右 = 本列右缘，vertical_at_right）
                 .when(!panes_hidden, |d| {
-                    d.child(crate::ui::divider::line(
-                        crate::ui::divider::LineSpec::vertical(0.),
-                        slp_hovered || slp_dragging,
-                        t,
-                    ))
-                }),
-        );
+                    d.child(if panel_right {
+                        crate::ui::divider::line(
+                            crate::ui::divider::LineSpec::vertical_at_right(0.),
+                            slp_hovered || slp_dragging,
+                            t,
+                        )
+                    } else {
+                        crate::ui::divider::line(
+                            crate::ui::divider::LineSpec::vertical(0.),
+                            slp_hovered || slp_dragging,
+                            t,
+                        )
+                    })
+                });
+            // 两栏换序：面板居左（默认）= panel|content；居右 = content|panel。
+            // resizer 紧贴 panel-col 之前挂（透明命中区，无视觉层叠影响）
+            body = if panel_right {
+                body.child(content_col).child(resizer).child(panel_col)
+            } else {
+                body.child(resizer).child(panel_col).child(content_col)
+            };
+        } else {
+            let content_col = div()
+                .id("content-col")
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .relative()
+                .bg(rgb(t.bg))
+                .child(titlebar::topbar_r(self, window, cx))
+                .child(content::content_main(
+                    self,
+                    entity_for_body,
+                    &weak,
+                    window,
+                    cx,
+                ));
+            body = body.child(content_col);
+        }
         body
     }
 }

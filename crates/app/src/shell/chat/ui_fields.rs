@@ -425,6 +425,11 @@ pub(crate) struct LayoutUi {
     pub(crate) dock_panel: DockPanel,
     pub(crate) slp_w: f32,
     pub(crate) panes_hidden: bool,
+    /// 功能面板放置边（设置-界面「放置功能面板」，默认左 = false）。true =
+    /// dock 整列居右：body 两栏换序、resizer/分隔线镜像、窗口控制钮迁
+    /// panel 段标题栏、导航条镜像居左（消费方见 body.rs / titlebar.rs /
+    /// nav_panel）。持久化在 UiState.panel_side。
+    pub(crate) panel_right: bool,
     pub(crate) slp_drag: Option<(f32, f32)>,
     /// 分隔线响应区悬停（§5.13 分隔线统一规范：hover 与拖拽同为 3px
     /// accent 粗线，线形计算见 `ui::divider`）

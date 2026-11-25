@@ -169,127 +169,131 @@ pub(crate) fn main_column(
         .when(!new_session_page, |d| {
             d.child(session_fn_bar(chat, page_skin, cx))
         })
-        .child(
-            div()
-                .id("chat-and-nav")
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .child({
-                    let mut wrap = div()
-                        .id("chat-wrap")
-                        .flex_1()
-                        .min_w_0()
-                        .relative()
-                        .flex()
-                        .flex_col()
-                        // wrap bounds 每帧捕获（PillBtns::tracker 同款 canvas，
-                        // dock 容器同模式）：子代理面板的窗口坐标 → wrap 坐标
-                        // 换算需要 wrap 原点（044-0 与按钮居中对齐）
-                        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.chat_wrap));
-                    if new_session_page {
-                        // 012 新会话页：标题 + 超大背景 logo + inputpanel +
-                        // 额外操作栏；扩展行照旧挂页面上下。034 状态带**不挂**
-                        // （draft 无扩展状态，且会破坏空态构图）。
-                        wrap = wrap
-                            .children(ext_widget_rows(chat, t, true))
-                            .child(new_session::page(
-                                chat,
-                                weak,
-                                page_skin,
-                                streaming,
-                                input_focused,
-                                f32::from(window.viewport_size().height),
-                                cx,
-                            ))
-                            .children(ext_widget_rows(chat, t, false));
-                    } else if loading_page {
-                        // 加载页（2026-11-07 用户定夺）：空白页 + 载入提示，
-                        // composer 不渲染（pi 还在恢复会话，此时发送只会堆进
-                        // 未挂线的队列）；内容落定/失败放行见 messages_loaded。
-                        wrap = wrap.child(loading_body(t));
-                    } else {
-                        wrap = wrap
-                            // message list（底部 135px 让位悬浮 composer；
-                            // 观察窗无 composer，让位高度由提示条占住观感）
-                            .child(session_list(
-                                chat,
-                                chat_entity,
-                                weak.clone(),
-                                rt_list,
-                                rt_entity.clone(),
-                                t,
-                            ))
-                            // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
-                            // 胶囊绝对定位上浮叠在聊天区上。观察窗不渲染
-                            // （044-0：用户输入会生成第二驱动分叉账本/双花
-                            // token/抢占并发槽——子代理由主agent独占管理），
-                            // 换只读提示条。
-                            .children(ext_widget_rows(chat, t, true))
-                            .children(if observer {
-                                // 任务会话观察窗：composer 与提示条都不出
-                                //（2026-11-22 用户令：简单去掉 InputPanel，
-                                // 不补冗余信息）；子代理观察窗维持原提示条
-                                if observer_task {
-                                    None
-                                } else {
-                                    Some(observer_notice(t))
-                                }
+        .child({
+            // 033 导航条（轮次刻度）：面板居左挂行尾（会话区右缘）；居右时
+            // 镜像挂行首（左缘），刻度贴边与摘要卡弹出方向由 gutter 内部
+            // 按 panel_right 翻转（弹层四象限同款口径）
+            let gutter = nav_gutter(chat, rt_entity.clone(), weak.clone(), t, cx);
+            let host = div().id("chat-and-nav").flex_1().min_h_0().flex();
+            let wrap = {
+                let mut wrap = div()
+                    .id("chat-wrap")
+                    .flex_1()
+                    .min_w_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    // wrap bounds 每帧捕获（PillBtns::tracker 同款 canvas，
+                    // dock 容器同模式）：子代理面板的窗口坐标 → wrap 坐标
+                    // 换算需要 wrap 原点（044-0 与按钮居中对齐）
+                    .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.chat_wrap));
+                if new_session_page {
+                    // 012 新会话页：标题 + 超大背景 logo + inputpanel +
+                    // 额外操作栏；扩展行照旧挂页面上下。034 状态带**不挂**
+                    // （draft 无扩展状态，且会破坏空态构图）。
+                    wrap = wrap
+                        .children(ext_widget_rows(chat, t, true))
+                        .child(new_session::page(
+                            chat,
+                            weak,
+                            page_skin,
+                            streaming,
+                            input_focused,
+                            f32::from(window.viewport_size().height),
+                            cx,
+                        ))
+                        .children(ext_widget_rows(chat, t, false));
+                } else if loading_page {
+                    // 加载页（2026-11-07 用户定夺）：空白页 + 载入提示，
+                    // composer 不渲染（pi 还在恢复会话，此时发送只会堆进
+                    // 未挂线的队列）；内容落定/失败放行见 messages_loaded。
+                    wrap = wrap.child(loading_body(t));
+                } else {
+                    wrap = wrap
+                        // message list（底部 135px 让位悬浮 composer；
+                        // 观察窗无 composer，让位高度由提示条占住观感）
+                        .child(session_list(
+                            chat,
+                            chat_entity,
+                            weak.clone(),
+                            rt_list,
+                            rt_entity.clone(),
+                            t,
+                        ))
+                        // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
+                        // 胶囊绝对定位上浮叠在聊天区上。观察窗不渲染
+                        // （044-0：用户输入会生成第二驱动分叉账本/双花
+                        // token/抢占并发槽——子代理由主agent独占管理），
+                        // 换只读提示条。
+                        .children(ext_widget_rows(chat, t, true))
+                        .children(if observer {
+                            // 任务会话观察窗：composer 与提示条都不出
+                            //（2026-11-22 用户令：简单去掉 InputPanel，
+                            // 不补冗余信息）；子代理观察窗维持原提示条
+                            if observer_task {
+                                None
                             } else {
-                                Some(
-                                    input::input_area(
-                                        chat,
-                                        weak,
-                                        streaming,
-                                        input_focused,
-                                        false,
-                                        false,
-                                        cx,
-                                    )
-                                    .into_any_element(),
+                                Some(observer_notice(t))
+                            }
+                        } else {
+                            Some(
+                                input::input_area(
+                                    chat,
+                                    weak,
+                                    streaming,
+                                    input_focused,
+                                    false,
+                                    false,
+                                    cx,
                                 )
-                            })
-                            .children(ext_widget_rows(chat, t, false))
-                            // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap
-                            // 底缘（最后绘制，压在消息列表之上），不参与 flex 流
-                            // —— 开闭都不推挤 Inputpanel（胶囊底距恒为条高）。
-                            // 无白名单项或开关关闭时整条不建 element。
-                            .children(footer_bar::bar(chat, cx));
-                    }
-                    // ── 会话域居中浮层槽（机制）──────────────────────────
-                    // 所有「以 InputPanel 为居中基准」的会话弹窗统一挂
-                    // chat-wrap 尾部（absolute inset_0 随中栏定界，
-                    // items_center 自动对齐 composer 中轴）。挂全窗根会被
-                    // 左右侧栏挤偏（ask_card 090 用户实测定案）。新增会话
-                    // 弹窗 = 在此追加一个 if 挂载；z 序 = 子节点绘制序，
-                    // 模态压非模态。切走 content tab 时随主栏同隐（状态
-                    // 仍在，切回即见；ask_card 同语义）。
-                    // 非模态在下（插件弹窗），模态在上（问卷卡 → 扩展阻塞弹窗）。
-                    if chat.plugins.popup.is_some() {
-                        wrap = wrap.child(crate::pf_plugin::plugin_popup_layer(chat, t, cx));
-                    }
-                    // ask_user_question 问卷卡浮层：挂进 chat-wrap（中栏）——
-                    // 与 composer 同一居中基准；挂整窗根会被左右侧栏挤偏
-                    //（用户实测不对齐）。窄窗口下卡片收缩不溢出。
-                    if chat.aux.ask.as_ref().is_some_and(|a| a.open) {
-                        wrap = wrap.child(crate::ask_card::render_ask_card(chat, weak));
-                    }
-                    // 扩展阻塞弹窗（select/confirm/input/editor）：与问卷卡
-                    // 同基准，遮罩只盖会话区
-                    if let Some(req) = chat.aux.ext_dialog.clone() {
-                        wrap = wrap.child(render_ext_dialog(chat, req, weak));
-                    }
-                    // 031-1 计划审批弹窗：挂最后（模态压非模态）——宽度=
-                    // 会话区 100%、高度 90% 上下居中（chat-wrap absolute
-                    // inset_0 随中栏定界；dock/topbar/statusbar 不在内）。
-                    // 版式与两动作见 crate::mode::dialog/state。
-                    if chat.dlg.plan.approval.is_some() {
-                        wrap = wrap.child(crate::mode::dialog::render_plan_approval(chat, weak, t));
-                    }
-                    wrap
-                })
-                .child(nav_gutter(chat, rt_entity.clone(), weak.clone(), t, cx)),
-        )
+                                .into_any_element(),
+                            )
+                        })
+                        .children(ext_widget_rows(chat, t, false))
+                        // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap
+                        // 底缘（最后绘制，压在消息列表之上），不参与 flex 流
+                        // —— 开闭都不推挤 Inputpanel（胶囊底距恒为条高）。
+                        // 无白名单项或开关关闭时整条不建 element。
+                        .children(footer_bar::bar(chat, cx));
+                }
+                // ── 会话域居中浮层槽（机制）──────────────────────────
+                // 所有「以 InputPanel 为居中基准」的会话弹窗统一挂
+                // chat-wrap 尾部（absolute inset_0 随中栏定界，
+                // items_center 自动对齐 composer 中轴）。挂全窗根会被
+                // 左右侧栏挤偏（ask_card 090 用户实测定案）。新增会话
+                // 弹窗 = 在此追加一个 if 挂载；z 序 = 子节点绘制序，
+                // 模态压非模态。切走 content tab 时随主栏同隐（状态
+                // 仍在，切回即见；ask_card 同语义）。
+                // 非模态在下（插件弹窗），模态在上（问卷卡 → 扩展阻塞弹窗）。
+                if chat.plugins.popup.is_some() {
+                    wrap = wrap.child(crate::pf_plugin::plugin_popup_layer(chat, t, cx));
+                }
+                // ask_user_question 问卷卡浮层：挂进 chat-wrap（中栏）——
+                // 与 composer 同一居中基准；挂整窗根会被左右侧栏挤偏
+                //（用户实测不对齐）。窄窗口下卡片收缩不溢出。
+                if chat.aux.ask.as_ref().is_some_and(|a| a.open) {
+                    wrap = wrap.child(crate::ask_card::render_ask_card(chat, weak));
+                }
+                // 扩展阻塞弹窗（select/confirm/input/editor）：与问卷卡
+                // 同基准，遮罩只盖会话区
+                if let Some(req) = chat.aux.ext_dialog.clone() {
+                    wrap = wrap.child(render_ext_dialog(chat, req, weak));
+                }
+                // 031-1 计划审批弹窗：挂最后（模态压非模态）——宽度=
+                // 会话区 100%、高度 90% 上下居中（chat-wrap absolute
+                // inset_0 随中栏定界；dock/topbar/statusbar 不在内）。
+                // 版式与两动作见 crate::mode::dialog/state。
+                if chat.dlg.plan.approval.is_some() {
+                    wrap = wrap.child(crate::mode::dialog::render_plan_approval(chat, weak, t));
+                }
+                wrap
+            };
+            if chat.layout.panel_right {
+                host.child(gutter).child(wrap)
+            } else {
+                host.child(wrap).child(gutter)
+            }
+        })
 }
 
 /// 会话功能栏（2026-10-11：topbar ⋯ 菜单撤下拉改常驻条）：会话 tab 下方

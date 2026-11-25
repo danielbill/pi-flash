@@ -1,6 +1,7 @@
-//! topbar 三段 (016): 左段在 panel-col 内（收放钮；手机遥控钮已隐藏——
+//! topbar 三段 (016)：左段在 panel-col 内（收放钮；手机遥控钮已隐藏——
 //! 2026-10-10 定，060 管线保留），右段在 content-col 内（中段标签栏 +
-//! 窗口控制钮）。中段标签栏 =
+//! 窗口控制钮）。功能面板居右时窗口控制钮迁入左段（保持窗口右上角），
+//! 收起态控制钮回右段右端（body.rs 两栏换序见 body_shell）。中段标签栏 =
 //! 置顶会话 tab（第一位，无 ×；行尾 ⋯ 菜单 2026-10-11 撤销，三入口改
 //! session tab 下方功能栏 session::session_fn_bar）+ 自由标签区（终端/文件，
 //! 023 规则），
@@ -102,42 +103,73 @@ pub(crate) const HEIGHT: f32 = 40.;
 /// Caption-button glyph font (Win11; MDL2 covers Win10).
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
-/// 左段（015 功能面板侧）：收放钮贴左 = `tokens::align::TOGGLE_ML`（图标
-/// 视觉线 ICON_LINE 与 psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。
-/// 插件功能页入口钮**已撤**（2026-10-23 定夺：入口只留三横菜单，
-/// 内容区全屏页），旧钮走 git 历史找回。
-pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+/// 左段（015 功能面板侧）：默认（面板居左）= 收放钮贴左 + 拖拽填充；
+/// 面板居右时本段是窗口右缘段，窗口控制钮（min/max/close）迁入此段
+/// 保持在窗口右上角，收放钮镜像到窗口控制钮旁（icon 换 panel-right），
+/// 空心区仍是拖拽区。插件功能页入口钮**已撤**（2026-10-23 定夺：入口
+/// 只留三横菜单，内容区全屏页），旧钮走 git 历史找回。
+pub(crate) fn topbar_l(
+    chat: &mut Chat,
+    window: &Window,
+    cx: &mut gpui::Context<Chat>,
+) -> impl gpui::IntoElement {
     let t = T();
+    let panel_right = chat.layout.panel_right;
     let mut bar = div()
         .id("topbar-l")
         .h(px(HEIGHT))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .bg(rgb(t.chrome))
-        .child(div().ml(px(align::TOGGLE_ML)).child(icon_btn(
-            "panes-toggle",
-            "panel-left",
-            tr("titlebar.toggle_sidebar"),
-            cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                this.toggle_panes(cx);
-            }),
-        )));
+        .bg(rgb(t.chrome));
+    if panel_right {
+        // 居右：[拖拽填充][三横菜单][收放钮（panel-right icon）|分隔线]
+        // [min][max][close] —— 左模式的 [收放][菜单][填充] 镜像 + 窗口钮。
+        bar = bar
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag),
+            )
+            .children(
+                crate::services::workspace::market_menu_enabled().then(|| market_menu_btn(cx)),
+            );
+        bar = bar
+            .child(panes_toggle_btn(
+                "panes-toggle",
+                "panel-right",
+                tr("titlebar.toggle_sidebar"),
+                cx,
+            ))
+            .child(title_sep())
+            .child(caption_button(WindowControlArea::Min, "minus", t))
+            .child(caption_button(
+                WindowControlArea::Max,
+                if window.is_maximized() {
+                    "restore"
+                } else {
+                    "square"
+                },
+                t,
+            ))
+            .child(caption_button(WindowControlArea::Close, "\u{E8BB}", t));
+        return bar;
+    }
+    // 收放钮贴左 = `tokens::align::TOGGLE_ML`（图标视觉线 ICON_LINE 与
+    // psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。
+    bar = bar.child(div().ml(px(align::TOGGLE_ML)).child(panes_toggle_btn(
+        "panes-toggle",
+        "panel-left",
+        tr("titlebar.toggle_sidebar"),
+        cx,
+    )));
     // 040-1 「菜单」三横钮（紧贴收放钮右侧）：目前只有「Pi扩展市场」
     // 一项，浮层渲染挂 render.rs 根（dlg.market_menu = 按钮锚点）。
     // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
     // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
     if crate::services::workspace::market_menu_enabled() {
-        bar = bar.child(div().ml(px(space::SP2)).child(icon_btn_sized(
-            "market-menu",
-            "menu",
-            tr("titlebar.menu"),
-            20.,
-            cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
-                this.dlg.market_menu = Some((f32::from(ev.position.x), f32::from(ev.position.y)));
-                cx.notify();
-            }),
-        )));
+        bar = bar.child(div().ml(px(space::SP2)).child(market_menu_btn(cx)));
     }
     bar
         // drag filler: the empty middle is the drag region (HTCAPTION —
@@ -150,7 +182,51 @@ pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl g
         )
 }
 
-/// 右段：中段标签栏 + 窗口控制。
+/// 收放钮（icon_btn 包装；两端共用，icon 按面板边取 panel-left/right）。
+fn panes_toggle_btn(
+    id: &'static str,
+    icon_name: &'static str,
+    _tip: &'static str,
+    cx: &mut gpui::Context<Chat>,
+) -> impl gpui::IntoElement {
+    icon_btn(
+        id,
+        icon_name,
+        _tip,
+        cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+            this.toggle_panes(cx);
+        }),
+    )
+}
+
+/// 1px×18px 竖分隔线（收放钮与相邻段之间的镜像位装饰，收起态/居右
+/// 模式共用同一样式）。
+fn title_sep() -> impl gpui::IntoElement {
+    let t = T();
+    div()
+        .w(px(1.))
+        .h(px(18.))
+        .bg(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+        .mx(px(4.))
+}
+
+/// 040-1 三横菜单钮（仅 dev-flags `pi_ext_market` 开时渲染；锚点 =
+/// 点击坐标，浮层四象限定位自适应面板边）。
+fn market_menu_btn(cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    icon_btn_sized(
+        "market-menu",
+        "menu",
+        tr("titlebar.menu"),
+        20.,
+        cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
+            this.dlg.market_menu = Some((f32::from(ev.position.x), f32::from(ev.position.y)));
+            cx.notify();
+        }),
+    )
+}
+
+/// 右段：中段标签栏 + 窗口控制（面板居左）/ 拖拽填充（面板居右——控制
+/// 钮已迁 topbar_l；收起态除外，面板不渲染时控制钮留在本段右端）。
 pub(crate) fn topbar_r(
     chat: &mut Chat,
     window: &mut Window,
@@ -158,6 +234,7 @@ pub(crate) fn topbar_r(
 ) -> impl gpui::IntoElement {
     let t = T();
     let maximized = window.is_maximized();
+    let panel_right = chat.layout.panel_right;
 
     let mut bar = div()
         .id("topbar-r")
@@ -168,29 +245,59 @@ pub(crate) fn topbar_r(
         .items_center()
         .bg(rgb(t.chrome));
 
-    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）
-    if chat.layout.panes_hidden {
-        bar = bar
-            .child(div().ml(px(4.)).mr(px(2.)).child(icon_btn(
-                "panes-toggle-r",
-                "panel-left",
-                tr("titlebar.expand_sidebar"),
-                cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                    this.toggle_panes(cx);
-                }),
-            )))
-            .child(
-                div()
-                    .w(px(1.))
-                    .h(px(18.))
-                    .bg(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
-                    .mx(px(4.)),
-            );
-    }
-
     // 016 中段标签栏：置顶会话 tab + 自由标签区（终端/文件），激活 tab
     // 卡片融底（Obsidian 式，条上不画横线）
     bar = bar.child(tab_strip(chat, cx));
+
+    if panel_right {
+        if chat.layout.panes_hidden {
+            // 居右 + 收起：面板段不渲染，收放钮与窗口控制钮都留在本段
+            // 右端（左模式收起态 [收放|分隔|标签|拖拽][控制] 的镜像）
+            bar = bar
+                .child(
+                    div()
+                        .w(px(20.))
+                        .flex_shrink_0()
+                        .h_full()
+                        .window_control_area(WindowControlArea::Drag),
+                )
+                .child(title_sep())
+                .child(panes_toggle_btn(
+                    "panes-toggle-r",
+                    "panel-right",
+                    tr("titlebar.expand_sidebar"),
+                    cx,
+                ))
+                .child(caption_button(WindowControlArea::Min, "minus", t))
+                .child(caption_button(
+                    WindowControlArea::Max,
+                    if maximized { "restore" } else { "square" },
+                    t,
+                ))
+                .child(caption_button(WindowControlArea::Close, "\u{E8BB}", t));
+        } else {
+            // 居右 + 展开：控制钮在面板段，本段标签栏右侧整段拖拽
+            bar = bar.child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag),
+            );
+        }
+        return bar;
+    }
+
+    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）
+    if chat.layout.panes_hidden {
+        bar = bar
+            .child(div().ml(px(4.)).mr(px(2.)).child(panes_toggle_btn(
+                "panes-toggle-r",
+                "panel-left",
+                tr("titlebar.expand_sidebar"),
+                cx,
+            )))
+            .child(title_sep());
+    }
 
     // 标签区右缘到最小化钮左缘固定 20px（016 2026-10-14 定案），仍是
     // 窗口拖拽命中区
@@ -211,9 +318,9 @@ pub(crate) fn topbar_r(
             if maximized { "restore" } else { "square" },
         ),
     ] {
-        bar = bar.child(caption_button(area, icon_name, t));
+        bar = bar.child(caption_button(area, icon_name, &t));
     }
-    bar.child(caption_button(WindowControlArea::Close, "\u{E8BB}", t))
+    bar.child(caption_button(WindowControlArea::Close, "\u{E8BB}", &t))
 }
 
 /// 30×30 图标钮（topbar 通用；hover chrome-hover）。钮盒/图标走 align 令牌。

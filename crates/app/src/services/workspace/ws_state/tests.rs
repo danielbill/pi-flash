@@ -65,6 +65,27 @@ fn window_dock_state_roundtrip_via_map() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 #[test]
+fn panel_side_roundtrip_and_default() {
+    // 功能面板放置边（设置-界面「放置功能面板」）：落盘键 roundtrip 后
+    // 保留；UiState 默认恒左（读侧只认 "right"，非法值/缺键均落左）。
+    let path = tmpfile("panel_side.json");
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "__ui".into(),
+        serde_json::json!({"panel_side": "right", "panel": "sessions",
+                            "slp_w": 340.0, "panes_hidden": false,
+                            "list_mode": "grouped", "sort_mode": "time", "collapsed": []}),
+    );
+    save_map_to(&path, &map);
+    let loaded = load_map_from(&path);
+    assert_eq!(
+        loaded.get("__ui").unwrap().get("panel_side").unwrap(),
+        &Value::String("right".into())
+    );
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    assert_eq!(UiState::default().panel_side, "left");
+}
+#[test]
 fn tree_state_rel_abs_roundtrip_and_prune() {
     let base = tmpfile("tree").parent().unwrap().to_path_buf();
     let cwd = base.join("proj");

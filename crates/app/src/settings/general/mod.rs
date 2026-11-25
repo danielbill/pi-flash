@@ -174,11 +174,83 @@ pub(crate) fn mc_general_view(
         t,
     ));
 
+    // 放置功能面板（dock 左/右换位，默认左；send_mode 同款双钮选择件）。
+    // 真源在 Chat.layout.panel_right：切设置即改字段 + persist_ui 落盘，
+    // notify 下帧两栏换序（body.rs）+ 标题栏窗口钮迁移同步生效。
+    let panel_right = crate::services::workspace::panel_side_right();
+    col = col.child(set_row(
+        tr("settings.panel_side"),
+        tr("settings.panel_side_hint"),
+        panel_side_row(panel_right, weak, t),
+        t,
+    ));
+
     // ---- 语言：三个一排，左对齐（置底——用户定夺） ------------------------
     col = col.child(section_label(tr("settings.language")));
     col = col.child(lang_row(weak, t));
 
     col.into_any_element()
+}
+
+/// 放置功能面板两档（左/右）：仿 misc::send_mode_row 档位钮（72×30、
+/// active accent 描边 + bg_selected + 加粗，§5.4 文字 text_muted）。
+fn panel_side_row(
+    right: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static crate::appearance::theme::Theme,
+) -> gpui::AnyElement {
+    const CHOICES: [(bool, &str); 2] = [
+        (false, "settings.panel_side_left"),
+        (true, "settings.panel_side_right"),
+    ];
+    div()
+        .flex()
+        .gap(px(8.))
+        .children(CHOICES.iter().map(|(v, key)| {
+            let active = right == *v;
+            let label = tr(*key);
+            let weak_item = weak.clone();
+            let value = *v;
+            div()
+                .id(SharedString::from(format!(
+                    "general-panel-side-{}",
+                    if value { "right" } else { "left" }
+                )))
+                .w(px(72.))
+                .h(px(30.))
+                .px(px(10.))
+                .rounded(px(5.))
+                .border_1()
+                .border_color(if active { rgb(t.accent) } else { rgb(t.border) })
+                .bg(if active {
+                    rgb(t.bg_selected)
+                } else {
+                    rgb(t.bg_panel)
+                })
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(crate::appearance::ui_size(12.))
+                .font_weight(if active {
+                    gpui::FontWeight::SEMIBOLD
+                } else {
+                    gpui::FontWeight::NORMAL
+                })
+                // §5.4：选项文字统一 text_muted，选中只加粗不变色
+                .text_color(rgb(t.text_muted))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_item.update(cx, |c, cx| {
+                        c.layout.panel_right = value;
+                        c.persist_ui();
+                        cx.notify();
+                    });
+                })
+                .child(SharedString::from(label.to_string()))
+                .into_any_element()
+        }))
+        .into_any_element()
 }
 
 fn section_label(text: &str) -> gpui::AnyElement {

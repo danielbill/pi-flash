@@ -77,8 +77,11 @@ pub(crate) fn nav_gutter(
         let mut flyout_wrap = div()
             .id("nav-flyout-wrap")
             .absolute()
-            // 9 = 与段左缘齐平（gutter 9 = 段命中区 5 实体 + 右 4 透明）
-            .right(px(9.))
+            // 9 = 与段实体缘齐平（gutter 9 = 段命中区 5 实体 + 4 透明）。
+            // 默认贴段左缘（实体在左）、向左弹出；面板居右时镜像贴右缘
+            // （实体在右）、向右弹出
+            .when(chat.layout.panel_right, |d| d.left(px(9.)))
+            .when(!chat.layout.panel_right, |d| d.right(px(9.)))
             .top_0()
             // 下缘与 input panel 底线对齐：composer 悬浮容器的 bottom =
             // footer_bar::BAR_H（034 起永久上移，input/area.rs composer_wrap
@@ -189,10 +192,12 @@ pub(crate) fn nav_gutter(
             flyout_wrap = flyout_wrap.child(
                 div()
                     .absolute()
-                    // 44 = 总结栏 36 + list pt 8（v63-4 口径同款）
+                    // 44 = 总结栏 36 + list pt 8（v63-4 口径同款）；贴内侧缘
+                    //（默认右缘 / 居右面板镜像左缘）
                     .top(px(44.))
                     .bottom(px(8.))
-                    .right(px(3.))
+                    .when(chat.layout.panel_right, |d| d.left(px(3.)))
+                    .when(!chat.layout.panel_right, |d| d.right(px(3.)))
                     .w(px(8.))
                     .child(gpui_component::scroll::Scrollbar::vertical(
                         &sb_state, &handle,
@@ -219,8 +224,10 @@ pub(crate) fn nav_gutter(
             .w(px(9.))
             .flex()
             .flex_col()
-            // 实体段贴左，右侧留 4px 透明命中区
-            .items_start()
+            // 实体段贴面板侧缘（默认左；居右面板镜像贴右），另一侧留 4px
+            // 透明命中区
+            .when(chat.layout.panel_right, |d| d.items_end())
+            .when(!chat.layout.panel_right, |d| d.items_start())
             .gap(px(2.));
         for i in 0..tick_count {
             let on = active_tick == Some(i);
@@ -274,7 +281,8 @@ pub(crate) fn nav_gutter(
                 .h_full()
                 .w_full()
                 .flex_col()
-                .items_start()
+                .when(chat.layout.panel_right, |d| d.items_end())
+                .when(!chat.layout.panel_right, |d| d.items_start())
                 .justify_center()
                 .child(
                     // hover 响应区 = rail 垂直带 × gutter 全宽（033「悬浮

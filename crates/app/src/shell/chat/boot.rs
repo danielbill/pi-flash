@@ -88,6 +88,7 @@ impl Chat {
                 dock_panel: DockPanel::Default,
                 slp_w: ui.slp_w,
                 panes_hidden: ui.panes_hidden,
+                panel_right: ui.panel_side == "right",
                 slp_drag: None,
                 slp_hover: false,
                 split_hover: false,

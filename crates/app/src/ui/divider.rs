@@ -1,7 +1,8 @@
 //! §5.13 分隔线统一实现——壳内可拖拽分隔线的**唯一**视觉落点。
 //!
-//! 三处共用本文件的 [`line`]：内容区 ⇆ 左面板（竖，content-col 左缘）、
-//! dock 上下分区（横，会话列表 ⇆ 文件树之间）与插件面板分区（横）。契约：
+//! 三处共用本文件的 [`line`]：内容区 ⇆ 功能面板（竖，默认贴 content-col
+//! 左缘；面板居右时贴右缘，[`LineSpec::vertical_at_right`]）、dock 上下
+//! 分区（横，会话列表 ⇆ 文件树之间）与插件面板分区（横）。契约：
 //! 常驻 1px 细线；**hover 与拖拽同款 accent 粗线**（宽度唯一落点 =
 //! `tokens::divider::HOVER`）；感应厚度三处统一
 //! `tokens::divider::HIT`（调用方自取作命中带高）。
@@ -35,6 +36,9 @@ pub(crate) struct LineSpec {
     inset: f32,
     /// `H` 专用：所在命中带高——线在带内垂直居中，粗细变化中线不动。
     band: f32,
+    /// `V` 专用：贴父容器右缘（默认左缘）。功能面板居右时 content-col
+    /// 的镜像分隔线贴右缘（body.rs），与面板同侧。
+    at_right: bool,
 }
 
 impl LineSpec {
@@ -45,6 +49,15 @@ impl LineSpec {
             axis: Axis::V,
             inset,
             band: 0.,
+            at_right: false,
+        }
+    }
+
+    /// 竖直分隔线贴右缘（面板居右镜像线，见 [`Self::vertical`]）。
+    pub(crate) fn vertical_at_right(inset: f32) -> Self {
+        Self {
+            at_right: true,
+            ..Self::vertical(inset)
         }
     }
 
@@ -54,6 +67,7 @@ impl LineSpec {
             axis: Axis::H,
             inset,
             band,
+            at_right: false,
         }
     }
 }
@@ -70,13 +84,19 @@ pub(crate) fn line(spec: LineSpec, active: bool, t: &Theme) -> Div {
         gpui::rgba(theme::border_alpha(t, 0x99))
     };
     match spec.axis {
-        Axis::V => div()
-            .absolute()
-            .left_0()
-            .top(px(spec.inset))
-            .bottom(px(spec.inset))
-            .w(px(thick))
-            .bg(color),
+        Axis::V => {
+            let d = div()
+                .absolute()
+                .top(px(spec.inset))
+                .bottom(px(spec.inset))
+                .w(px(thick))
+                .bg(color);
+            if spec.at_right {
+                d.right_0()
+            } else {
+                d.left_0()
+            }
+        }
         Axis::H => div()
             .absolute()
             .left(px(spec.inset))

@@ -218,6 +218,12 @@ impl Chat {
         st.panel = self.layout.dock_panel.as_str().to_string();
         st.slp_w = self.layout.slp_w;
         st.panes_hidden = self.layout.panes_hidden;
+        st.panel_side = if self.layout.panel_right {
+            "right"
+        } else {
+            "left"
+        }
+        .to_string();
         st.dock_split = Some(self.layout.dock_split);
         st.list_mode = match self.psp.list_mode {
             crate::ListMode::Flat => "flat".to_string(),

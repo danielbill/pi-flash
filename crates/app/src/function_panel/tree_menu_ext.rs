@@ -31,11 +31,17 @@ pub(crate) fn ext_menu_entry(
         .overflow_y_scroll()
         .track_scroll(&chat.dlg.tree_sub_scroll)
         .absolute()
-        // 子卡锚定（§5.6：沿父卡右缘 +4）：left 100% 锚主行右缘，
-        // ml 8 = 主卡右留白 4 + 规范偏移 4 → 间隙恒 4px，不随主卡实宽
-        // 浮动（原 left(202) 相对行定位、主卡被长文案撑宽即穿帮）
-        .left(gpui::relative(1.))
-        .ml(px(8.))
+        // 子卡锚定（§5.6：沿父卡缘 +4）：默认沿主行右缘（left 100% 锚主
+        // 行右缘，ml 8 = 主卡右留白 4 + 规范偏移 4 → 间隙恆 4px，不随主卡
+        // 实宽浮动；原 left(202) 相对行定位、主卡被长文案撑宽即穿帮）。
+        // 功能面板居右时主菜单向左弹，子卡镜像沿主行左缘向左展开
+        //（right 100% + mr 8），否则子卡伸出窗口右缘
+        .when(chat.layout.panel_right, |d| {
+            d.right(gpui::relative(1.)).mr(px(8.))
+        })
+        .when(!chat.layout.panel_right, |d| {
+            d.left(gpui::relative(1.)).ml(px(8.))
+        })
         .top(px(-5.))
         .min_w(px(180.))
         .p(px(crate::ui::tokens::space::SP2))

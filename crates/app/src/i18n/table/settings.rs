@@ -91,6 +91,11 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     // 界面页：显示状态栏（输入下方状态栏信息显隐；默认 on）
     ("settings.show_status_bar", "显示状态栏", "顯示狀態列", "Show status bar"),
     ("settings.show_status_bar_hint", "设置输入下方状态栏信息是否显示", "設定輸入下方狀態列資訊是否顯示", "Show or hide the status bar under the input"),
+    // 界面页：放置功能面板（dock 左/右换位；默认左）
+    ("settings.panel_side", "放置功能面板", "放置功能面板", "Function panel position"),
+    ("settings.panel_side_hint", "将功能面板放置在窗口左侧或右侧", "將功能面板放置在視窗左側或右側", "Place the function panel on the left or right side"),
+    ("settings.panel_side_left", "左侧", "左側", "Left"),
+    ("settings.panel_side_right", "右侧", "右側", "Right"),
     // 081 自动更新（其他页开关 + 新会话页版本号位 + 更新日志 tab）
     ("about.auto_update", "自动更新", "自動更新", "Auto-update"),
     ("settings.auto_update_hint", "允许Pi-Flash自动更新", "允許Pi-Flash自動更新", "Let Pi-Flash update itself automatically"),
