@@ -9,7 +9,7 @@ title: 界面（Appearance）
 5、语言（置底）
 
 ## 主题
-淡色主题放一排、深色主题放一排；每排固定 5 个等宽槽位（不足补空槽），当前内置九套 = 淡色 5（kitchen/mist/latte/rose/one-light）+ 深色 4（one-dark/nord-dark/pine/night-owl）。
+淡色主题放一排、深色主题放一排；每排固定 5 个等宽槽位（不足补空槽），当前内置十套 = 淡色 5（kitchen/mist/latte/rose/one-light）+ 深色 5（one-dark/nord-dark/pine/night-owl/noctis）。
 
 主题配置写入 pi-flash 的 app_settings.json（不写 pi 的配置）。
 

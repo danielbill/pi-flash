@@ -149,6 +149,5 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("theme.latte", "薰衣草", "薰衣草", "Latte"),
     ("theme.kitchen", "秋叶", "秋葉", "Autumn Leaves"),
     ("theme.pine", "松林", "松林", "Pine"),
-    ("theme.night-owl", "夜枭", "夜梟", "Night Owl"),
     ("shortcuts.plus", "+", "+", "+"),
 ];

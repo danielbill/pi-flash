@@ -240,6 +240,7 @@ pub const ALL: &[(&str, Theme)] = &[
     ("one-dark", ONE_DARK),
     ("pine", PINE_FOREST),
     ("night-owl", NIGHT_OWL),
+    ("noctis", NOCTIS),
 ];
 
 /// ZED "One Dark" — ported from `zed/crates/theme/src/fallback_themes.rs`
@@ -394,6 +395,43 @@ pub const NIGHT_OWL: Theme = Theme {
     nav: 0x02203a,    // 校准: panel 微亮
     danger: 0xef5350, // errorForeground 原值
     danger_hover: 0xf26b65,
+};
+
+/// Noctis (Dark) — ported from VS Code 扩展 liviuschera/noctis 主变体
+/// （MIT，源 JSON 归档 assets/themes/noctis/）。冷青黑 `#052529` 底 +
+/// teal 强调 `#009999`（button），前景 `#b2cacd`（名不译，如 Night Owl）。
+/// 语义直取：bg_hover = list.hoverBackground #0b515b、bg_selected =
+/// list.activeSelectionBackground #0e6671（递进达标）、border =
+/// focusBorder #073940（原主题未设 contrastBorder）、tool_bg =
+/// statusBarItem.hoverBackground #062e32；text 阶梯取 editor/sideBar/
+/// placeholder/lineNumber 前景四档，faint 由 git-ignored #5b858b 校准压暗
+/// 0x3a5054（原值亮于 soft 破坏阶梯）；accent_contrast 按深色系惯例压底色
+/// （teal 上深字 4.62:1，主题原白字 #ebfdff 仅 3.49:1）；user_bg 取
+/// wordHighlightBackground #e4b78133（暖杏 —— "warm & cold blend" 的暖极）
+/// 按 bg 合成 #32423b，与 teal 系 hover/selected 拉开色相。
+pub const NOCTIS: Theme = Theme {
+    dark: true,
+    bg: 0x052529,           // editor.background 冷青黑
+    bg_panel: 0x041d20,     // sideBar/titleBar/statusBar.background（比 bg 深一档）
+    bg_hover: 0x0b515b,     // list.hoverBackground
+    bg_selected: 0x0e6671,  // list.activeSelectionBackground
+    border: 0x073940,       // focusBorder / editorWidget.background
+    text: 0xb2cacd,         // editor.foreground
+    text_muted: 0xa5b5b5,   // sideBar.foreground
+    text_dim: 0x87a7ab,     // input.placeholderForeground
+    text_soft: 0x4e6b6e,    // editorLineNumber.foreground
+    text_faint: 0x3a5054,   // 校准: git-ignored #5b858b 压暗（原值亮于 soft）
+    accent: 0x009999,       // button.background #099
+    accent_hover: 0x00cccc, // button.hoverBackground #0cc
+    accent_contrast: 0x052529,
+    user_bg: 0x32423b, // wordHighlightBackground #e4b78133 合成（暖杏）
+    assistant_bg: 0x052529,
+    tool_bg: 0x062e32, // statusBarItem.hoverBackground / tabsBackground
+    bg_subtle: 0xffffff14,
+    chrome: 0x020c0e, // statusBarItem.prominentBackground（比 panel 深）
+    nav: 0x052b31,    // 校准: bg 微亮（左 dock 与内容区区分）
+    danger: 0xe34e1c, // errorForeground 原值
+    danger_hover: 0xf0663a,
 };
 
 /// Active theme index; the UI re-reads it every render so a switch repaints
