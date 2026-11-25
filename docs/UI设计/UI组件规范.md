@@ -470,6 +470,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `status_bar.rs` 插件 tab（`plugin-tab-*`） | 46px 宽连体卡（w 46 / mt −4 / 底圆角 9） | 与「项目」tab 同形继承（020-1 tab 卡形制） |
 | `status_bar.rs` 项目 tab（`project-tab`） | 同上 46px 连体卡 | 020-1 纯指示位升级为可点 tab，与插件 tab 同形同源 |
 | `tasks/popup.rs` time_pick 时/分行 | h 36 | 046 HTML `tpick` 双列拾取行逐值复刻（点选不关卡连续调时刻） |
+| `tasks/view.rs` `task_row_actions` 行尾钮列 | 绝对定位贴右缘（top/bottom/right 0）+ 盒 gap 11 | 2026-11-24 用户令视觉图标间距 15px = 盒 gap 11 + 图标内衬 2×2（icon_btn_lg 钮 22 − 图标 18），不在 §1 网格 |
 
 ---
 

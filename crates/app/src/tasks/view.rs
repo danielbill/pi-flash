@@ -331,6 +331,7 @@ fn task_row_actions(
         .items_center()
         // 视觉图标间距 15（2026-11-24 用户令）：盒 gap 11 + 图标内衬
         // 2×2（钮 22 − 图标 18）；原 SP2=4 视觉仅 8 太挤
+        // ui-raw: ok 用户令 15px 视觉间距不在 §1 网格（盒 gap 11），§10.8 登记
         .gap(px(11.))
         // 非运行态 hover 显影（visibility 互斥：时间组内反向隐身）；运行
         // 态恒显，不挂 invisible/group_hover
