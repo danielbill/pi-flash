@@ -281,7 +281,9 @@ pub(crate) struct DlgUi {
     /// psp_overlays 同层）。(鼠标 x, y)
     pub(crate) msg_menu: Option<(f32, f32)>,
     /// 034 状态带 [...] 管理菜单：内容 = 申请常驻状态栏的插件键清单，
-    /// 勾选 = 上屏，取消勾选 = 写 ext_status_muted 隐藏。(鼠标 x, y)
+    /// 勾选 = 上屏，取消勾选 = 写 ext_status_muted 隐藏。定位复用
+    /// inputpanel 统一 pill 管线（锚点在 `pill_anchor`，本槽 = 开合标志
+    /// + 槽位未就绪时的点击坐标兜底）。
     pub(crate) status_mgr_menu: Option<(f32, f32)>,
     /// topbar 标签右键菜单（zed tab_bar 菜单移植：Close/Others/Left/
     /// Right/All；渲染挂 psp_overlays 同层）。(目标 tab, 鼠标 x, y)

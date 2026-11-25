@@ -274,6 +274,8 @@ pub(crate) struct PillBtns {
     pub mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// 模型按钮（042：模型菜单锚定）
     pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// 034 状态带 [...] 管理钮（菜单复用 pill 统一定位管线，tracker 每帧抓 bounds）
+    pub status_mgr: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// chat-wrap 容器（044-0：面板挂 wrap 内，窗口坐标 → wrap 坐标换算
     /// 需要 wrap 原点；function_panel dock 容器 bounds 同款捕获）
     pub chat_wrap: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,

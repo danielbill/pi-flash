@@ -10,6 +10,7 @@
 
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
+use super::picker_shell::{picker_card, pill_anchor_edges};
 use crate::Chat;
 use crate::appearance::theme::{Theme, theme as T};
 use crate::ui::tokens::{ib, radius};
@@ -219,7 +220,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
                             )
                             // 内容管理 §2：[...] 管理入口，贴内容列右缘（约对齐
                             // Inputpanel 发送钮），点开插件勾选菜单（200×≥200）
-                            .child(mgr_button(cx)),
+                            .child(mgr_button(chat, cx)),
                     ),
             )
             .into_any_element(),
@@ -236,7 +237,9 @@ const SEND_CENTER_INSET: f32 = 31.;
 /// 直接走 kit 入口，样式逐项对齐——槽位全取 token 勿手写）。
 /// 垂直 = (BAR_H − ib::SM)/2 顶距居中，不贴 app 底缘（2026-11-25 用户令）；
 /// 水平 = 钮中心对齐发送钮中心（right = SEND_CENTER_INSET − 11 = 20）。
-fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+/// 菜单锚定 = inputpanel 统一 pill 管线：tracker 抓 bounds、点击时
+/// `PillBtns::anchor` 写 `dlg.pill_anchor`（与 composer 胶囊菜单同源）。
+fn mgr_button(chat: &Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     div()
         .id("ext-status-mgr")
@@ -254,11 +257,19 @@ fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
+                // 复用 inputpanel 弹窗统一定位：开菜单时从槽位取锚点
+                // （未就绪退回点击坐标，首帧竞态兜底同 composer）
+                this.dlg.pill_anchor = Some(crate::PillBtns::anchor(
+                    &this.dlg.pill_btn.status_mgr,
+                    ev.position,
+                ));
                 this.dlg.status_mgr_menu =
                     Some((f32::from(ev.position.x), f32::from(ev.position.y)));
                 cx.notify();
             }),
         )
+        // 统一定位测量端：抓钮 bounds（paint 期，每帧覆盖）
+        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.status_mgr))
         .child(icon("ellipsis", crate::ui::tokens::icon::SM, t.text_faint))
         .into_any_element()
 }
@@ -273,8 +284,14 @@ pub(crate) fn mgr_menu_layer(
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let weak = cx.entity().downgrade();
-    let (x, y) = chat.dlg.status_mgr_menu.expect("checked by caller");
-    let edges = crate::ui::popup::PopupEdges::around((x, y), vp, 0., 12.);
+    // 复用 inputpanel 弹窗统一居中机制（唯一落点 pill_anchor_edges）：
+    // 钮水平居中 + 半屏定向（状态带贴屏底 → 恒向上弹）、距钮 5px，
+    // 不再 PopupEdges::around 点击点手搓（2026-11-25 用户令）
+    let anchor = chat
+        .dlg
+        .pill_anchor
+        .expect("checked by caller: menu open implies anchor stored");
+    let pos = pill_anchor_edges(Some(anchor), gpui::size(px(vp.0), px(vp.1)), px(200.));
     let layer = crate::ui::menu::menu_layer(None, &weak, |c, _cx| c.dlg.status_mgr_menu = None);
 
     // 键清单 = 当前会话状态键 ∪ 静音键（字母序、去重）
@@ -317,9 +334,7 @@ pub(crate) fn mgr_menu_layer(
         })
         .collect();
 
-    let mut card = crate::ui::menu::menu_card(edges, t)
-        .w(px(200.))
-        .min_h(px(200.));
+    let mut card = picker_card(pos, px(200.), t).p(px(4.)).min_h(px(200.));
     if rows.is_empty() {
         card = card.child(
             div()
@@ -332,7 +347,9 @@ pub(crate) fn mgr_menu_layer(
     } else {
         card = card.children(rows);
     }
-    layer.child(card).into_any_element()
+    layer
+        .child(crate::ui::overlay::stop_click(card))
+        .into_any_element()
 }
 
 impl Chat {
