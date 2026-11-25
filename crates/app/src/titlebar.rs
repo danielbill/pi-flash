@@ -245,8 +245,25 @@ pub(crate) fn topbar_r(
         .items_center()
         .bg(rgb(t.chrome));
 
+    // 收起态（面板居左）：收放钮跳到右段起点（4px 等距，竖线镜像位）——
+    // 必须在标签栏**之前**（段起点，原 016 版位；标签栏 flex_1 吃掉余
+    // 间，后挂的钮会被推到条尾）
+    if !panel_right && chat.layout.panes_hidden {
+        bar = bar
+            .child(div().ml(px(4.)).mr(px(2.)).child(panes_toggle_btn(
+                "panes-toggle-r",
+                "panel-left",
+                tr("titlebar.expand_sidebar"),
+                cx,
+            )))
+            .child(title_sep());
+    }
+
     // 016 中段标签栏：置顶会话 tab + 自由标签区（终端/文件），激活 tab
-    // 卡片融底（Obsidian 式，条上不画横线）
+    // 卡片融底（Obsidian 式，条上不画横线）。flex_1 吃满余间——**后面不
+    // 能再挂任何 flex_1 兄弟**（两个 flex_1 平分一行 = 标签栏只剩一半
+    // 宽，2026-11-26 用户报障；居右展开态的后挂填充已拆除，拖拽区由
+    // 面板段 topbar_l 的填充承担）
     bar = bar.child(tab_strip(chat, cx));
 
     if panel_right {
@@ -275,28 +292,10 @@ pub(crate) fn topbar_r(
                     t,
                 ))
                 .child(caption_button(WindowControlArea::Close, "\u{E8BB}", t));
-        } else {
-            // 居右 + 展开：控制钮在面板段，本段标签栏右侧整段拖拽
-            bar = bar.child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .window_control_area(WindowControlArea::Drag),
-            );
         }
+        // 居右 + 展开：标签栏吃满本段，无后挂控件；窗口拖拽区在面板段
+        // topbar_l 的填充（原 flex_1 拖拽填充与标签栏平分一行，已拆）
         return bar;
-    }
-
-    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）
-    if chat.layout.panes_hidden {
-        bar = bar
-            .child(div().ml(px(4.)).mr(px(2.)).child(panes_toggle_btn(
-                "panes-toggle-r",
-                "panel-left",
-                tr("titlebar.expand_sidebar"),
-                cx,
-            )))
-            .child(title_sep());
     }
 
     // 标签区右缘到最小化钮左缘固定 20px（016 2026-10-14 定案），仍是
