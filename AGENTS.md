@@ -10,7 +10,7 @@ cargo run -p app                                # 运行（bin: pi-flash）
 cargo test -p pi-link                           # 协议/路径测试都在 pi-link（deep_tree 用例自抬 32MB 栈，无需配 env）
 ```
 
-- 环境变量：`PI_FLASH_VENDOR_DIR` 覆盖内置 pi（换整个 vendor 形状目录：node_modules/pi + node 运行时）；`PI_FLASH_NODE` 单换 node 运行时；`PI_FLASH_THEME` 切主题（内置八套主题名，如 mist/rose/one-dark，见 `appearance/theme.rs` 的 `ALL`）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；`PI_FLASH_DIR` 数据目录显式指定永远优先（未设时 debug/test 落 `./pi-flash-dev`、release 落 `~/.pi-flash`）；dev-flags 开发旗标（键表 = pi-link `dev_flags::KNOWN`，env `PI_FLASH_<键大写>=1/0` 最高优先）——机制详见 `docs/agents/engineering.md`「dev-flags」节
+- 环境变量：`PI_FLASH_VENDOR_DIR` 覆盖内置 pi（换整个 vendor 形状目录：node_modules/pi + node 运行时）；`PI_FLASH_NODE` 单换 node 运行时；`PI_FLASH_THEME` 切主题（内置九套主题名，如 mist/rose/one-dark/night-owl，见 `appearance/theme.rs` 的 `ALL`）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；`PI_FLASH_DIR` 数据目录显式指定永远优先（未设时 debug/test 落 `./pi-flash-dev`、release 落 `~/.pi-flash`）；dev-flags 开发旗标（键表 = pi-link `dev_flags::KNOWN`，env `PI_FLASH_<键大写>=1/0` 最高优先）——机制详见 `docs/agents/engineering.md`「dev-flags」节
 - UI 测试：agent 调试 UI 一律走 pif-ui 自动化链路（`.agents/skills/pi-flash-ui-test/SKILL.md`），禁抢真实屏幕/鼠标/键盘，禁 OS 截图
 
 # 铁律

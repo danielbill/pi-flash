@@ -53,6 +53,7 @@ fn theme_display_name(id: &'static str) -> &'static str {
         "nord-dark" => "Nord Dark",
         "one-dark" => "One Dark",
         "pine" => tr("theme.pine"),
+        "night-owl" => tr("theme.night-owl"),
         _ => id,
     }
 }

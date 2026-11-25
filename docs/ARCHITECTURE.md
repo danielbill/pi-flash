@@ -196,8 +196,8 @@ zed 机制:骨架先行(首帧零数据 IO)、同步小读+异步节流写、目
 ## 5. 外观体系(006/007)
 
 - **主题**:ZED 架构(ThemeRegistry + ActiveTheme + 主题族 light/dark)。
-  内置 8 套:浅色 mist(雾青)/kitchen/latte/rose(蔷薇,pi-web 令牌转换)/
-  one-light;深色 one-dark/nord-dark/pine。主题切换经 `sync_gpui_tokens`
+  内置 9 套:浅色 mist(雾青)/kitchen/latte/rose(蔷薇,pi-web 令牌转换)/
+  one-light;深色 one-dark/nord-dark/pine/night-owl。主题切换经 `sync_gpui_tokens`
   重跑 gpui-component token 映射;主题名只存 `app-settings.json`。
 - **syntax**:zed 主题 syntax 色 → syntect 色彩方案映射(markdown +
   syntect 保留;不引 zed markdown,markdown preview 对齐 pi-web)。

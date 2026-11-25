@@ -239,6 +239,7 @@ pub const ALL: &[(&str, Theme)] = &[
     ("nord-dark", NORD_DARK),
     ("one-dark", ONE_DARK),
     ("pine", PINE_FOREST),
+    ("night-owl", NIGHT_OWL),
 ];
 
 /// ZED "One Dark" — ported from `zed/crates/theme/src/fallback_themes.rs`
@@ -356,6 +357,43 @@ pub const PINE_FOREST: Theme = Theme {
     nav: 0x0c220f,
     danger: 0xcf6a5f, // 校准新增: 单色主题无红，语义必需
     danger_hover: 0xe08378,
+};
+
+/// Night Owl (Dark) — ported from VS Code 扩展 sdras/night-owl-vscode-theme
+/// （MIT，源 JSON 归档 assets/themes/night-owl/）。深夜蓝 `#011627` 底 +
+/// 前景 `#d6deeb`，强调色取标志蓝 #82AAFF（常量/函数/terminal blue），
+/// accent_contrast 按深色系惯例压底色（蓝底上深字 7.98:1，白字仅 2.3:1）。
+/// 语义校准：原主题工作台近乎全平面（sideBar/titleBar/statusBar = bg）→
+/// panel/nav/tool_bg 按 mist 梯度校准；bg_hover 取 input.background
+/// #0b253a，bg_selected 取 list.activeSelectionBackground #234d708c 按 bg
+/// 合成 #14344f；border 取 contrastBorder #122d42（原 focusBorder 同值）；
+/// text 阶梯全取原色（sideBar/lineNumber/git-ignored 前景三档）；user_bg
+/// 取 editor.inactiveSelectionBackground #7e57c25a 按 bg 合成 #2d2d5e
+/// （紫按钮 #7e57c2 同相，用户消息块淡紫）；danger 用 errorForeground
+/// #EF5350 原值（对比度与 one-dark danger 相当，无需再软化）。
+pub const NIGHT_OWL: Theme = Theme {
+    dark: true,
+    bg: 0x011627,           // editor.background 深夜蓝
+    bg_panel: 0x021d33,     // 校准: bg 微亮（原工作台全平面）
+    bg_hover: 0x0b253a,     // input.background
+    bg_selected: 0x14344f,  // list.activeSelectionBackground #234d708c 合成
+    border: 0x122d42,       // contrastBorder / focusBorder
+    text: 0xd6deeb,         // editor.foreground
+    text_muted: 0x89a4bb,   // sideBar.foreground
+    text_dim: 0x5f7e97,     // statusBar/activityBar.foreground
+    text_soft: 0x4b6479,    // editorLineNumber.foreground
+    text_faint: 0x395a75,   // gitDecoration.ignoredResourceForeground
+    accent: 0x82aaff,       // 标志蓝（constant/function/terminal blue）
+    accent_hover: 0x9dbaff, // 深色系 hover 提亮
+    accent_contrast: 0x011627,
+    user_bg: 0x2d2d5e, // editor.inactiveSelectionBackground #7e57c25a 合成
+    assistant_bg: 0x011627,
+    tool_bg: 0x031f36, // 校准: bg +~3% 亮（工具卡/代码块底）
+    bg_subtle: 0xffffff14,
+    chrome: 0x010e1a, // titleBar.inactiveBackground（比 bg 略深）
+    nav: 0x02203a,    // 校准: panel 微亮
+    danger: 0xef5350, // errorForeground 原值
+    danger_hover: 0xf26b65,
 };
 
 /// Active theme index; the UI re-reads it every render so a switch repaints
