@@ -55,6 +55,7 @@ fn theme_display_name(id: &'static str) -> &'static str {
         "pine" => tr("theme.pine"),
         "night-owl" => "Night Owl",
         "noctis" => "Noctis",
+        "monokai-pro" => "Monokai Pro",
         _ => id,
     }
 }

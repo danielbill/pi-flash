@@ -238,9 +238,9 @@ pub const ALL: &[(&str, Theme)] = &[
     ("one-light", ONE_LIGHT),
     ("nord-dark", NORD_DARK),
     ("one-dark", ONE_DARK),
-    ("pine", PINE_FOREST),
+    ("noctis", NOCTIS), // 暗色 3 号位
     ("night-owl", NIGHT_OWL),
-    ("noctis", NOCTIS),
+    ("monokai-pro", MONOKAI_PRO), // 暗色 5 号位
 ];
 
 /// ZED "One Dark" — ported from `zed/crates/theme/src/fallback_themes.rs`
@@ -329,12 +329,14 @@ pub const NORD_DARK: Theme = Theme {
 
 /// Pine Forest Green (Dark) — ported from VS Code 扩展 felix-tjernberg.
 /// pine-forest-green（MIT，源 JSON 归档 assets/themes/pine-forest-green/）。
+/// 【2025-11 隐藏】从 `ALL` 摘除（用户换用 noctis），常量保留可随时回归。
 /// 单色系墨绿：底色 08190a 近黑松林绿，正文/灰阶全是白色/绿色半透明层
 /// 按底色合成的实色（ffffffa1→a4aaa4 等）；唯一强调色 = 松针绿，原版
 /// 2ecc40 微调降亮度/饱和到 29a83c（近黑底上防刺眼，用户实测反馈）。
 /// 语义校准：原主题 frameless 无实体描边 → border 取 focusBorder 合成色
 /// 124718；danger 系单色主题里没有 → 新增珊瑚红（语义必需）；accent_hover
 /// 按深色系惯例提亮。
+#[allow(dead_code)] // 隐藏保留：从 ALL 摘除但常量随时可回归注册表
 pub const PINE_FOREST: Theme = Theme {
     dark: true,
     bg: 0x08190a,           // editor.background 墨绿近黑
@@ -432,6 +434,41 @@ pub const NOCTIS: Theme = Theme {
     nav: 0x052b31,    // 校准: bg 微亮（左 dock 与内容区区分）
     danger: 0xe34e1c, // errorForeground 原值
     danger_hover: 0xf0663a,
+};
+
+/// Monokai Pro (Dark) — ported from monokai.pro 官方扩展公开色板；仅取
+/// 色值（社区移植交叉核对：alacritty wiki / subtheme-dev yaml / helix
+/// monokai_pro.toml，见 assets/themes/monokai-pro/PALETTE.md），不复制
+/// 任何专有文件；名不译。base 阶梯 #19181a/#221f22/#2d2a2e/#403e41/
+/// #5b595c/#727072/#939293 + 主色 #ff6188/#fc9867/#ffd866/#a9dc76/
+/// #78dce8/#ab9df2，fg #fcfcfa。语义映射：panel=base1、chrome=base0、
+/// hover=#363537、tool=当前行 #3a383c、selected/border=base3（递进预验
+/// 达标）；text 阶梯 fg/activityBar/base6/comment/base4 全取原值；accent
+/// 取标志黄 #ffd866（黄上深字 10.3:1）；user_bg 主红 #ff6188 @20% 合成
+/// #573540（暖粉，与 base 系冷灰拉开色相）；danger=主红 4.94:1。
+pub const MONOKAI_PRO: Theme = Theme {
+    dark: true,
+    bg: 0x2d2a2e,           // base2 editor.background
+    bg_panel: 0x221f22,     // base1 sideBar/tab bar
+    bg_hover: 0x363537,     // list hover（官方 button.secondaryBackground 系）
+    bg_selected: 0x403e41,  // base3 list.activeSelection
+    border: 0x403e41,       // base3（原主题工作台近平面，取最近亮档）
+    text: 0xfcfcfa,         // foreground
+    text_muted: 0xbab6c0,   // activityBar/sideBar foreground
+    text_dim: 0x939293,     // base6
+    text_soft: 0x727072,    // base5 comment
+    text_faint: 0x5b595c,   // base4
+    accent: 0xffd866,       // 标志黄（monokai.pro 站点级标识色）
+    accent_hover: 0xffe28c, // 深色系 hover 提亮
+    accent_contrast: 0x2d2a2e,
+    user_bg: 0x573540, // 主红 #ff6188 @20% 合成（暖粉）
+    assistant_bg: 0x2d2a2e,
+    tool_bg: 0x3a383c, // 当前行/浮层面
+    bg_subtle: 0xffffff14,
+    chrome: 0x19181a, // base0 titleBar 最深档
+    nav: 0x323035,    // 校准: bg 微亮（左 dock 与内容区区分）
+    danger: 0xff6188, // 主红
+    danger_hover: 0xff7ba0,
 };
 
 /// Active theme index; the UI re-reads it every render so a switch repaints
