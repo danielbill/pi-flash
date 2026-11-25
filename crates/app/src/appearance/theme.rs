@@ -405,9 +405,10 @@ pub const NIGHT_OWL: Theme = Theme {
 /// 语义直取：bg_hover = list.hoverBackground #0b515b、bg_selected =
 /// list.activeSelectionBackground #0e6671（递进达标）、border =
 /// focusBorder #073940（原主题未设 contrastBorder）、tool_bg =
-/// statusBarItem.hoverBackground #062e32；text 阶梯取 editor/sideBar/
-/// placeholder/lineNumber 前景四档，faint 由 git-ignored #5b858b 校准压暗
-/// 0x3a5054（原值亮于 soft 破坏阶梯）；accent_contrast 按深色系惯例压底色
+/// statusBarItem.hoverBackground #062e32；text 阶梯全取原值（soft/faint
+/// 对调：原作 git-ignored #5b858b 亮于 lineNumber #4e6b6e，PF 阶梯要求
+/// soft>faint，故 soft=comment、faint=lineNumber；首版把 #5b858b 压暗成
+/// 0x3a5054 当 faint，对 bg_hover 近似同色致三点钮隐形，已废）；accent_contrast 按深色系惯例压底色
 /// （teal 上深字 4.62:1，主题原白字 #ebfdff 仅 3.49:1）；user_bg 取
 /// editor.lineHighlightBackground #083d44 原值（teal 浮层；首版用暖杏
 /// wordHighlight 合成 #32423b，实测似橄榄绿泥与冷青整屏不搭，已废）。
@@ -421,8 +422,8 @@ pub const NOCTIS: Theme = Theme {
     text: 0xb2cacd,         // editor.foreground
     text_muted: 0xa5b5b5,   // sideBar.foreground
     text_dim: 0x87a7ab,     // input.placeholderForeground
-    text_soft: 0x4e6b6e,    // editorLineNumber.foreground
-    text_faint: 0x3a5054,   // 校准: git-ignored #5b858b 压暗（原值亮于 soft）
+    text_soft: 0x5b858b,    // comment 原值（与 faint 对调，见文档注释）
+    text_faint: 0x4e6b6e,   // editorLineNumber.foreground 原值
     accent: 0x009999,       // button.background #099
     accent_hover: 0x00cccc, // button.hoverBackground #0cc
     accent_contrast: 0x052529,
