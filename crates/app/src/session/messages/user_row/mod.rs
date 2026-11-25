@@ -50,9 +50,12 @@ pub(crate) fn render_msg(
     markdown::set_link_target(weak.clone(), None);
     if m.role == Role::User {
         // v56-4 c18-c22（pi-web UserMessageView parity）：右对齐 85% 宽、
-        // user_bg 底 + 1px 蓝边框 rgba(59,130,246,.2)、圆角 12、pad 8/12、
+        // user_bg 底 + 1px accent 边框 @20%、圆角 12、pad 8/12、
         // 内容走 markdown、内嵌图片 240 上限、超高 300px 内部滚动；
         // 操作行（复制/编辑/新分支）hover 淡入 = 自定义豁免项。
+        // （pi-web 原边框硬编码蓝 rgba(59,130,246,.2)，恰是其默认主题的
+        // accent；PF 主题 accent 各异，monokai 黄/夜枭蓝/夜青 teal——
+        // 2026-11-25 改为 accent 对齐，硬编码蓝在各主题下出戏）
         let text = m.plain_text();
 
         // v58: 用户消息图片 = 气泡上方独立缩略图行（参考截图 parity，不再
@@ -284,7 +287,7 @@ pub(crate) fn render_msg(
                                 .rounded(px(12.))
                                 .bg(rgb(t.user_bg))
                                 .border_1()
-                                .border_color(gpui::rgba(theme::rgba_a(0x3b82f6, 0.2)))
+                                .border_color(gpui::rgba(theme::rgba_a(t.accent, 0.2)))
                                 .text_color(rgb(t.text))
                                 .child(div().flex().flex_col().child(md)),
                         )
