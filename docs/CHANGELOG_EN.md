@@ -2,6 +2,32 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.2] - 2026-11-25
+
+Highlights of this release:
+1. Interactive task session tabs: click a log row to open the task's session tab — chat with it, step in
+2. Task-page extension picker fix: selections now land on the task itself instead of leaking into the backing session
+3. One-click stop for running tasks from the row tail
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively, download the portable zip and double-click `pi-flash.exe` after extracting. Windows x64 only.
+
+### New
+- Interactive task session tabs: click a log row on the task page to open that task's session tab and chat with it directly, stepping in like a regular session; closing the tab doesn't stop the task — it keeps running in the background and the tab reopens instantly when clicked again. (ea2b34bc)
+
+### Bug fixes
+- Task-page extension picker leaked into the backing session: extension selections made on the task detail page were written to the backing session's extension set — reopening the detail page fell back to the global set, and the backing session's extension config was silently changed. Selections now land on the task itself; existing tasks need to be re-picked once after this fix. (05d1bb30)
+- Wrong landing spot after closing a task tab / observer window (e.g. closing a scheduled task's tab jumped straight to a fixed-section session; batch closing wiped a just-established active tab). Closing now aligns with file-tab behavior — neighbor slot takes over. (211e4ad0, 3dfcecf2)
+
+### Improvements
+- Stop button on running task rows: stop a running task right from the task list (same effect as the input-panel stop button); recalled queued input is restored and the round still settles normally. (238db7ab, 0587d74f)
+- Larger icons and wider spacing for task row-tail action buttons; status-bar settings button hover shape now matches topbar icon buttons. (a01673b3, 038e0504, f7ce9612)
 ## [0.6.1] - 2026-11-23
 
 Highlights of this release:
