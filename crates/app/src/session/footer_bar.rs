@@ -169,6 +169,11 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .left_0()
             .right_0()
             .h(px(BAR_H))
+            // 整条自挡穿透（scroll_to_bottom_button 同款问题）：absolute 覆盖
+            // 层压在消息列上，条身无 BlockMouse hitbox 时点击会漏进身后的
+            // 消息链接/文本选区（TextView 起选监听按 hitbox 判遮挡）。条内
+            // 子件（状态项/...钮）绘制在后不受影响，只截断先绘制的下层。
+            .occlude()
             .flex()
             .items_center()
             .justify_center()
