@@ -75,6 +75,17 @@
 - **模型目录（只读透传）**：GPT-6.2 Astra/Sol 上架 openai/azure/openai-codex 且 Sol 成默认；GPT-6.2 系拒 `off`/`minimal` 思考档（thinking clamp 泛化已覆盖）；Qwen Token Plan 网关切换 + `deepseek-v4.1-flash`/`qwen4-max-preview` 上架 + `deepseek-v3.2`/`deepseek-v4-flash` 移除；Anthropic message threads 扩大到所有 api.anthropic.com baseUrl；OpenAI 兼容商（非 OpenAI）收 `system` 角色消息（#10741）——请求形态变化，PF 透明。
 - **唯一上游 breaking：扩展组件 `render()` 返回 `readonly string[]`（#9549）**——PF 自有扩展 full_activate.ts 无 UI 组件不碰；市场里写 UI 组件的第三方扩展需各自跟进（PF 宿主侧无感）。undici 安全升 8.12.4；兄弟包 pi-ai/pi-agent-core/pi-mcp/pi-tui/pi-codemode 锁步 1.6.0。
 
+## 1.6.1 升级复核（2026-11-25，npm tarball dist diff）
+
+- **wire 层零变化**：`rpc-types.js`/`rpc-client.js` 与 1.6.0 **逐字节一致**；`rpc-mode.js` 仅两处——SIGHUP 信号 Windows 也处理（#12164 系列的 Windows 控制台关闭修复，现在会走 `session_shutdown` + 等 `taskkill` 完成再退，PF 停进程路径更稳）、shutdown 尾部补 `killTrackedDetachedChildren()`；`jsonl.js` 是 #12224 行扫描性能修复（只扫新增文本，大行不再平方级重扫，PF JSONL 管线直接受益）；`agent-session.js` 事件字符串集零增删；`AgentSessionEvent` 联合类型无新事件；内置工具名仍 8 个；`get_commands` 未触碰（catalog.rs 不动）；`image-resize.js`/`index.js`/pi-ai `utils/transcript.js` 全 SAME（坐标标注剥除、readStoredCredential、transcript 重放照旧）；`"Model not found: "` 文案原样（rpc-mode.js:389，行号因 SIGHUP 改动 392→389，set_model 兜底安全）。protocol.rs 未动。pi-link 300 测试全绿；`PI_VENDOR_VERSION`（lib.rs）已同步 1.6.1。
+- **上游唯一 breaking：`showCacheMissNotices` → `notices.{cacheMisses,cacheWarming,compactionCosts,reasoningDrops}` 四键**（`SettingsManager.getShowCacheMissNotices()`/`setShowCacheMissNotices()` 删除，改 `getNotices()`/`setNotice()`；旧值自动迁移）——PF 全仓 grep 零引用，设置面板不消费该键，无感。
+- `auth-storage.js`：保存 `!command` key 时清 resolve 缓存（同 key 重存重跑命令，#12164 `/login` stored key did not resolve 修复）；`ReadOnlyAuthStorage` 仍导出（registry dump 只读闸照旧）。`model-runtime.js`：`getProviderAuthStatus` 对 stored 凭据改回 `configured: resolved?`（source 仍 "stored"）——PF 不调此 API，无感。
+- `session-manager.js`：120k+ 条目后建上下文的递归栈溢出修复（#12154，改循环）+ 同款 #12224 行扫描修复——PF catalog.rs 直读不受影响。
+- **可重试名单再扩大（pi-ai retry.js，纯新增）**：Cloudflare 525（TLS 握手失败）、"provider temporarily unavailable"、Anthropic 流中 `api_error` 事件、OpenRouter 空响应/`finish_reason:"error"`/"stopped before completing"、"rate increased too quickly"（#12206/#12227/#12240/#12407）；`request_too_large` 子串误判修复（#12343，`plugin_request_too_large` 不再触发压缩重试）。auto_retry 泛化消费照旧，NON-RETRYABLE 限额名单语义未变。
+- **模型目录（只读透传）**：GLM-5.4 上架 `zai`/`zai-coding-cn`（1M 上下文、图片输入、zai thinking，价格未录）；Mistral 默认 `devstral-medium-latest`→`mistral-medium-latest`（Devstral 退役）；Gemini 3+ 带前缀 ID 正确识别（#12321）；下架模型移除（`gpt-5-chat-latest` 等）；`compat.supportsStrictMode` 用于 Gemini（Google 系）；Copilot 决策模型 `gpt-6-luna-decisions` + Radius 决策模型进 codemode `models.classify()`（结果新增 `responseId`）。
+- Windows/WSL 修复利好本仓用户：bash 工具经 `git var GIT_SHELL_PATH`（Git 2.47+）定位 Git Bash，不再误走 WSL `System32\bash.exe`（#12408）；`pi update` 跨 WSL/Windows 误装拦截（#12172）；Wayland 复制 MIME（#12446）；Tabby 右键双粘贴（#12406）。
+- 行为变化（不破 wire，app 可见）：bash 工具全量输出写临时文件失败不再崩、结构化 `full_output_error` 说明原因（#10585）；超长行输出（>50KB 尾随空行）显示行尾不显示 `(no output)`（#12350）；`after_provider_response` 扩展事件也覆盖 HTTP 4xx/5xx 与重试尝试（#12376）；`ctx.ui.select/confirm/input` 新增 `blockedKind`（OSC 7501，PF ext-ui 不消费）；首次安装默认跟随系统主题。
+
 ## transcript 重放
 
 - 系统提示词与工具声明在 transcript 的 `role:"system"` 消息里（content 追加 + sections 补丁 + toolsAdded/Removed），重放对齐 pi-ai `utils/transcript.js`。
