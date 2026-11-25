@@ -1,8 +1,16 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-11-06 07:30 ｜ 共 8 条（open 0）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-11-25 17:47 ｜ 共 9 条（open 1）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
+
+## 🔴 Open（1）
+
+### #9 建议把命令行窗口放在下面，像vscode的命令窗口那样。方便同时看代码和运行命令
+- 状态：open ｜ 标签：— ｜ 作者：yuanjingking ｜ 创建：2026-11-25 ｜ 更新：2026-11-25
+- https://github.com/danielbill/pi-flash/issues/9
+
+建议把命令行窗口放在下面，像vscode的命令窗口那样。方便同时看代码和运行命令
 
 ## ✅ Closed（8）
 
