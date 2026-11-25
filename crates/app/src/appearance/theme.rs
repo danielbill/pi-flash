@@ -371,8 +371,9 @@ pub const PINE_FOREST: Theme = Theme {
 /// #0b253a，bg_selected 取 list.activeSelectionBackground #234d708c 按 bg
 /// 合成 #14344f；border 取 contrastBorder #122d42（原 focusBorder 同值）；
 /// text 阶梯全取原色（sideBar/lineNumber/git-ignored 前景三档）；user_bg
-/// 取 editor.inactiveSelectionBackground #7e57c25a 按 bg 合成 #2d2d5e
-/// （紫按钮 #7e57c2 同相，用户消息块淡紫）；danger 用 errorForeground
+/// 取 editor.selectionBackground #1d3b53 原值（蓝系浮层，亮度恰好压过
+/// bg_selected 一档；首版用紫按钮 #7e57c25a 按 bg 合成 #2d2d5e，实测
+/// 饱和紫块与整屏深蓝不搭，已废）；danger 用 errorForeground
 /// #EF5350 原值（对比度与 one-dark danger 相当，无需再软化）。
 pub const NIGHT_OWL: Theme = Theme {
     dark: true,
@@ -389,7 +390,7 @@ pub const NIGHT_OWL: Theme = Theme {
     accent: 0x82aaff,       // 标志蓝（constant/function/terminal blue）
     accent_hover: 0x9dbaff, // 深色系 hover 提亮
     accent_contrast: 0x011627,
-    user_bg: 0x2d2d5e, // editor.inactiveSelectionBackground #7e57c25a 合成
+    user_bg: 0x1d3b53, // editor.selectionBackground 原值
     assistant_bg: 0x011627,
     tool_bg: 0x031f36, // 校准: bg +~3% 亮（工具卡/代码块底）
     bg_subtle: 0xffffff14,
@@ -445,8 +446,9 @@ pub const NOCTIS: Theme = Theme {
 /// #78dce8/#ab9df2，fg #fcfcfa。语义映射：panel=base1、chrome=base0、
 /// hover=#363537、tool=当前行 #3a383c、selected/border=base3（递进预验
 /// 达标）；text 阶梯 fg/activityBar/base6/comment/base4 全取原值；accent
-/// 取标志黄 #ffd866（黄上深字 10.3:1）；user_bg 主红 #ff6188 @20% 合成
-/// #573540（暖粉，与 base 系冷灰拉开色相）；danger=主红 4.94:1。
+/// 取标志黄 #ffd866（黄上深字 10.3:1）；user_bg 取 selection #423f46
+/// 原值（tontinton/maki；首版用主红 #ff6188 @20% 合成 #573540，实测
+/// 泥感枣红与 base 灰阶不搭，已废）；danger=主红 4.94:1。
 pub const MONOKAI_PRO: Theme = Theme {
     dark: true,
     bg: 0x2d2a2e,           // base2 editor.background
@@ -462,7 +464,7 @@ pub const MONOKAI_PRO: Theme = Theme {
     accent: 0xffd866,       // 标志黄（monokai.pro 站点级标识色）
     accent_hover: 0xffe28c, // 深色系 hover 提亮
     accent_contrast: 0x2d2a2e,
-    user_bg: 0x573540, // 主红 #ff6188 @20% 合成（暖粉）
+    user_bg: 0x423f46, // selection 原值（tontinton/maki monokai_pro.toml）
     assistant_bg: 0x2d2a2e,
     tool_bg: 0x3a383c, // 当前行/浮层面
     bg_subtle: 0xffffff14,

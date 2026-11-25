@@ -14,8 +14,9 @@ Monokai Pro（monokai.pro，商业主题）VS Code 扩展的公开色板；**不
 | selection / current line | `#423f46` / `#3a383c` | tontinton/maki `monokai_pro.toml` |
 
 PF 工作台槽位映射（hover `#363537`、nav `#323035`、accent_hover
-`#ffe28c`、user_bg `#573540` 等派生值）为 PF 语义校准，见
-`crates/app/src/appearance/theme.rs` 的 `MONOKAI_PRO` 文档注释。
+`#ffe28c` 等派生值）为 PF 语义校准，见
+`crates/app/src/appearance/theme.rs` 的 `MONOKAI_PRO` 文档注释；user_bg
+取 selection `#423f46` 原值。
 
 Monokai Pro 名称与设计归 Wimer Hazenberg / Monokai 所有；此移植为对
 公开色板值的描述性引用。
