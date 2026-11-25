@@ -171,10 +171,16 @@ pub(crate) fn main_column(
         })
         .child({
             // 033 导航条（轮次刻度）：面板居左挂行尾（会话区右缘）；居右时
-            // 镜像挂行首（左缘），刻度贴边与摘要卡弹出方向由 gutter 内部
-            // 按 panel_right 翻转（弹层四象限同款口径）
+            // 用 flex_row_reverse 视觉镜像到行首（左缘）——**DOM/绘制序保
+            // 持 wrap→gutter 不变**（gpui 按树序绘制，gutter 恒末子 = 摘要
+            // 卡面板恒盖在会话内容之上；曾改真实子序导致 flyout 被消息列
+            // 表盖住，2026-11-26 用户报障）。刻度贴边与摘要卡弹出方向由
+            // gutter 内部按 panel_right 翻转
             let gutter = nav_gutter(chat, rt_entity.clone(), weak.clone(), t, cx);
-            let host = div().id("chat-and-nav").flex_1().min_h_0().flex();
+            let mut host = div().id("chat-and-nav").flex_1().min_h_0().flex();
+            if chat.layout.panel_right {
+                host = host.flex_row_reverse();
+            }
             let wrap = {
                 let mut wrap = div()
                     .id("chat-wrap")
@@ -288,11 +294,7 @@ pub(crate) fn main_column(
                 }
                 wrap
             };
-            if chat.layout.panel_right {
-                host.child(gutter).child(wrap)
-            } else {
-                host.child(wrap).child(gutter)
-            }
+            host.child(wrap).child(gutter)
         })
 }
 
