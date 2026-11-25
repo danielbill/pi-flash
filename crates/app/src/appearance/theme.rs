@@ -409,8 +409,8 @@ pub const NIGHT_OWL: Theme = Theme {
 /// placeholder/lineNumber 前景四档，faint 由 git-ignored #5b858b 校准压暗
 /// 0x3a5054（原值亮于 soft 破坏阶梯）；accent_contrast 按深色系惯例压底色
 /// （teal 上深字 4.62:1，主题原白字 #ebfdff 仅 3.49:1）；user_bg 取
-/// wordHighlightBackground #e4b78133（暖杏 —— "warm & cold blend" 的暖极）
-/// 按 bg 合成 #32423b，与 teal 系 hover/selected 拉开色相。
+/// editor.lineHighlightBackground #083d44 原值（teal 浮层；首版用暖杏
+/// wordHighlight 合成 #32423b，实测似橄榄绿泥与冷青整屏不搭，已废）。
 pub const NOCTIS: Theme = Theme {
     dark: true,
     bg: 0x052529,           // editor.background 冷青黑
@@ -426,7 +426,7 @@ pub const NOCTIS: Theme = Theme {
     accent: 0x009999,       // button.background #099
     accent_hover: 0x00cccc, // button.hoverBackground #0cc
     accent_contrast: 0x052529,
-    user_bg: 0x32423b, // wordHighlightBackground #e4b78133 合成（暖杏）
+    user_bg: 0x083d44, // editor.lineHighlightBackground（teal 浮层，原值）
     assistant_bg: 0x052529,
     tool_bg: 0x062e32, // statusBarItem.hoverBackground / tabsBackground
     bg_subtle: 0xffffff14,
