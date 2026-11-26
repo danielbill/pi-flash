@@ -2,6 +2,32 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.5] - 2026-11-27
+
+Highlights of this release:
+1. Terminal now defaults to PowerShell: command history persists across sessions with ↑ recall; Settings → Other adds a "Terminal window" toggle to switch back to Cmd
+2. Fixed wheel/click events leaking through into the terminal when a modal window covers it
+3. Fixed plugin function-bar clicks stalling on a blank popup
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively, download the portable zip, unzip and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- Terminal default shell resolved via a three-step probe pwsh → powershell → ComSpec; Settings → Other adds a "Terminal window" toggle (PowerShell / Cmd), defaulting to PowerShell. The previous cmd default kept history only in process memory, lost on every restart; PowerShell persists it through PSReadLine, so ↑ recalls commands across sessions. (3aad7056, c81ed02f)
+
+### Bug fixes
+- Modals no longer leak input into the terminal: while a modal such as Settings scrolled, clicked or right-clicked over the terminal, events fell through into it — scrolling the terminal buffer or popping its context menu. Wheel and both mouse buttons now respect occlusion, same as ordinary scroll containers. (aa9dfca4)
+- Plugin function-bar clicks stalling on a blank popup: if the session was busy when an extension mounted, the ledger recorded it as attached while the process never actually loaded it — every later function-bar click wrote a request nobody consumed and the popup stalled for dozens of seconds. The click chain now guarantees a process that is "alive and carrying the mount"; when the active session is busy it borrows another session's process, and if none is available shows "Extension will take effect after the current task finishes". (0dc648a1)
+
+### Improvements
+- Terminal default foreground dimmed: #d7dce5 → #b0bac6; the old value measured ≈13:1 contrast against the dark background, which users found too sharp — now ≈8.8:1, a comfortable range. (88c8924a)
+- Context-tip two-column grid gutter tightened: 16px on each side, equal column widths, the gutter riding the panel's center line. (36a5a40a, c67a21ac)
 ## [0.6.4] - 2026-11-26
 
 Highlights of this release:
