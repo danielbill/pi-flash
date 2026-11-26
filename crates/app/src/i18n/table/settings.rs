@@ -76,7 +76,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("settings.send_queue", "排队", "排隊", "Queue"),
     ("settings.send_steer", "插话", "插話", "Steer"),
     ("settings.terminal_shell", "终端窗口", "終端窗口", "Terminal"),
-    ("settings.terminal_shell_hint", "新开终端的默认 shell；PowerShell 支持跨会话命令历史（↑ 键召回）", "新開終端的預設 shell；PowerShell 支援跨會話命令歷史（↑ 鍵召回）", "Default shell for new terminal tabs; PowerShell keeps command history across sessions (↑ to recall)"),
+    ("settings.terminal_shell_hint", "终端使用 PowerShell（支持命令持久化，↑ 键召回）或 Cmd", "終端使用 PowerShell（支援命令持久化，↑ 鍵召回）或 Cmd", "Use PowerShell (keeps command history, ↑ to recall) or Cmd"),
     ("settings.terminal_shell_pwsh", "PowerShell", "PowerShell", "PowerShell"),
     ("settings.terminal_shell_cmd", "cmd", "cmd", "cmd"),
     ("settings.session_count_hint", "各项目默认显示的会话数量", "各項目預設顯示的會話數量", "Sessions shown per project by default"),

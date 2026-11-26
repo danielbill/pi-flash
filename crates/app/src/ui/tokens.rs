@@ -191,8 +191,8 @@ pub mod divider {
 /// 两字档装不下）取 [`seg::W_LG`]。
 pub mod seg {
     pub const W: f32 = 72.;
-    /// 长英文标签档（§10.4）：96×30，同高同内边距只换宽。
-    pub const W_LG: f32 = 96.;
+    /// 长英文标签档（§10.4）：116×30，同高同内边距只换宽。
+    pub const W_LG: f32 = 116.;
     pub const H: f32 = 30.;
     pub const PX: f32 = 10.;
 }
@@ -275,7 +275,7 @@ mod tests {
         );
         assert_eq!([ib::SM, ib::MD, ib::LG], [22., 28., 32.]);
         // §10.4 档位钮
-        assert_eq!([seg::W, seg::W_LG, seg::H, seg::PX], [72., 96., 30., 10.]);
+        assert_eq!([seg::W, seg::W_LG, seg::H, seg::PX], [72., 116., 30., 10.]);
         // §5.3 开关
         assert_eq!(
             [
