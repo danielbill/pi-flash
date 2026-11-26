@@ -163,6 +163,7 @@ impl SessionRuntime {
         // 的挂载通道）：**所有档位统一消费**——此前只有 custom 档读它，
         // 插件 ext 在 full/default 档下永远挂不上（-e 缺席，出码/收发无人
         // 执行）。已挂过的（custom 档经 ext_sources）不重复。
+        let mut spawned_mounts: Vec<String> = Vec::new();
         if let Some(store) = pi_link::session_ext::store_path() {
             // 停用/卸载后的残留挂载条目必须失效（真机 2026-10-31：面板 off 重启
             // 后 ext 照跑还能收发——store 只增不减，spawn 前按注册状态过滤；
@@ -182,6 +183,9 @@ impl SessionRuntime {
                 if !ext_source_allowed(&src, &ledger) {
                     continue;
                 }
+                // 记账：过了过滤的挂载源 = 本次进程会带着的 ext（custom 档经
+                // ext_sources 传的也算——它们同样在 -e 里）
+                spawned_mounts.push(src.clone());
                 if !self
                     .ext_sources
                     .iter()
@@ -275,6 +279,8 @@ impl SessionRuntime {
                 }
             }
         }
+        // 本次进程实际携带的挂载源快照（存活判定用，见字段注释）
+        self.spawned_mounts = spawned_mounts;
         self.agent.spawn_with(
             &self.cwd,
             &extra,

@@ -223,6 +223,14 @@ pub(crate) struct SessionRuntime {
     pub ext_sources: Vec<String>,
     /// 040：picker 在运行中确认的清单——下一轮 send_input 空闲时重绑生效
     pub(crate) pending_ext_sources: Option<Vec<String>>,
+    /// 本次 spawn 实际挂上的台账挂载源（`session-ext.json` 里本会话名下、过了
+    /// 注册过滤的 `-e` 路径；所有档位统一记录）。进程不活时无意义——配合
+    /// `agent.session.is_some()` 判「活着且带着这条挂载」。用途：挂载通道的
+    /// 存活判定（pf_plugin `runtime_has_mounts`）——台账里有 ≠ 进程带着：
+    /// 挂载时会话忙 → 台账写了但进程没重启，ext 没装上；fn_bar 点击若只看
+    /// 台账就早退，出码请求写进镜像无人消费（真机 2026-11-26：未绑定会话点
+    /// 绑定几十秒不出码）。
+    pub(crate) spawned_mounts: Vec<String>,
     /// 043：MCP 菜单/设置页改过 mcp.json——下一轮 send_input 空闲发送前
     /// 重绑生效。**无论运行与否都必须标记**：MCP 装载只在 pi 进程启动时
     /// 读 mcp.json（扩展加载期 + session_start），空闲但活着的进程永远不会
@@ -399,6 +407,7 @@ impl SessionRuntime {
             tools_preset: "custom".into(),
             ext_sources,
             pending_ext_sources: None,
+            spawned_mounts: Vec::new(),
             pending_mcp_reload: false,
             pending_subagents_reload: false,
             auto_compaction: None,
@@ -426,6 +435,7 @@ impl SessionRuntime {
     /// Kill the process but keep everything else (idle retire / soft drop).
     pub(crate) fn shutdown_process(&mut self) {
         self.agent.session = None;
+        self.spawned_mounts.clear();
         // 进程即刻不在：跑动标志就地复位。pump 退出事件可能永不到达（渠道
         // 已死 / 事件泵先被回收），留着 true 会让状态槽的旋转圈常亮。
         self.agent_running = false;

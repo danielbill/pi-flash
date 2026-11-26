@@ -100,7 +100,6 @@ impl Chat {
             .iter()
             .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
             .collect();
-        // 台账**合并写**（勿整表覆写）：会话自选的 npm 清单与插件挂载通道
         // 同住一份台账，覆写 = 把用户勾选抹掉（真机 2026-10-31：观宏知微
         // 会话台账只剩一条插件路径，就是被覆写没的）
         let Some(store) = pi_link::session_ext::store_path() else {
@@ -111,15 +110,24 @@ impl Chat {
         // 死条目摘除）再并入新路径。不自愈就会出现「台账同时留着 0.1.4 与
         // 0.2.0 两条」，死的那条让 pi 整个起不来（真机 2026-11-03 重启哑火）
         merged = pi_link::session_ext::resolve_sources(&merged).0;
-        if !force_restart
-            && pi_exts.iter().all(|p| {
-                merged
-                    .iter()
-                    .any(|h| pi_link::session_ext::same_source(h, p))
-            })
-        {
-            return; // 清单已含，无需重启
+        // 早退条件 = 台账已含 **且** 该会话进程活着并带着这条挂载。只看台账
+        // 不够：挂载时会话忙 → 台账写了但进程没重启、ext 没装上，此后每次
+        // 点击都早退，出码请求写进镜像无人消费（真机 2026-11-26：未绑定
+        // 会话点绑定几十秒不出码，切到绑定会话点了才有人接活）。
+        let in_ledger = pi_exts.iter().all(|p| {
+            merged
+                .iter()
+                .any(|h| pi_link::session_ext::same_source(h, p))
+        });
+        let live_with_mount = self
+            .pool
+            .runtimes
+            .get(pf_session_key)
+            .is_some_and(|rt| runtime_has_mounts(&rt.read(cx), &pi_exts));
+        if !force_restart && in_ledger && live_with_mount {
+            return; // 清单已含且进程带着，无需重启
         }
+        // 台账**合并写**（勿整表覆写）：会话自选的 npm 清单与插件挂载通道
         for p in &pi_exts {
             if !merged
                 .iter()
@@ -175,6 +183,80 @@ impl Chat {
         // 进程起来后实例配置才被消费；顺手同步一次（幂等）
         svc::svc_sync_configs(self);
     }
+
+    /// 挂载通道存活保证（fn_bar 点击链，2026-11-26）：保证池里至少一个**活着
+    /// 且带着本插件 ext** 的 pi 进程（`runtime_has_mounts`）。镜像协议插件
+    /// （pf-wxbot）的出码/收发本体在 ext，壳只往镜像写请求——没人活着就没人
+    /// 消费，弹窗白板干等。活动会话做不到（忙而没带挂载）时退而求其次：台账
+    /// 里挂着同一 ext 的**其他**会话，进程已死的拉起（死进程重启无副作用）。
+    /// 返回 false = 当前做不到（带着挂载的会话都在忙），调用方给状态栏提示。
+    pub(crate) fn ensure_plugin_live_mount(
+        &mut self,
+        ix: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(exts) = self.plugin_ext_paths(ix) else {
+            return false;
+        };
+        if self.any_live_mount(&exts, cx) {
+            return true;
+        }
+        let Some(store) = pi_link::session_ext::store_path() else {
+            return false;
+        };
+        // 台账键 = norm_key（小写正斜杠）；池键 = 规范路径，同法归一后对上
+        let by_norm: std::collections::HashMap<String, String> = self
+            .pool
+            .runtimes
+            .keys()
+            .map(|k| (norm_mount_path(k), k.clone()))
+            .collect();
+        for (key, mounts) in pi_link::session_ext::read(&store) {
+            if !mounts_overlap_live(&mounts, &exts) {
+                continue;
+            }
+            let Some(rt) = by_norm
+                .get(&key)
+                .and_then(|k| self.pool.runtimes.get(k).cloned())
+            else {
+                continue; // 本轮没开过的会话没有 runtime，不在此造
+            };
+            if rt.read(cx).agent.session.is_some() {
+                continue; // 活着（但不带挂载 = 忙着没重启）
+            }
+            let _ = rt.update(cx, |r, cx| {
+                r.ensure_spawned(cx);
+            });
+            if self.any_live_mount(&exts, cx) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 池里是否有进程活着且带着 `exts` 全部挂载。
+    fn any_live_mount(&self, exts: &[String], cx: &gpui::App) -> bool {
+        self.pool
+            .runtimes
+            .values()
+            .any(|rt| runtime_has_mounts(&rt.read(cx), exts))
+    }
+
+    /// 插件声明的 pi 扩展绝对路径（无声明 = None）。
+    fn plugin_ext_paths(&self, ix: usize) -> Option<Vec<String>> {
+        let entry = self.plugins.plugins.get(ix)?;
+        if entry.manifest.pi_extensions.is_empty() {
+            return None;
+        }
+        Some(
+            entry
+                .manifest
+                .pi_extensions
+                .iter()
+                .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
+                .collect(),
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +290,17 @@ fn mount_key(p: &str) -> String {
     } else {
         format!("{head}{pkg}/{}", after.join("/"))
     }
+}
+
+/// 运行时「活着且带着挂载」：进程在（`agent.session`）+ 本次 spawn 的 `-e`
+/// 清单含 `exts` 每一条。spawn_mounts 是 spawn 时的快照，台账后来再写不算。
+fn runtime_has_mounts(rt: &crate::session::runtime::SessionRuntime, exts: &[String]) -> bool {
+    rt.agent.session.is_some()
+        && exts.iter().all(|p| {
+            rt.spawned_mounts
+                .iter()
+                .any(|m| pi_link::session_ext::same_source(m, p))
+        })
 }
 
 /// 会话挂载台账 ∩ 启用中插件的扩展路径。纯函数（单测面）：

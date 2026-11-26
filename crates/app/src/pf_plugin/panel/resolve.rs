@@ -31,6 +31,9 @@ pub(crate) enum ResolvedNode {
         justify_center: bool,
         /// 固定宽度（px，可选）：夹住内容列（弹窗内容对齐画布方框这类场景）
         w: Option<f32>,
+        /// 固定高度（px，可选）：等待态占位与到位后的画布等高（spinner 居中
+        /// 不跳版，pf-wxbot 出码等待 2026-11-26）
+        h: Option<f32>,
         /// 卡片能力（可选）：底色 / 圆角 / 1px 描边（通用，非插件特例）
         bg: Option<String>,
         radius: Option<f32>,
@@ -92,6 +95,13 @@ pub(crate) enum ResolvedNode {
         /// 契约 v3+：左键点画布 = 回环插件命令（画布内嵌「刷新」这类
         /// 提示本身是按钮）。
         command: String,
+    },
+    /// 加载转圈（契约 v3.1）：宿主统一 spinner（ui::spinner），插件只给
+    /// 尺寸 token 与 tone。用于「已发出请求、等后台兑现」的等待态（pf-wxbot
+    /// 出码等待，2026-11-26 用户定夺：白板换成转圈）。
+    Spinner {
+        size: f32,
+        tone: String,
     },
     /// 开/关开关（契约 v3）：点击翻转 → onCommand(command, {value: 新布尔})。
     /// 样式全归宿主（§10.4 开关）。
@@ -255,6 +265,41 @@ mod tests {
             }
             other => panic!("期望 Canvas，实际 {other:?}"),
         }
+    }
+
+    #[test]
+    fn spinner_and_column_height() {
+        // 等待态：等高占位列 + 转圈（契约 v3.1 spinner）
+        let v = tree(
+            r#"{"type":"column","w":396,"h":396,"align":"center","justify":"center","children":[{"type":"spinner","size":"MD","tone":"accent"}]}"#,
+        );
+        match resolve(&v) {
+            Some(ResolvedNode::Column {
+                w,
+                h,
+                align_center,
+                justify_center,
+                children,
+                ..
+            }) => {
+                assert_eq!((w, h), (Some(396.), Some(396.)));
+                assert!(align_center && justify_center);
+                match &children[0] {
+                    ResolvedNode::Spinner { size, tone } => {
+                        assert_eq!(*size, crate::ui::tokens::icon::MD);
+                        assert_eq!(tone, "accent");
+                    }
+                    other => panic!("期望 Spinner，实际 {other:?}"),
+                }
+            }
+            other => panic!("期望 Column，实际 {other:?}"),
+        }
+        // 缺省：size 回 SM、tone 回默认
+        let v = tree(r#"{"type":"spinner"}"#);
+        assert!(matches!(
+            resolve(&v),
+            Some(ResolvedNode::Spinner { size, .. }) if size == crate::ui::tokens::icon::SM
+        ));
     }
 
     #[test]

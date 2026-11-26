@@ -183,6 +183,13 @@ impl Chat {
                 let pf_key = self.pool.active_key.clone();
                 self.plugin_attach_pi_exts(ix, &pf_key, false, cx);
                 self.ensure_active_process(cx);
+                // 存活保证：挂上 ≠ 活着带着（忙时挂载延后、进程被回收……），
+                // 镜像协议插件的请求没人消费就白板干等（真机 2026-11-26）
+                if !self.ensure_plugin_live_mount(ix, cx) {
+                    let name = self.plugins.plugins[ix].manifest.id.clone();
+                    let msg = crate::i18n::tf("plugin.ext_wait_idle", &[("name", name)]);
+                    self.set_status(msg, cx);
+                }
             }
         }
         let Some(cmd) = self

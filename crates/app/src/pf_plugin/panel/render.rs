@@ -88,6 +88,7 @@ fn render_node_inner(
             align_center,
             justify_center,
             w,
+            h,
             bg,
             radius,
             border,
@@ -100,6 +101,9 @@ fn render_node_inner(
                 .py(px(pad_y.unwrap_or(*pad)));
             if let Some(w) = w {
                 col = col.w(px(*w)).flex_none();
+            }
+            if let Some(h) = h {
+                col = col.h(px(*h)).flex_none();
             }
             if let Some(c) = bg {
                 col = col.bg(rgb(theme_color(c, t)));
@@ -230,6 +234,7 @@ fn render_node_inner(
             paints,
             command,
         } => super::render_arms::render_canvas(width, height, paints, command, ix, weak, t),
+        ResolvedNode::Spinner { size, tone } => crate::ui::spinner(*size, tone_color(tone, t)),
         ResolvedNode::Switch {
             value,
             label,

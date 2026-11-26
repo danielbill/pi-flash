@@ -101,6 +101,7 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
             pad_x: node.get("padX").and_then(Value::as_f64).map(|v| v as f32),
             pad_y: node.get("padY").and_then(Value::as_f64).map(|v| v as f32),
             w: node.get("w").and_then(Value::as_f64).map(|v| v as f32),
+            h: node.get("h").and_then(Value::as_f64).map(|v| v as f32),
             bg: node.get("bg").and_then(Value::as_str).map(str::to_string),
             radius: node.get("radius").and_then(Value::as_f64).map(|v| v as f32),
             border: node
@@ -244,6 +245,10 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                     .to_string(),
             })
         }
+        "spinner" => Some(ResolvedNode::Spinner {
+            size: icon_size(node),
+            tone: tone(node),
+        }),
         "switch" => Some(resolve_switch(node)),
         other => {
             eprintln!("[pf-plugin] 未知组件已占位: {other}");
