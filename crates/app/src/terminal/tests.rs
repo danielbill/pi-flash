@@ -16,7 +16,8 @@ fn palette_matches_pi_web_theme() {
     assert_eq!(palette256(0), 0x1d222b);
     assert_eq!(palette256(1), 0xf87171);
     assert_eq!(palette256(8), 0x6b7280);
-    assert_eq!(palette256(256), 0xd7dce5);
+    // 默认前景有意偏离 pi-web 原值 #d7dce5：2026-11-26 用户反馈太锐利，降亮为 #b0bac6
+    assert_eq!(palette256(256), 0xb0bac6);
     assert_eq!(palette256(257), 0x111318);
     // 16..231 cube: index 17 is r=0 g=0 b=1 (16 is pure black)
     assert_eq!(palette256(16), 0x000000);
