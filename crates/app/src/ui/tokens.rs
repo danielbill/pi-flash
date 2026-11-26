@@ -185,6 +185,15 @@ pub mod divider {
     pub const ROW_ALPHA: u32 = 0x66;
 }
 
+/// §10.4 档位钮（settings 两/三档选择钮：发送模式、会话折叠档、放置功能
+/// 面板）：宽 72 高 30、水平内边距 10；间距与圆角不另设档——gap =
+/// [`space::SP4`]、r = [`radius::INLINE`]。
+pub mod seg {
+    pub const W: f32 = 72.;
+    pub const H: f32 = 30.;
+    pub const PX: f32 = 10.;
+}
+
 /// §2 渲染特例固定字号（px）：markdown 内部 chrome 不经 ui_size（§2 禁止
 /// 事项的"值入册"落点），改动 = 改规范再改这里。
 pub mod fixed {
@@ -262,6 +271,8 @@ mod tests {
             [24., 8., 28., 12., 32., 14.]
         );
         assert_eq!([ib::SM, ib::MD, ib::LG], [22., 28., 32.]);
+        // §10.4 档位钮
+        assert_eq!([seg::W, seg::H, seg::PX], [72., 30., 10.]);
         // §5.3 开关
         assert_eq!(
             [

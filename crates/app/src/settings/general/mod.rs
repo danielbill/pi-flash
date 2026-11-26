@@ -192,8 +192,9 @@ pub(crate) fn mc_general_view(
     col.into_any_element()
 }
 
-/// 放置功能面板两档（左/右）：仿 misc::send_mode_row 档位钮（72×30、
-/// active accent 描边 + bg_selected + 加粗，§5.4 文字 text_muted）。
+/// 放置功能面板两档（左/右）：仿 misc::send_mode_row 档位钮（尺寸档
+/// tokens::seg（§10.4）、active accent 描边 + bg_selected + 加粗，§5.4 文字
+/// text_muted）。
 fn panel_side_row(
     right: bool,
     weak: &gpui::WeakEntity<Chat>,
@@ -205,7 +206,7 @@ fn panel_side_row(
     ];
     div()
         .flex()
-        .gap(px(8.))
+        .gap(px(crate::ui::tokens::space::SP4))
         .children(CHOICES.iter().map(|(v, key)| {
             let active = right == *v;
             let label = tr(*key);
@@ -216,10 +217,10 @@ fn panel_side_row(
                     "general-panel-side-{}",
                     if value { "right" } else { "left" }
                 )))
-                .w(px(72.))
-                .h(px(30.))
-                .px(px(10.))
-                .rounded(px(5.))
+                .w(px(crate::ui::tokens::seg::W))
+                .h(px(crate::ui::tokens::seg::H))
+                .px(px(crate::ui::tokens::seg::PX))
+                .rounded(px(crate::ui::tokens::radius::INLINE))
                 .border_1()
                 .border_color(if active { rgb(t.accent) } else { rgb(t.border) })
                 .bg(if active {

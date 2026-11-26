@@ -158,7 +158,7 @@ def main():
     for path, (bad, _esc) in sorted(report.items()):
         allowed = base.get(path, 0)
         if len(bad) > allowed:
-            violations.append((path, allowed, len(bad), bad[allowed:]))
+            violations.append((path, allowed, len(bad), bad))
         elif len(bad) < allowed:
             cleared.append((path, allowed, len(bad)))
 
@@ -170,7 +170,10 @@ def main():
     if violations:
         print(f'VIOLATION(ui-raw): {len(violations)} 个文件新增手搓控件（交互链里的裸几何字面量）：')
         for path, allowed, now, lines in violations:
-            print(f'    {path}  基线 {allowed} / 现在 {now}  行 {", ".join(map(str, lines))}')
+            # 基线按「数量」冻结、不记行号，超线时无法断言哪几条是新增——
+            # 列全部命中行（曾只列尾部 N 条，把存量行当新增报，误导排查）。
+            print(f'    {path}  基线 {allowed} / 现在 {now}  全部命中行 '
+                  f'{", ".join(map(str, lines))}')
         print('  修法：改用 crate::ui::kit::* 的组件，或至少换成 ui::tokens 常量；')
         print('  确属特殊控件 → 该链内写 `// ui-raw: ok <理由>`，并在 §10 表里登记尺寸。')
         print('  **不要**自己跑 --update-baseline 掩盖。')
