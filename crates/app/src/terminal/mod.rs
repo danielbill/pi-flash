@@ -49,7 +49,9 @@ mod host;
 pub(crate) use element::*;
 
 const TERM_BG: u32 = 0x111318;
-const TERM_FG: u32 = 0xd7dce5;
+/// pi-web 原值 #d7dce5（对实际底 #141a17 ≈13:1，用户反馈锐利刺眼）；
+/// 2026-11-26 降亮校准 → #b0bac6（同蓝灰色相，≈8.8:1 舒适区间）
+const TERM_FG: u32 = 0xb0bac6;
 const TERM_CURSOR: u32 = 0x60a5fa;
 const TERM_SEL: u32 = 0x365b8a;
 const ANSI16: [u32; 16] = [
