@@ -184,6 +184,12 @@ pub(super) fn paint_grid(
             this.end_selection(cx);
             return;
         }
+        // 浮层遮挡下的左键不落终端选区（同滚轮遮挡判定；现令遮罩层
+        // stop_propagation 已拦，此处兜底防未来浮层漏拦重演穿透）
+        if this.occluded_at(window) {
+            this.end_selection(cx);
+            return;
+        }
         this.start_selection(ev.position, bounds, ev.click_count, window, cx);
     });
     // drag 不要求命中 bounds：拖出终端区（顶/底）正是「越界自动
@@ -214,6 +220,11 @@ pub(super) fn paint_grid(
         {
             return;
         }
+        // 右键不吃遮挡判定的话，模态卡片上右键会在设置窗顶上弹终端菜单
+        //（遮罩层只拦 Left 键，Right 键漏到这个裸监听）
+        if this.occluded_at(window) {
+            return;
+        }
         cx.stop_propagation();
         // 先聚焦终端：菜单动作作用于它，收起后键盘也继续可用
         window.focus(&this.focus);
@@ -227,6 +238,15 @@ pub(super) fn paint_grid(
     let this = shared;
     window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
         if phase != gpui::DispatchPhase::Bubble || !bounds.contains(&ev.position) {
+            return;
+        }
+        // bounds.contains 只判几何不判 z 序：设置等模态（ui::overlay 的
+        // occlude 遮罩层）盖在终端上方时，滚轮几何上仍落在终端 bounds
+        // 里，会连带滚底下的终端（2026-11-26 用户报告：设置窗口滚屏
+        // terminal 跟着滚；文档/会话窗口不触发是因为内容区状态机下终端
+        // 未绘制、监听器压根不存在）。补遮挡判定：与 gpui overflow_scroll
+        // 容器的 should_handle_scroll 同口径
+        if this.occluded_at(window) {
             return;
         }
         this.scroll(ev.delta, window, cx);

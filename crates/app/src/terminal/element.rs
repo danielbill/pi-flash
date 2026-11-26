@@ -181,7 +181,7 @@ impl gpui::Element for TerminalElement {
         let self_font_size = self.font_size;
         let preedit = self.preedit.clone();
         let blink_on = self.blink_on;
-        let shared = self.clone_shared();
+        let shared = self.clone_shared(hitbox.clone());
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -212,7 +212,9 @@ impl gpui::Element for TerminalElement {
 
 impl TerminalElement {
     /// Shared view of the element data for the paint-registered listeners.
-    fn clone_shared(&self) -> TermShared {
+    /// `hitbox`：prepaint 由 interactivity 插入（track_focus ⇒
+    /// should_insert_hitbox），供监听器判遮挡（TermShared::occluded_at）。
+    fn clone_shared(&self, hitbox: Option<gpui::Hitbox>) -> TermShared {
         TermShared {
             tab_id: self.tab_id,
             term: self.term.clone(),
@@ -221,6 +223,7 @@ impl TerminalElement {
             weak: self.weak.clone(),
             cell_w: self.cell_w,
             line_h: self.line_h,
+            hitbox,
         }
     }
 }

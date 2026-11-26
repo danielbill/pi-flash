@@ -12,6 +12,11 @@ pub(super) struct TermShared {
     pub(super) weak: WeakEntity<Chat>,
     pub(super) cell_w: f32,
     pub(super) line_h: f32,
+    /// 本帧终端的 hitbox（interactivity 因 `.track_focus` 保证插入，见
+    /// element.rs::paint）。裸 window 监听只做几何 bounds.contains，不判
+    /// z 序——滚轮/点击要用它补遮挡判定，否则设置等模态（ui::overlay 的
+    /// occlude 遮罩）盖着终端时事件会漏进底下终端。
+    pub(super) hitbox: Option<gpui::Hitbox>,
 }
 
 impl TermShared {
@@ -106,6 +111,18 @@ impl TermShared {
                 cx.notify();
             }
         });
+    }
+
+    /// 鼠标位置（= 当前事件的 position，gpui 派发前已更新 mouse_position
+    /// 并重算 hit-test）是否被前景浮层遮挡。与 gpui overflow_scroll 容器
+    /// 的 `should_handle_scroll` 同口径：occlude 遮罩截断 hit-test 链即
+    /// false。hitbox 缺失（理论上不可能，track_focus 保证插入）按未遮挡
+    /// 放行，保终端交互可用。
+    pub(super) fn occluded_at(&self, window: &gpui::Window) -> bool {
+        !self
+            .hitbox
+            .as_ref()
+            .is_none_or(|h| h.should_handle_scroll(window))
     }
 
     /// 语义选区（双击选词 / 三击选逻辑行）：直接用 alacritty 的
