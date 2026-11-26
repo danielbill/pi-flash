@@ -142,7 +142,9 @@ pub(crate) fn topbar_l(
     // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
     // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
     if crate::services::workspace::market_menu_enabled() {
-        bar = bar.child(div().ml(px(space::SP2)).child(market_menu_btn(cx)));
+        // 2026-11-26 用户定夺：与收放钮的盒间距从 SP2(4) 放大到 SP4(8)，
+        // 图标视觉间距 15→19px；两模式（面板左/右）共用本头部，一处生效
+        bar = bar.child(div().ml(px(space::SP4)).child(market_menu_btn(cx)));
     }
     if panel_right {
         // 尾部窗口控制钮（迁入本段 = 窗口右上角定位不变）：flex_1 拖拽
