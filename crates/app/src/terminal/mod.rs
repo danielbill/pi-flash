@@ -166,11 +166,89 @@ pub struct SelPt {
     pub col: usize,
 }
 
+/// pwsh.exe PATH 探测缓存（终端 tab 打开时才走，非热路径；OnceLock 防止
+/// 每 tab 重复扫 PATH）。
+static PWSH_IN_PATH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn pwsh_in_path() -> bool {
+    *PWSH_IN_PATH.get_or_init(|| {
+        std::env::var("PATH")
+            .map(|p| std::env::split_paths(&p).any(|dir| dir.join("pwsh.exe").is_file()))
+            .unwrap_or(false)
+    })
+}
+
+/// 默认 shell 解析：powershell（默认）= pwsh.exe（PowerShell 7，PATH 有则用）
+/// → powershell.exe（Windows PowerShell 5.1，系统自带必有）→ cmd 兑底；
+/// cmd = ComSpec ?? cmd.exe（pi-web terminal-manager.ts 同款旧行为）。
+fn default_shell() -> Shell {
+    let (program, args) = resolve_default_shell(
+        crate::services::workspace::terminal_shell_pref(),
+        pwsh_in_path(),
+        std::env::var("ComSpec").ok(),
+    );
+    Shell::new(program, args)
+}
+
+/// 纯逻辑（可测，返回 (program, args)；Shell 字段 pub(crate) 拿不到）：
+/// pref 只会是 getter 归一后的 "cmd"/"powershell"，防御起见未知值也落
+/// powershell（安全默认）。
+fn resolve_default_shell(
+    pref: &str,
+    has_pwsh: bool,
+    comspec: Option<String>,
+) -> (String, Vec<String>) {
+    if pref == "cmd" {
+        (comspec.unwrap_or_else(|| "cmd.exe".into()), Vec::new())
+    } else if has_pwsh {
+        ("pwsh.exe".into(), Vec::new())
+    } else {
+        ("powershell.exe".into(), Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+
+    #[test]
+    fn powershell_default_without_pwsh7() {
+        let (p, a) = resolve_default_shell(
+            "powershell",
+            false,
+            Some("C:\\Windows\\system32\\cmd.exe".into()),
+        );
+        assert_eq!(p, "powershell.exe");
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn powershell7_when_on_path() {
+        let (p, _) = resolve_default_shell("powershell", true, None);
+        assert_eq!(p, "pwsh.exe");
+    }
+
+    #[test]
+    fn cmd_pref_keeps_comspec() {
+        let (p, _) = resolve_default_shell("cmd", true, Some("C:\\cmd.exe".into()));
+        assert_eq!(p, "C:\\cmd.exe");
+        // 旧行为兑底：ComSpec 缺失落 cmd.exe
+        let (p, _) = resolve_default_shell("cmd", false, None);
+        assert_eq!(p, "cmd.exe");
+    }
+
+    #[test]
+    fn unknown_pref_falls_to_powershell() {
+        let (p, _) = resolve_default_shell("garbage", false, None);
+        assert_eq!(p, "powershell.exe");
+    }
+}
+
 /// Spawn the PTY + alacritty event loop for one tab.
 /// `cell_w`/`line_h` come from measuring the mono font in the opening window;
 /// `font_size` 是它们所按的字号戳（restart 沿用旧 tab 时一并继承）。
 /// `shell_override` = 021 右键【执行】（`cmd /k <脚本命令>` 进 tab）；
-/// None = 默认 shell（ComSpec ?? cmd.exe，terminal-manager.ts 同款）。
+/// None = 默认 shell（设置-其他「终端窗口」，powershell=默认 / cmd=旧行为）。
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_terminal(
     id: usize,
@@ -193,13 +271,9 @@ pub fn spawn_terminal(
     let term = Arc::new(FairMutex::new(Term::new(config, &dims, proxy.clone())));
 
     let mut options = tty::Options::default();
-    // terminal-manager.ts: win32 -> ComSpec ?? cmd.exe with no args
-    let shell = shell_override.unwrap_or_else(|| {
-        Shell::new(
-            std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string()),
-            Vec::new(),
-        )
-    });
+    // 默认 shell：设置-其他「终端窗口」（powershell=默认 / cmd=pi-web
+    // terminal-manager.ts 旧行为）。
+    let shell = shell_override.unwrap_or_else(default_shell);
     options.shell = Some(shell);
     options.working_directory = Some(cwd.clone());
     options.env = shell_env();

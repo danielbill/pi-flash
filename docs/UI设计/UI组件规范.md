@@ -417,7 +417,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 下拉/选择器触发器 | **250×30**（字体槽 **100×30**）×1px r**5**、`px 9`；开态边框 `accent`；标签真居中（绝对定位铺满，箭头贴右） | general 字体/字号、agents 下拉 |
 | 菜单行（页内小菜单） | h**28**、`px 8~10`、r**5**、gap **6~8**、ui(12)；容器 `p 4~6` + r8 + `shadow_lg` | 排序/字体/语言菜单 |
 | 单选 | **14** 圆 + **6** 内点（选中：accent 边框 + accent 点），标签 ui(12)、间距 7 | general 语言行 |
-| 档位钮（两/三档选择） | **72×30**、`px 10`、r**5**、gap **8**、ui(12)；选中 accent 描边 + `bg_selected` + SEMIBOLD，未选中 border + `bg_panel` + `text_muted`（只加粗不变色，§5.4），hover `bg_hover` | misc 发送模式/折叠档、general 放置功能面板（`tokens::seg`） |
+| 档位钮（两/三档选择） | **72×30**（长英文标签档 **96×30**，如终端窗口「PowerShell」）、`px 10`、r**5**、gap **8**、ui(12)；选中 accent 描边 + `bg_selected` + SEMIBOLD，未选中 border + `bg_panel` + `text_muted`（只加粗不变色，§5.4），hover `bg_hover` | misc 发送模式/折叠档/终端窗口、general 放置功能面板（`tokens::seg`，长标签档 `seg::W_LG`） |
 | 徽标 scope_tag | `px 5 / py 1`、r**3**、ui(10)；项目 = indigo `hsla(.63,.86,.62, .12/.85)`，其他 = 中性 12% 纱 | `scope_tag` |
 | 状态点 | **7** 圆 `rounded_full` | `status_dot` |
 | 行内小图标钮 | **24×24** r5（其他页）、垃圾桶 **28×28** r5（danger 35% 边 + 6% 红底） | misc / plugins |

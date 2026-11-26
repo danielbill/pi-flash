@@ -186,10 +186,13 @@ pub mod divider {
 }
 
 /// §10.4 档位钮（settings 两/三档选择钮：发送模式、会话折叠档、放置功能
-/// 面板）：宽 72 高 30、水平内边距 10；间距与圆角不另设档——gap =
-/// [`space::SP4`]、r = [`radius::INLINE`]。
+/// 面板、终端窗口）：宽 72 高 30、水平内边距 10；间距与圆角不另设档——gap =
+/// [`space::SP4`]、r = [`radius::INLINE`]。长英文标签（"PowerShell" 等
+/// 两字档装不下）取 [`seg::W_LG`]。
 pub mod seg {
     pub const W: f32 = 72.;
+    /// 长英文标签档（§10.4）：96×30，同高同内边距只换宽。
+    pub const W_LG: f32 = 96.;
     pub const H: f32 = 30.;
     pub const PX: f32 = 10.;
 }
@@ -272,7 +275,7 @@ mod tests {
         );
         assert_eq!([ib::SM, ib::MD, ib::LG], [22., 28., 32.]);
         // §10.4 档位钮
-        assert_eq!([seg::W, seg::H, seg::PX], [72., 30., 10.]);
+        assert_eq!([seg::W, seg::W_LG, seg::H, seg::PX], [72., 96., 30., 10.]);
         // §5.3 开关
         assert_eq!(
             [

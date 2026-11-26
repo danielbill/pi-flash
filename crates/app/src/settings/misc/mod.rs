@@ -107,6 +107,20 @@ pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> g
         t,
     ));
 
+    // 终端窗口默认 shell 两档（powershell=默认，PSReadLine 跨会话命令历史
+    // （↑ 召回）；cmd=pi-web parity 旧行为，doskey 历史不落盘）。新开 tab 生效。
+    // 置于「提示音」上方（用户定）
+    let shell_pref = crate::services::workspace::terminal_shell_pref();
+    col = col.child(set_row(
+        tr("settings.terminal_shell"),
+        tr("settings.terminal_shell_hint"),
+        {
+            let weak = weak.clone();
+            terminal_shell_row(shell_pref, &weak, t)
+        },
+        t,
+    ));
+
     // 提示音 switch（v60 从界面页挪入）
     let sound_on = crate::services::workspace::load_sound_pref();
     col = col.child(set_row(
@@ -322,6 +336,65 @@ fn send_mode_row(
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |_c, cx| {
                         crate::services::workspace::save_send_mode(value);
+                        cx.notify();
+                    });
+                })
+                .child(SharedString::from(label.to_string()))
+                .into_any_element()
+        }))
+        .into_any_element()
+}
+
+/// 终端窗口默认 shell 两档（powershell=默认（PSReadLine 历史持久化）/
+/// cmd=旧行为）。档位钮规范件（§10.4）：尺寸全走 tokens::seg（长标签档
+/// W_LG 容纳 "PowerShell"），active 描边 + bg_selected + SEMIBOLD，§5.4
+/// 文字 text_muted。
+fn terminal_shell_row(
+    pref: &str,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static crate::appearance::theme::Theme,
+) -> gpui::AnyElement {
+    const CHOICES: [(&str, &str); 2] = [
+        ("powershell", "settings.terminal_shell_pwsh"),
+        ("cmd", "settings.terminal_shell_cmd"),
+    ];
+    div()
+        .flex()
+        .gap(px(crate::ui::tokens::space::SP4))
+        .children(CHOICES.iter().map(|(v, key)| {
+            let active = pref == *v;
+            let label = tr(*key);
+            let weak_item = weak.clone();
+            let value = *v;
+            div()
+                .id(SharedString::from(format!("misc-term-shell-{v}")))
+                .w(px(crate::ui::tokens::seg::W_LG))
+                .h(px(crate::ui::tokens::seg::H))
+                .px(px(crate::ui::tokens::seg::PX))
+                .rounded(px(crate::ui::tokens::radius::INLINE))
+                .border_1()
+                .border_color(if active { rgb(t.accent) } else { rgb(t.border) })
+                .bg(if active {
+                    rgb(t.bg_selected)
+                } else {
+                    rgb(t.bg_panel)
+                })
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(crate::appearance::ui_size(12.))
+                .font_weight(if active {
+                    gpui::FontWeight::SEMIBOLD
+                } else {
+                    gpui::FontWeight::NORMAL
+                })
+                // §5.4：选项文字统一 text_muted，选中只加粗不变色
+                .text_color(rgb(t.text_muted))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_item.update(cx, |_c, cx| {
+                        crate::services::workspace::save_terminal_shell(value);
                         cx.notify();
                     });
                 })

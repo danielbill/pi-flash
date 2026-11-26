@@ -75,6 +75,8 @@ pub struct AppSettings {
     pub chat_content_width: Option<u64>,
     /// 090 排队护栏: 运行中发送方式——"queue"（默认）/"steer"
     pub send_mode: Option<String>,
+    /// 终端窗口默认 shell——"powershell"（默认）/ "cmd"（设置-其他「终端窗口」）
+    pub terminal_shell: Option<String>,
     /// 044-0 模块设置（兼容视图字段）：当前生效值恒 Some（真源 = hub
     /// `subagents` section，写入口在 subagent_prefs）
     pub subagent_capacity: Option<u64>,
@@ -117,6 +119,7 @@ pub fn app_settings() -> AppSettings {
         autohide_icons: sh.autohide_icons,
         chat_content_width: c.content_width,
         send_mode: c.send_mode.clone(),
+        terminal_shell: sh.terminal_shell.clone(),
         subagent_capacity: Some(sub.capacity),
         subagent_enabled: Some(sub.enabled),
     }
@@ -190,10 +193,14 @@ pub fn save_app_settings(s: &AppSettings) {
     if cur.auto_update != s.auto_update {
         st.set::<Updates>(|u| u.auto_update = s.auto_update);
     }
-    if cur.autohide_icons != s.autohide_icons || cur.sound != s.sound {
+    if cur.autohide_icons != s.autohide_icons
+        || cur.sound != s.sound
+        || cur.terminal_shell != s.terminal_shell
+    {
         st.set::<Shell>(|sh| {
             sh.autohide_icons = s.autohide_icons;
             sh.sound = s.sound;
+            sh.terminal_shell = s.terminal_shell.clone();
         });
     }
 }
@@ -226,6 +233,22 @@ pub fn send_mode_pref() -> &'static str {
 pub fn save_send_mode(mode: &str) {
     let mut s = app_settings();
     s.send_mode = Some(mode.to_string());
+    save_app_settings(&s);
+}
+
+/// 终端窗口默认 shell（设置-其他「终端窗口」）。返回 "powershell"（默认，含
+/// 缺键/非法值；PSReadLine 跨会话命令历史）或 "cmd"（pi-web parity 旧行为）。
+pub fn terminal_shell_pref() -> &'static str {
+    match app_settings().terminal_shell.as_deref() {
+        Some("cmd") => "cmd",
+        _ => "powershell",
+    }
+}
+
+/// 终端窗口默认 shell 写入（设置页两档分段按钮）。新开 tab 生效。
+pub fn save_terminal_shell(pref: &str) {
+    let mut s = app_settings();
+    s.terminal_shell = Some(pref.to_string());
     save_app_settings(&s);
 }
 

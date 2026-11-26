@@ -43,22 +43,37 @@ pub struct Shell {
     /// 通知提示音（缺省走 workspace 记忆回退，见 ws_state::load_sound_pref）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound: Option<bool>,
+    /// 终端窗口默认 shell："powershell"（默认，PSReadLine 跨会话命令历史）/
+    /// "cmd"（pi-web parity 旧行为，doskey 历史不落盘）。非法值 validate 清掉。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_shell: Option<String>,
 }
 
 impl Section for Shell {
     const KEY: &'static str = "shell";
 
-    fn validate(&mut self) {}
+    fn validate(&mut self) {
+        if let Some(v) = &self.terminal_shell {
+            if v != "cmd" && v != "powershell" {
+                self.terminal_shell = None;
+            }
+        }
+    }
 
     fn from_legacy(map: &serde_json::Map<String, serde_json::Value>) -> Option<Self> {
         let autohide_icons = map.get("autohide_icons").and_then(|v| v.as_bool());
         let sound = map.get("sound").and_then(|v| v.as_bool());
-        if autohide_icons.is_none() && sound.is_none() {
+        let terminal_shell = map
+            .get("terminal_shell")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if autohide_icons.is_none() && sound.is_none() && terminal_shell.is_none() {
             return None;
         }
         Some(Self {
             autohide_icons,
             sound,
+            terminal_shell,
         })
     }
 
@@ -68,6 +83,9 @@ impl Section for Shell {
         }
         if let Some(v) = self.sound {
             map.insert("sound".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = &self.terminal_shell {
+            map.insert("terminal_shell".into(), serde_json::Value::from(v.as_str()));
         }
     }
 }
