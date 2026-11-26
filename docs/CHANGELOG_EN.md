@@ -2,6 +2,33 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.6.4] - 2026-11-26
+
+Highlights of this release:
+1. Function panel can now be placed left or right: Settings → Interface adds a "Place function panel" toggle, defaulting to the right side
+2. Fixed scheduled tasks silently never firing (interval mix-up bug on non-minute units)
+3. Bundled pi upgraded to 1.6.1: GLM-5.4 now listed on zai providers
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively, download the portable zip, unzip and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- Function panel left/right placement: Settings → Interface adds a "Place function panel" toggle (left/right, default right). Window buttons, panel collapse button, navigation summary-card flyout direction, file-tree submenus — the whole layout mirrors automatically; users who already saved a side are unaffected. (deff25e8, 5263f87b)
+
+### Bug fixes
+- Scheduled tasks silently never firing: after nudging N under "every N minutes" and switching to "daily/hourly/weekly/monthly", the task was actually saved as "every N days" while the UI summary still showed "daily" — it never fired at the scheduled time. Non-minute units now always run once per cycle; affected existing tasks need to be re-saved once. (a2f982c3)
+- Three right-side panel layout fixes: the topbar file-tab strip shrank to half width; the navigation summary-card flyout was covered by the message list; the collapse and hamburger buttons huddled next to the window buttons instead of aligning to the panel header's left edge. (b1cdb4b3, 84a12d59, f1a312d2)
+
+### Improvements
+- Bundled pi upgraded to 1.6.1: GLM-5.4 listed on zai / zai-coding-cn providers; O(n) fix for transcript line scanning (speeds up large sessions); expanded network retry list. (2c33ae61)
+- Theme accent colors nativized: Night Owl / Monokai Pro / Noctis user-message bubble backgrounds now use each theme's native overlay colors instead of synthesized ones, and bubble borders follow the theme accent color (the old hardcoded blue looked off on non-blue themes); dark-theme ordering adjusted to monokai-pro / noctis / night-owl / nord-dark / one-dark. (75670e06, 48ce5f8a, bf54371d, b371a81d, e848cf95)
+- Session status band polish: height 28→30, kebab button vertically centered, and the [...] menu now reuses the input panel's unified positioning pipeline (centered on the button, popping upward). (14ed89c8, 546beb29, 0dcf5318)
 ## [0.6.3] - 2026-11-25
 
 Highlights of this release:
