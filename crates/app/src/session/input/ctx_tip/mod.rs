@@ -309,7 +309,7 @@ fn ctx_grid2(cells: Vec<gpui::Div>) -> gpui::AnyElement {
         .children(cells.into_iter().enumerate().map(|(i, c)| {
             div()
                 .w(relative(0.5))
-                .when(i % 2 == 0, |d| d.pr(px(16.)))
+                .when(i % 2 == 0, |d| d.pr(px(32.)))
                 .child(c.w_full())
         }))
         .into_any_element()
