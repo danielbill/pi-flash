@@ -300,7 +300,8 @@ fn ctx_section(
 }
 
 /// 二列数据网格（用户定夺：面板 460 宽、每行 2 列砍高度）：cells 按行
-/// 填充，每格半宽，左格 pr 出列缝——两列的百分比值各自贴半宽右缘对齐。
+/// 填充，每格半宽，左格 pr + 右格 pl 各出半缝（列缝总量 32px，两列
+/// 等宽、缝正骑面板中线）——两列的百分比值各自贴半宽右缘对齐。
 fn ctx_grid2(cells: Vec<gpui::Div>) -> gpui::AnyElement {
     div()
         .flex()
@@ -309,7 +310,8 @@ fn ctx_grid2(cells: Vec<gpui::Div>) -> gpui::AnyElement {
         .children(cells.into_iter().enumerate().map(|(i, c)| {
             div()
                 .w(relative(0.5))
-                .when(i % 2 == 0, |d| d.pr(px(32.)))
+                .when(i % 2 == 0, |d| d.pr(px(16.)))
+                .when(i % 2 == 1, |d| d.pl(px(16.)))
                 .child(c.w_full())
         }))
         .into_any_element()
