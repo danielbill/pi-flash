@@ -200,7 +200,7 @@ impl Default for UiState {
             session_pins: Vec::new(),
             session_status_bar: None,
             ext_status_muted: Vec::new(),
-            panel_side: "left".into(),
+            panel_side: "right".into(),
         }
     }
 }
@@ -282,11 +282,13 @@ pub fn ui_state() -> UiState {
             })
             .unwrap_or_default(),
         session_status_bar: v.get("session_status_bar").and_then(|b| b.as_bool()),
+        // 缺键/非法值落默认；只认显式 "left"（默认右侧，2026-11-26
+        // 用户定夺；老用户已存 "left" 的保持不变）
         panel_side: v
             .get("panel_side")
             .and_then(|s| s.as_str())
-            .filter(|s| *s == "right")
-            .unwrap_or("left")
+            .filter(|s| *s == "left")
+            .unwrap_or("right")
             .to_string(),
         ext_status_muted: v
             .get("ext_status_muted")

@@ -67,7 +67,8 @@ fn window_dock_state_roundtrip_via_map() {
 #[test]
 fn panel_side_roundtrip_and_default() {
     // 功能面板放置边（设置-界面「放置功能面板」）：落盘键 roundtrip 后
-    // 保留；UiState 默认恒左（读侧只认 "right"，非法值/缺键均落左）。
+    // 保留；UiState 默认恒右（读侧只认显式 "left"，非法值/缺键均落右；
+    // 2026-11-26 用户定夺改默认右侧）。
     let path = tmpfile("panel_side.json");
     let mut map = serde_json::Map::new();
     map.insert(
@@ -83,7 +84,7 @@ fn panel_side_roundtrip_and_default() {
         &Value::String("right".into())
     );
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    assert_eq!(UiState::default().panel_side, "left");
+    assert_eq!(UiState::default().panel_side, "right");
 }
 #[test]
 fn tree_state_rel_abs_roundtrip_and_prune() {
