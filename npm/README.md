@@ -22,6 +22,10 @@ npm install -g pi-flash@<旧版本>   # 回滚
 npx pi-flash@latest                # 不常驻安装直接跑
 ```
 
+> **npm 11.6+ / 12 用户注意**：npm 默认不再执行第三方包的 install 脚本（供应链防护）。
+> 安装时若见 `install scripts not yet covered by allowScripts` 警告属**预期行为**——
+> 载荷会在首次运行 `pi-flash` 时自动补齐（带下载进度与 SHA-256 校验），完成后正常启动。
+
 ## 环境变量
 
 | 变量 | 作用 |

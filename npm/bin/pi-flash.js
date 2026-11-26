@@ -46,6 +46,7 @@ if (!isNodeVersionSupported(process.versions.node)) {
 
   if (!payloadOk(tag)) {
     console.error(`   载荷缺失或版本不符，正在补齐（v${pkgVersion}）…`);
+    console.error(`   （npm 11.6+ 默认不跑安装脚本，首次运行自动补载属正常流程）`);
     try {
       await ensure();
     } catch (error) {

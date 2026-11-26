@@ -32,6 +32,8 @@ npm install -g pi-flash@latest   # 首次安装与更新同命令
 pi-flash
 ```
 
+> npm 11.6+ 安装时若见 `install scripts` 警告属正常（npm 供应链防护，默认不跑安装脚本），首次运行 `pi-flash` 会自动补齐载荷后启动。
+
 方式二：绿色包，无需 Node——从 [GitHub Releases](https://github.com/danielbill/pi-flash/releases) 下载 `pi-flash-<版本>-win32-x64.zip`，解压后双击 `pi-flash.exe` 即用。
 
 ## 首次启动
