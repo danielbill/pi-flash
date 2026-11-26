@@ -715,7 +715,15 @@ fn build_spec(s: &FormSnap) -> Option<TaskSpec> {
     ];
     let schedule = TaskSchedule {
         unit: *units.get(s.unit_ix)?,
-        interval: INTERVALS[s.interval_ix.min(INTERVALS.len() - 1)],
+        // 间隔选择器只在分钟档存在（§1.3 词汇：每天/每小时/每周/每月皆无 N），
+        // 非分钟档一律落 1——此前复用分钟档 interval_ix，「每 15 分钟」拨过 N
+        // 再切「每天」保存会把 daily 存成每 15 天，而 UI 摘要恒显示「每天」
+        // （2026-11-26 实锤事故：某任务 next_run 被排到 12-08，当日 07:30 不触发）。
+        interval: if s.unit_ix == 0 {
+            INTERVALS[s.interval_ix.min(INTERVALS.len() - 1)]
+        } else {
+            1
+        },
         hour: s.hour.min(23) as u8,
         minute: s.minute.min(59) as u8,
         weekdays: s
@@ -809,6 +817,29 @@ mod form_spec_tests {
             assert!(spec.validate().is_ok(), "三态均为合法 spec");
             assert_eq!(spec.agent.unwrap().extensions, want);
         }
+    }
+
+    /// 非分钟档 interval 恒 1：分钟档拨过的 N 不串档——「每 15 分钟」切「每天」
+    /// 保存不得把 daily 存成每 15 天（2026-11-26 事故回归：UI 显示每天 07:30，
+    /// 库里 interval=15 → next_run 被排到 12-08，当日 07:30 不触发）
+    #[test]
+    fn build_spec_pins_interval_one_outside_minute_unit() {
+        for unit_ix in 1..5 {
+            let mut s = snap(None);
+            s.unit_ix = unit_ix;
+            s.interval_ix = 5; // INTERVALS[5] = 15（分钟档残留）
+            if unit_ix == 3 {
+                s.weekdays[0] = true; // weekly 拒空表，勾周一
+            }
+            let spec = build_spec(&s).unwrap();
+            assert_eq!(spec.schedule.interval, 1, "每天/每小时/每周/每月皆无 N");
+            assert!(spec.validate().is_ok());
+        }
+        // 分钟档保留所选间隔
+        let mut s = snap(None);
+        s.unit_ix = 0;
+        s.interval_ix = 5;
+        assert_eq!(build_spec(&s).unwrap().schedule.interval, 15);
     }
 
     /// plug 计数：Some = 清单长度（空表显 [0]）；None = 全局启用集条数，

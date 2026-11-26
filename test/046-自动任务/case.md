@@ -35,6 +35,7 @@
 | spec 扩展清单：显式清单/空表零漂移 + 存量 spec（无 `extensions` 键）= None | pf-context `agent_extensions_roundtrip_and_legacy_default` | None = 沿用全局启用集（pi-flash-jt44） |
 | spec 扩展清单：空串条目写库前拒 | pf-context `agent_extensions_reject_blank_entry` | 拒写后库空；合法清单落库读回一致 |
 | 表单快照 → spec 扩展清单三态零漂移 | app `tasks::form_spec_tests::build_spec_carries_extensions_verbatim` | None / 显式 / 空表互不串味，均过 validate |
+| 非分钟档 interval 恒 1（分钟档 N 不串档，2026-11-26 每15天事故回归） | app `tasks::form_spec_tests::build_spec_pins_interval_one_outside_minute_unit` | hourly/daily/weekly/monthly 恒 1；minute 档保留所选 N |
 | plug 计数：Some = 清单长度（空表 [0]）；None = 全局启用集条数 | app `tasks::form_spec_tests::ext_count_reads_list_or_global_enabled` | 禁用条目/空 source 不计 |
 | 勾选集 → 源清单：宇宙序去重 + 展示名排序；未勾/不在宇宙的不落 | app `session::pi_extension_picker::picked_sources_tests::*`（2 例） | 会话区/任务页两宿主共用 |
 | 派发扩展清单：任务清单原样 + 落台账 draft 键；None = 全局集；两种都清 draft 键残留 | app `tasks::run::tests::dispatch_ext_sources_pins_task_list_and_clears_stale_draft` | 上一实例同名草稿清单不串味；任务配方覆写残留不合并 |
