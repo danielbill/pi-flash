@@ -214,6 +214,30 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { `
 | 基线本身要撤掉 | `git revert b36f9b2`，并把该行从 `.git-blame-ignore-revs` 删掉，然后 `git config --unset blame.ignoreRevsFile` |
 | 想确认基线是否完好 | `scripts/fmt.sh --check --all`（期望：`0 个不符合`） |
 
+## pre-push 静态守卫：UI 改动红灯前置（2026-11-26）
+
+**背景（25 次 CI 16 红，全是 UI 提交的复盘）**：`check_arch` 门禁只在 CI
+跑，push 后 ~13 分钟才反馈，且一次只露一个错——feat(015) 连红 5 次即
+反馈环路太长。而 §1-§4 是纯文本扫描，本地秒级。
+
+**机制**：`.githooks/pre-push` 在 push 前跑 `bash scripts/check_arch.sh --static`
+（只跑 §1-§4，跳过 §5 编译+测试——`pi-flash.exe` 运行中会锁 target，§5
+留给 CI 兑底）。红灯推不出去，ui-raw 手搓控件 / 行数超线当场结算。
+
+**误伤规避（并行会话同仓）**：违规文件**全部**属于未提交改动（WIP/未跟
+踪）时降级为警告放行——别人的半成品不拦干净提交的 push；该文件真被提
+交后，工作树即等于提交内容，下次 push 自会硬拦。
+
+**注意口径**：守卫按**工作树**扫，不是被推提交（用户否决 worktree 方案：
+多副本占磁盘）。推非 HEAD 提交时会提示仅供参考。
+
+**逃生口**：`git push --no-verify` 或 `PI_FLASH_SKIP_PREPUSH=1 git push`
+（例如确信红灯来自别人 WIP 且急需通道时）。
+
+**配套**：改颜色/尺寸常量时顺手 `cargo test -p app --bin pi-flash`（热缓
+存约 1 分钟）——常量↔测试断言失配（如 TERM_FG 降亮忘改 palette 测试，
+2026-11-26 两连红）只有测试能抓，静态守卫覆盖不到。
+
 ## 任务栏固定随更新失效（081 布局 × Windows pin 语义，2026-10-23）
 
 机制与修复主体在 `services/win_pin.rs` 的 `//!` 头注释：pin lnk 记录**固定那

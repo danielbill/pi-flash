@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # check_arch.sh — ARCHITECTURE.md §8 守护规则
-# 用法: scripts/check_arch.sh [--update-baseline]   (非零退出 = 违规)
+# 用法: scripts/check_arch.sh [--update-baseline] [--static]   (非零退出 = 违规)
+#       --static: 只跑 §1-§4 静态守卫(秒级,不编译)——pre-push 钩子/本地快速自检用;
+#       §5 编译+测试留 CI 兜底(pi-flash.exe 运行中会锁 target,本地常跑不了)
 # 口径: 行数红线按"非测试行数"计——#[cfg(test)] 标注的块(含 mod tests;
 #       指向的独立测试文件)不计入,测试体量不惩罚生产代码。
 #       函数行数仅量顶层 fn(视图函数在本仓均为顶层自由函数,impl 方法不量)。
@@ -14,9 +16,11 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
-[[ $# -eq 0 || "${1:-}" == "--update-baseline" ]] || {
-  echo "用法: scripts/check_arch.sh [--update-baseline]"; exit 1;
+[[ $# -eq 0 || "${1:-}" == "--update-baseline" || "${1:-}" == "--static" ]] || {
+  echo "用法: scripts/check_arch.sh [--update-baseline] [--static]"; exit 1;
 }
+STATIC_ONLY=""
+[[ "${1:-}" == "--static" ]] && STATIC_ONLY=1
 
 LIMIT_FILE=1000        # 单文件非测试行数上限
 LIMIT_RENDER=400       # 单个顶层视图函数行数上限
@@ -174,6 +178,10 @@ else
 fi
 
 echo
+if [[ -n "${STATIC_ONLY:-}" ]]; then
+  if [ "$fail" -ne 0 ]; then echo "check_arch(static): FAIL"; else echo "check_arch(static): OK"; fi
+  exit $fail
+fi
 echo "== 5. build 无新警告 / test 全绿 =="
 # 构建失败也要红（不能只数 warning：error 行不匹配 ^warning，曾把编译
 # 损坏静默成 "app warnings: 0" + "tests ok"，0.1.10 发版被 release 构建

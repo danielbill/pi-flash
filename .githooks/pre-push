@@ -1,0 +1,58 @@
+#!/bin/bash
+# push 前静态守卫：check_arch §1-§4（不编译，秒级）
+# 详见 docs/agents/engineering.md「pre-push 静态守卫」节。
+#
+# 背景（2026-11-26 复盘：25 次 CI 16 红，全是 UI 提交）：ui-raw 手搓控件 /
+# 行数超线这类违规只在 CI（~13 分钟一轮）暴露，一次只露一个错，
+# feat(015) 连红 5 次即反馈环路太长。§1-§4 纯文本扫描本地仅数秒，
+# 搬到 push 前当场结算；§5 编译+测试仍留 CI（pi-flash.exe 运行中会锁 target）。
+#
+# 误伤规避：违规文件**全部**属于未提交改动（WIP/未跟踪）时降级为警告放行
+# ——并行 agent 同仓时，别人的半成品不该拦住干净提交的 push；该文件真被
+# 提交后，工作树即等于提交内容，下次 push 自会硬拦，CI 也兜底。
+#
+# 逃生口：git push --no-verify，或 PI_FLASH_SKIP_PREPUSH=1 git push
+
+set -uo pipefail
+
+[[ "${PI_FLASH_SKIP_PREPUSH:-}" == "1" ]] && exit 0
+
+# stdin: 每行 "local_ref local_sha remote_ref remote_sha"；无行/仅删分支不拦
+pushed=""
+while read -r _lref lsha _rref _rsha; do
+  [[ "$lsha" =~ ^0+$ ]] && continue
+  pushed="$lsha"
+done
+[[ -n "$pushed" ]] || exit 0
+
+if [[ "$pushed" != "$(git rev-parse HEAD)" ]]; then
+  echo "pre-push: 推送非 HEAD 提交，守卫按工作树口径仅供参考"
+fi
+
+out=$(bash scripts/check_arch.sh --static 2>&1); rc=$?
+if [[ $rc -eq 0 ]]; then
+  echo "pre-push: 静态守卫 OK（§1-§4，工作树口径）"
+  exit 0
+fi
+
+echo "$out"
+
+# 违规涉及的文件全部是未提交改动 → 降级放行
+viol=$(grep -oE 'crates/[A-Za-z0-9_./-]+\.rs' <<<"$out" | sort -u)
+if [[ -z "$viol" ]]; then
+  echo "pre-push: 静态守卫红灯（未定位到违规文件，拦截）"
+  exit 1
+fi
+
+dirty=$(git status --porcelain | awk '{print $2}')
+wip_only=1
+while IFS= read -r f; do
+  grep -qxF "$f" <<<"$dirty" || wip_only=0
+done <<<"$viol"
+
+if [[ $wip_only -eq 1 ]]; then
+  echo "pre-push: 违规仅在未提交 WIP 文件——放行（该文件提交后自会硬拦，CI 兜底）"
+  exit 0
+fi
+echo "pre-push: 静态守卫红灯（见上）。若确属未提交 WIP 误判，git push --no-verify 逃生"
+exit 1
