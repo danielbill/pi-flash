@@ -7,8 +7,9 @@ use super::*;
 /// 回旧两行）。`bac_ctx` = 插件 003 的请求口径 override（tokens, window）：
 /// 后台折叠剔除发生在请求改写层而原文留在树里，pi 的树口径永不回落——
 /// 插件在场时标题/进度条换用请求口径（分母 = 插件判定窗口，与插件折叠
-/// 判定同源）；分类构成行按树口径统计，与 override 总量不同基，同屏会
-/// 互相矛盾，一并退回旧两行。
+/// 判定同源）；分类构成行按树口径统计，与 override 总量不同基，退回
+/// 旧两行；退回的两行明细（使用比例/上下文 token）也跟容量环同口径，
+/// 避免两口径同屏互相矛盾（2026-11-27 用户实测指出）。
 pub(super) fn ctx_capacity_block(
     s: &pi_link::protocol::SessionStats,
     sys: Option<&pi_link::transcript::TranscriptSystem>,
@@ -133,23 +134,28 @@ pub(super) fn ctx_capacity_block(
             ));
         }
         _ => {
+            // 明细两行跟容量环同一口径：override 在场时用请求口径
+            // （ctx_total/ctx_pct 开头已算好；实测两口径同屏互相矛盾——
+            // 顶部 77K/160K (48.3%) vs 明细 69K/1,000K (6.9%)，用户
+            // 2026-11-27 指出「状态还没对上」），树口径明细只在无
+            // override 时展示。
+            let tokens_text = match bac_ctx {
+                Some((tok, win)) if win > 0 => format!("{}/{}", fmt_k(tok), fmt_k(win)),
+                _ => match (s.context_tokens, s.context_window) {
+                    (Some(tk), Some(w)) => format!("{}/{}", fmt_k(tk), fmt_k(w)),
+                    (Some(tk), None) => fmt_k(tk),
+                    _ => "\u{2014}".into(),
+                },
+            };
             ctx = ctx.children(vec![
                 ctx_row(
                     tr("stats.share"),
-                    s.context_percent
+                    ctx_pct
                         .map(|p| format!("{p:.1}%"))
                         .unwrap_or_else(|| "\u{2014}".into()),
                     t,
                 ),
-                ctx_row(
-                    tr("stats.context_tokens"),
-                    match (s.context_tokens, s.context_window) {
-                        (Some(tk), Some(w)) => format!("{}/{}", fmt_k(tk), fmt_k(w)),
-                        (Some(tk), None) => fmt_k(tk),
-                        _ => "\u{2014}".into(),
-                    },
-                    t,
-                ),
+                ctx_row(tr("stats.context_tokens"), tokens_text, t),
             ]);
         }
     }
