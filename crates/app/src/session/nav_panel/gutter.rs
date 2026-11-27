@@ -143,9 +143,10 @@ pub(crate) fn nav_gutter(
             .bg(rgb(t.nav))
             // 水平 padding 必须挂外层容器：gpui List 的 prepaint 只应用
             // 条目的 padding.top/bottom，左右 padding 对条目完全无效
-            //（session_list 同款结论）
-            .pl(px(6.))
-            .pr(px(14.))
+            //（session_list 同款结论）。两侧等宽 10 = 高亮框（选中/悬浮
+            // 卡）与面板缘空隙对称（2026-11-27 用户定夺）；旧 pl 6 / pr 14
+            // 是给右缘滚动条留位的非对称值，面板镜像到左侧后穿帮
+            .px(px(10.))
             .child(
                 gpui::list(
                     chat.layout.nav_flyout_list.clone(),
@@ -192,12 +193,16 @@ pub(crate) fn nav_gutter(
             flyout_wrap = flyout_wrap.child(
                 div()
                     .absolute()
-                    // 44 = 总结栏 36 + list pt 8（v63-4 口径同款）；贴内侧缘
-                    //（默认右缘 / 居右面板镜像左缘）
+                    // 44 = 总结栏 36 + list pt 8（v63-4 口径同款）；组件竖向
+                    // 滚动条按容器**右缘**锚定绘制（WIDTH 12 = 右
+                    // inset 2 + thumb 8 + 余 2），容器只当锚点用：居左面板
+                    // left 3 → thumb 落 [1,9]；居右面板镜像后改 right 0 →
+                    // thumb 落 [490,498]——都收进 10px 空隙，不压卡片高亮框
+                    //（right 3 + 空隙缩到 10 会叠上卡片缘 3px）
                     .top(px(44.))
                     .bottom(px(8.))
                     .when(chat.layout.panel_right, |d| d.left(px(3.)))
-                    .when(!chat.layout.panel_right, |d| d.right(px(3.)))
+                    .when(!chat.layout.panel_right, |d| d.right(px(0.)))
                     .w(px(8.))
                     .child(gpui_component::scroll::Scrollbar::vertical(
                         &sb_state, &handle,
