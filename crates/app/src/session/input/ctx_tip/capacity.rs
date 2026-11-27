@@ -4,25 +4,35 @@ use super::*;
 
 /// 上下文容量块（ZCode 风格）：标题行（已用/窗口 · 百分比，窗口未知只给
 /// 已用）+ 进度条 + 分类占比行（系统态已加载且官方总量已知才画；否则退
-/// 回旧两行）。
+/// 回旧两行）。`bac_ctx` = 插件 003 的请求口径 override（tokens, window）：
+/// 后台折叠剔除发生在请求改写层而原文留在树里，pi 的树口径永不回落——
+/// 插件在场时标题/进度条换用请求口径（分母 = 插件判定窗口，与插件折叠
+/// 判定同源）；分类构成行按树口径统计，与 override 总量不同基，同屏会
+/// 互相矛盾，一并退回旧两行。
 pub(super) fn ctx_capacity_block(
     s: &pi_link::protocol::SessionStats,
     sys: Option<&pi_link::transcript::TranscriptSystem>,
     t: &'static crate::appearance::theme::Theme,
+    bac_ctx: Option<(u64, u64)>,
 ) -> gpui::Div {
-    let ctx_total = s.context_tokens.unwrap_or(0);
-    // 标题行右值：已用/窗口（百分比），窗口未知只给已用
-    let bar_pct = s
-        .context_percent
-        .or_else(|| match (s.context_tokens, s.context_window) {
-            (Some(tk), Some(w)) if w > 0 => Some(tk as f64 / w as f64 * 100.),
-            _ => None,
-        });
+    let (ctx_total, ctx_pct) = match bac_ctx {
+        Some((tok, win)) if win > 0 => (tok, Some(tok as f64 / win as f64 * 100.)),
+        _ => (
+            s.context_tokens.unwrap_or(0),
+            s.context_percent
+                .or_else(|| match (s.context_tokens, s.context_window) {
+                    (Some(tk), Some(w)) if w > 0 => Some(tk as f64 / w as f64 * 100.),
+                    _ => None,
+                }),
+        ),
+    };
+    let bar_pct = ctx_pct; // override 与 fallback 两分支都已算好
     // 右值：末字用 ASCII 半角字符（`%` 与 `)`），全角 `）` 自带半个字身的
     // 右空白，会让首行墨迹比下面各行的右缘内缩 ~6px（2026-10-16 用户指出的
     // 「最上面一行右侧没对齐」）；`/` 两侧同样不留空格。
-    let head_right = match (s.context_tokens, s.context_window) {
-        (Some(tk), Some(w)) => format!(
+    let head_right = match bac_ctx {
+        // override：窗口由解析保证 > 0，标题恒为 已用/窗口 (pct)
+        Some((tk, w)) => format!(
             "{}/{} ({})",
             fmt_k(tk),
             fmt_k(w),
@@ -30,8 +40,18 @@ pub(super) fn ctx_capacity_block(
                 .map(|v| format!("{v:.1}%"))
                 .unwrap_or_else(|| "\u{2014}".into()),
         ),
-        (Some(tk), None) => fmt_k(tk),
-        _ => "\u{2014}".into(),
+        None => match (s.context_tokens, s.context_window) {
+            (Some(tk), Some(w)) if w > 0 => format!(
+                "{}/{} ({})",
+                fmt_k(tk),
+                fmt_k(w),
+                bar_pct
+                    .map(|v| format!("{v:.1}%"))
+                    .unwrap_or_else(|| "\u{2014}".into()),
+            ),
+            (Some(tk), None) => fmt_k(tk),
+            _ => "\u{2014}".into(),
+        },
     };
     let mut ctx = div()
         .flex()
@@ -71,9 +91,10 @@ pub(super) fn ctx_capacity_block(
                 ),
         );
     }
-    // 分类占比行（系统态已加载且官方总量已知才画；否则退回旧两行）
+    // 分类占比行（bac override 时退回——构成按树口径，与请求口径不同基；
+    // 系统态已加载且官方总量已知才画，否则退回旧两行）
     let cats = sys
-        .filter(|_| ctx_total > 0)
+        .filter(|_| bac_ctx.is_none() && ctx_total > 0)
         .map(|sys| cat_rows(sys, ctx_total));
     match cats {
         Some(rows) if !rows.is_empty() => {

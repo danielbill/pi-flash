@@ -11,6 +11,58 @@ use crate::services::format::fmt_thousand;
 /// 开始淡出（200ms 定时器到期清除，守卫时刻戳防旧定时器误杀新一轮）。
 pub(crate) mod capacity;
 use capacity::{ctx_capacity_block, ctx_tokens_cost_parts};
+
+/// 插件 003（background-auto-compact）推送的请求口径数据键：
+/// `ext_status` 里的 `（"bac-ctx", "请求口径 21.6% (34,505 / 160,000)"）`。
+/// pi 的 contextUsage 按会话树投影估算，而后台折叠剔除发生在请求改写层
+/// （被折叠原文留在树里，树口径永不回落）——插件在场时容量环换用请求
+/// 口径（分母 = 插件判定窗口），与状态栏「已压缩 N 次」同源一致。
+const BAC_CTX_KEY: &str = "bac-ctx";
+
+/// 解析 bac-ctx 文案尾部的结构化段 `(34,505 / 160,000)` → (tokens, window)。
+/// 数字千分位无损（插件侧刻意不用 k 缩写）；解析失败 = None，容量环退回
+/// pi 口径。手写扫描不引 regex。
+fn parse_bac_ctx(text: &str) -> Option<(u64, u64)> {
+    let open = text.rfind('(')?;
+    let close = text[open..].find(')')? + open;
+    let inner = &text[open + 1..close];
+    let (tok, win) = inner.split_once('/')?;
+    let num = |s: &str| -> Option<u64> {
+        s.trim()
+            .chars()
+            .filter(|c| *c != ',')
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()
+    };
+    let (tok, win) = (num(tok)?, num(win)?);
+    (win > 0).then_some((tok, win))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bac_ctx_parse_plugin_format() {
+        // 插件侧 ctx_text 的真格式（含千分位、百分比段）
+        assert_eq!(
+            parse_bac_ctx("请求口径 21.6% (34,505 / 160,000)"),
+            Some((34505, 160000))
+        );
+        assert_eq!(parse_bac_ctx("请求口径 0.0% (0 / 8,000)"), Some((0, 8000)));
+    }
+
+    #[test]
+    fn bac_ctx_parse_rejects_garbage() {
+        assert_eq!(parse_bac_ctx("已压缩 2 次 · 119k→3187 tokens"), None);
+        assert_eq!(parse_bac_ctx("请求口径 21.6%"), None, "无结构化尾");
+        assert_eq!(parse_bac_ctx("请求口径 21.6% (34,505)"), None, "缺分母");
+        assert_eq!(parse_bac_ctx("请求口径 21.6% (x / 160,000)"), None);
+        assert_eq!(parse_bac_ctx("请求口径 21.6% (1 / 0)"), None, "零窗口拒收");
+        assert_eq!(parse_bac_ctx(""), None);
+    }
+}
 /// 悬停标志更新 + 淡出状态机（乱序免疫）：只按 (was_open, open) 转移，
 /// 环→面板交接时两个 hover 事件无论先后都收敛到正确状态。双面全空才
 /// 开始淡出（200ms 定时器到期清除，守卫时刻戳防旧定时器误杀新一轮）。
@@ -62,13 +114,19 @@ pub(super) fn ctx_tip_element(
     if !visible {
         return None;
     }
-    let (stats, sys, compacting, can_compact) = {
+    let (stats, sys, compacting, can_compact, bac_ctx) = {
         let r = chat.rt().read(cx);
+        let bac = r
+            .ext_status
+            .iter()
+            .find(|(k, _)| k == BAC_CTX_KEY)
+            .and_then(|(_, v)| parse_bac_ctx(v));
         (
             r.stats.clone(),
             r.sys.clone(),
             r.compacting,
             r.can_compact(),
+            bac,
         )
     };
     let closing = chat.dlg.ctx_tip_closing.is_some();
@@ -105,6 +163,7 @@ pub(super) fn ctx_tip_element(
                     can_compact,
                     sys_open,
                     tools_open,
+                    bac_ctx,
                     t,
                     cx,
                 )),
@@ -139,6 +198,7 @@ fn ctx_usage_panel(
     can_compact: bool,
     sys_open: bool,
     tools_open: bool,
+    bac_ctx: Option<(u64, u64)>,
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {
@@ -150,7 +210,7 @@ fn ctx_usage_panel(
                 .child(tr("stats.no_usage"))
                 .into_any_element(),
         ],
-        Some(s) => vec![ctx_capacity_block(&s, sys, t).into_any_element()]
+        Some(s) => vec![ctx_capacity_block(&s, sys, t, bac_ctx).into_any_element()]
             .into_iter()
             .chain(ctx_tokens_cost_parts(&s, t))
             .collect(),
