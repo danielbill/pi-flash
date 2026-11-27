@@ -363,3 +363,56 @@ title = { zh = "快捷面板" }
     assert_eq!(m.panels.len(), 1);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// 契约 v5.1 pi_extensions[].scope：all-sessions 置位（any 语义）、
+/// bound 显式声明 = 同缺省、非法值即拒。
+#[test]
+fn pi_extensions_scope_parsing() {
+    let tmp = std::env::temp_dir().join(format!("pf-scope-test-{}", std::process::id()));
+    let body = |name: &str, scope: &str| {
+        format!(
+            r#"
+schema = 5
+id = "{name}"
+title = {{ zh = "探针" }}
+version = "0.1.0"
+
+[[contributes.pi_extensions]]
+path = "pi/index.mjs"
+{scope}
+"#
+        )
+    };
+    // id 须与目录名对账（validate）；kebab 名逐子目录给定
+    let names = ["a", "b", "c", "d"];
+    // all-sessions → 置位
+    let dir = tmp.join("a");
+    write_manifest(&dir, &body(names[0], "scope = \"all-sessions\""));
+    std::fs::create_dir_all(dir.join("pi")).unwrap();
+    std::fs::write(dir.join("pi").join("index.mjs"), "export {}").unwrap();
+    let m = parse_manifest(&dir).expect("all-sessions 清单应通过");
+    assert!(m.pi_ext_all_sessions, "all-sessions 须置位");
+    assert_eq!(m.pi_extensions, vec!["pi/index.mjs"]);
+    // bound 显式 → 同缺省
+    let dir = tmp.join("b");
+    write_manifest(&dir, &body(names[1], "scope = \"bound\""));
+    std::fs::create_dir_all(dir.join("pi")).unwrap();
+    std::fs::write(dir.join("pi").join("index.mjs"), "export {}").unwrap();
+    let m = parse_manifest(&dir).expect("bound 清单应通过");
+    assert!(!m.pi_ext_all_sessions, "bound = 缺省语义");
+    // 非法值 → 拒
+    let dir = tmp.join("c");
+    write_manifest(&dir, &body(names[2], "scope = \"galaxy\""));
+    std::fs::create_dir_all(dir.join("pi")).unwrap();
+    std::fs::write(dir.join("pi").join("index.mjs"), "export {}").unwrap();
+    let err = parse_manifest(&dir).expect_err("非法 scope 须拒");
+    assert!(err.contains("all-sessions"), "错误应含值域提示：{err}");
+    // 缺省（无 scope 键）→ false
+    let dir = tmp.join("d");
+    write_manifest(&dir, &body(names[3], ""));
+    std::fs::create_dir_all(dir.join("pi")).unwrap();
+    std::fs::write(dir.join("pi").join("index.mjs"), "export {}").unwrap();
+    let m = parse_manifest(&dir).expect("缺省清单应通过");
+    assert!(!m.pi_ext_all_sessions);
+    let _ = std::fs::remove_dir_all(&tmp);
+}

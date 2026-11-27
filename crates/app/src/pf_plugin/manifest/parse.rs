@@ -28,6 +28,7 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         file_menu: Vec::new(),
         panels: Vec::new(),
         pi_extensions: Vec::new(),
+        pi_ext_all_sessions: false,
         service: Vec::new(),
         sessions: Vec::new(),
         wasm: None,

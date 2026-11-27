@@ -18,6 +18,13 @@ impl Chat {
     /// → icon 假绿。这正是本豁免注释当年记的事故形态（2026-10-30「发消息收不
     /// 到」），换了个挂载通道又复现。
     pub(crate) fn has_live_service(&self, key: &str, _cx: &mut gpui::Context<Self>) -> bool {
+        // all-sessions 插件（契约 v5.1）：hook 型 ext 全会话注入（spawn 动态，
+        // 不落台账）——启用中即全会话 live，台账/进程两套判定都够不着它
+        if self.plugins.plugins.iter().any(|e| {
+            !e.disabled && e.manifest.pi_ext_all_sessions && !e.manifest.pi_extensions.is_empty()
+        }) {
+            return true;
+        }
         if let Some(base) = pi_link::paths::dir()
             && pi_link::service_ext::config_path_if_any(&base, key).is_some()
         {
@@ -100,6 +107,19 @@ impl Chat {
             .iter()
             .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
             .collect();
+        // all-sessions 插件（契约 v5.1 pi_extensions[].scope）：不落会话台账——
+        // 挂载本体在 spawn 时按启用清单动态注入（spawn.rs all_sessions_mounts），
+        // 写台账反而在停用后残留死源。启用/更新链走到这里 = 重启还没带上 ext
+        // 的空闲进程让注入生效；忙进程不动（下次 spawn 生效）。运行许可发放照旧。
+        let all_sessions = entry.manifest.pi_ext_all_sessions;
+        if all_sessions {
+            self.restart_idle_runtimes_missing(&pi_exts, cx);
+            // 重新借 manifest（entry 的不可变借用不跨 &mut self 调用）
+            if let Some(entry) = self.plugins.plugins.get(ix) {
+                crate::pf_plugin::pf_runtime_write(&entry.manifest, true, "enable");
+            }
+            return;
+        }
         // 同住一份台账，覆写 = 把用户勾选抹掉（真机 2026-10-31：观宏知微
         // 会话台账只剩一条插件路径，就是被覆写没的）
         let Some(store) = pi_link::session_ext::store_path() else {
@@ -168,6 +188,50 @@ impl Chat {
                 );
                 self.set_status(msg, cx);
             }
+        }
+    }
+
+    /// 重启还没带上 `exts` 的空闲进程（all-sessions 启用/更新链：spawn 动态
+    /// 注入要进程重启才生效）。忙进程不动（下次 spawn 生效，与挂载链同语义）。
+    pub(crate) fn restart_idle_runtimes_missing(
+        &mut self,
+        exts: &[String],
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let rts = self.pool.runtimes.clone();
+        for (_key, rt) in rts {
+            if runtime_has_mounts(&rt.read(cx), exts) {
+                continue; // 已带
+            }
+            if rt.read(cx).agent_running {
+                continue; // 忙
+            }
+            rt.update(cx, |r, cx| {
+                r.shutdown_process();
+                r.ensure_spawned(cx);
+            });
+        }
+    }
+
+    /// 重启还带着 `exts` 的空闲进程（all-sessions 停用链：spawn 不再注入，
+    /// 存量进程重启即摘除）。忙进程不动。
+    pub(crate) fn restart_idle_runtimes_having(
+        &mut self,
+        exts: &[String],
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let rts = self.pool.runtimes.clone();
+        for (_key, rt) in rts {
+            if !runtime_has_mounts(&rt.read(cx), exts) {
+                continue; // 没带
+            }
+            if rt.read(cx).agent_running {
+                continue; // 忙
+            }
+            rt.update(cx, |r, cx| {
+                r.shutdown_process();
+                r.ensure_spawned(cx);
+            });
         }
     }
 
@@ -243,7 +307,7 @@ impl Chat {
     }
 
     /// 插件声明的 pi 扩展绝对路径（无声明 = None）。
-    fn plugin_ext_paths(&self, ix: usize) -> Option<Vec<String>> {
+    pub(crate) fn plugin_ext_paths(&self, ix: usize) -> Option<Vec<String>> {
         let entry = self.plugins.plugins.get(ix)?;
         if entry.manifest.pi_extensions.is_empty() {
             return None;

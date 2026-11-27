@@ -66,9 +66,24 @@ impl Chat {
             }
             // 停用：运行态就地撤下（含左 dock 退默认），否则面板还照旧渲染
             (false, Some(ix)) => {
+                // 先取停用面所需（evict 撤条目后拿不到）：all-sessions 插件
+                // 停用 = 带着 ext 的空闲进程重启（spawn 不再注入即摘除）；
+                // bound 走原有活跃进程摘除
+                let all_sessions = self
+                    .plugins
+                    .plugins
+                    .get(ix)
+                    .is_some_and(|e| e.manifest.pi_ext_all_sessions);
+                let exts = self.plugin_ext_paths(ix);
                 self.plugin_evict(ix);
-                // 摘除活跃运行时里的 ext（空闲即重启；忙 = 下次 spawn 生效）
-                self.plugin_detach_active_ext(ix, cx);
+                if all_sessions {
+                    if let Some(exts) = exts {
+                        self.restart_idle_runtimes_having(&exts, cx);
+                    }
+                } else {
+                    // 摘除活跃运行时里的 ext（空闲即重启；忙 = 下次 spawn 生效）
+                    self.plugin_detach_active_ext(ix, cx);
+                }
             }
             (false, None) => {} // 未装载，无运行态可撤
         }

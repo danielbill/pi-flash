@@ -52,6 +52,41 @@ pub(super) fn ext_source_registered(
 }
 
 impl SessionRuntime {
+    /// all-sessions 插件动态挂载源（契约 v5.1 pi_extensions[].scope）：启用中
+    /// 且声明全会话生效的插件，其包内 ext 绝对路径逐个解析（两档布局）返回。
+    /// 停用（ledger disabled 位）/卸载（清单消失）/清单损坏 = 不注入（不毒死
+    /// spawn）。可单测（plugins_dir 注入）。
+    pub(super) fn all_sessions_mounts(
+        ledger: &[pi_link::pf_plugins::LedgerEntry],
+        plugins_dir: &std::path::Path,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        for entry in ledger.iter().filter(|l| !l.disabled) {
+            let pkg_dir = plugins_dir.join(pi_link::pf_plugins::dir_name(&entry.name));
+            let Some(manifest_path) = pi_link::service_ext::pkg_manifest_path(&pkg_dir) else {
+                continue; // 已卸载
+            };
+            let Some(dir) = manifest_path.parent() else {
+                continue;
+            };
+            if let Err(e) = crate::pf_plugin::manifest::parse_manifest(dir) {
+                eprintln!(
+                    "[session-ext] all-sessions 清单解析失败（{}）: {e}；跳过注入",
+                    manifest_path.display()
+                );
+                continue; // 清单损坏
+            }
+            let m = crate::pf_plugin::manifest::parse_manifest(dir).expect("上方已验证可解析");
+            if !m.pi_ext_all_sessions || m.pi_extensions.is_empty() {
+                continue;
+            }
+            for rel in &m.pi_extensions {
+                out.push(m.dir.join(rel).to_string_lossy().into_owned());
+            }
+        }
+        out
+    }
+
     /// Spawn (or respawn) the pi process for this session. `background`
     /// callers wrap this on the background executor; returns the event
     /// receiver for the pump.
@@ -194,6 +229,27 @@ impl SessionRuntime {
                     extra.push("-e".into());
                     extra.push(src);
                 }
+            }
+        }
+        // all-sessions 挂载（契约 v5.1 pi_extensions[].scope）：hook 型插件声明
+        // 全会话生效——不落会话台账（台账只管 bound 绑定），spawn 时按启用清单
+        // 动态并入；停用/卸载即不再注入。已带的（台账段/ext_sources）不重复挂。
+        if let Some(plugins_dir) = pi_link::paths::plugins_dir() {
+            for src in Self::all_sessions_mounts(&ledger, &plugins_dir) {
+                // 契约 v4：执行域入口不再当扩展挂载（同台账段口径）
+                if pi_link::service_ext::is_exec_entry(std::path::Path::new(&src)) {
+                    continue;
+                }
+                if spawned_mounts
+                    .iter()
+                    .chain(self.ext_sources.iter())
+                    .any(|e| pi_link::session_ext::same_source(e, &src))
+                {
+                    continue;
+                }
+                spawned_mounts.push(src.clone());
+                extra.push("-e".into());
+                extra.push(src);
             }
         }
         // 计划模式扩展（031-1 P0）：全档位 `-e` 挂载——闸门在 pi 进程内

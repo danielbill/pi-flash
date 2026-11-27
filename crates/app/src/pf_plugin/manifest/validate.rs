@@ -34,7 +34,9 @@ pub(super) fn validate(m: &mut PluginManifest, dir: &Path) -> Result<(), String>
     if m.version.is_empty() {
         return Err("pf-plugin.toml：缺 version".into());
     }
-    // 内层 wasm 插件（090-5 L3）无 contributes 也合法——验签在 wasm 内
+    // 内层 wasm 插件（090-5 L3）无 contributes 也合法——验签在 wasm 内。
+    // pi_extensions（v2.4/v3）/ service（v4）都是进驻面（真机 2026-11-27：
+    // 只携 pi 扩展的 hook 型插件被误判纯库包拒装，测试暴露）
     if m.wasm.is_none()
         && m.bytecode.is_none()
         && m.status_bar.is_none()
@@ -42,6 +44,8 @@ pub(super) fn validate(m: &mut PluginManifest, dir: &Path) -> Result<(), String>
         && m.panels.is_empty()
         && m.fn_bar.is_none()
         && m.popups.is_empty()
+        && m.pi_extensions.is_empty()
+        && m.service.is_empty()
     {
         return Err("纯库包（没申请任何进驻面），不加载".into());
     }

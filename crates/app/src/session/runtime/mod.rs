@@ -588,6 +588,8 @@ pub(crate) use types::{
 };
 
 #[cfg(test)]
+mod all_sessions_mounts_tests;
+#[cfg(test)]
 mod binding_guard_tests;
 #[cfg(test)]
 mod custom_msg_tests;

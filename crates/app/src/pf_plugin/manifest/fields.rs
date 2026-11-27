@@ -160,6 +160,21 @@ pub(super) fn apply_field(
                 *last = val.as_str("path", n)?.to_string();
             }
         }
+        ("pi_extensions", "scope") => {
+            // 契约 v5.1：挂载语义。any 语义——任一条声明 all-sessions 即
+            // 插件级全会话生效（实践上一个插件一条 ext；多条混声明取强语义）
+            let s = val.as_str("scope", n)?.to_string();
+            match s.as_str() {
+                "bound" => {} // 显式声明 = 同缺省
+                "all-sessions" => m.pi_ext_all_sessions = true,
+                other => {
+                    return Err(format!(
+                        "pf-plugin.toml 行 {}：pi_extensions.scope 只认 \"bound\" | \"all-sessions\"，得到 {other}",
+                        n + 1
+                    ));
+                }
+            }
+        }
         ("file_menu", "id") => m.file_menu.last_mut().unwrap().id = val.as_str("id", n)?,
         ("file_menu", "title") => {
             let (zh, en) = val.as_i18n("title", n)?;

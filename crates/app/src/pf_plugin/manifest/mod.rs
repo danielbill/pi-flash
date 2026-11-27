@@ -68,6 +68,11 @@ pub(crate) struct PluginManifest {
     /// 包内 pi 扩展文件（契约 v2.4/v3 contributes.pi_extensions，相对包根）：
     /// v3 镜像协议的 ext 挂载面（fnbar 点击 → 写会话清单 → 空闲重启挂载）。
     pub pi_extensions: Vec<String>,
+    /// hook 型挂载语义（契约 v5.1 pi_extensions[].scope）：任一条声明
+    /// `scope = "all-sessions"` 即插件级全会话生效——不落会话台账（台账只管
+    /// bound 绑定），spawn 时按启用中插件清单动态并入 `-e`；停用即不再注入。
+    /// 缺省 false（= bound 现状语义；旧清单零影响）。
+    pub pi_ext_all_sessions: bool,
     /// 执行域实例声明（契约 v4 contributes.service，90-6）：scope 本版仅 session。
     /// 宿主托管身份/通道/生命周期/存储；spawn 挂宿主自带 shim（Tier 2 验签门照旧）。
     pub service: Vec<ServiceContrib>,
