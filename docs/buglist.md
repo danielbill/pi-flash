@@ -4,6 +4,32 @@
 > 与 `docs/agents/*.md`。`待复验` 条目 = 当前待跑的手工清单。2026-11-11 全文压缩：过程
 > 叙事与返工史删去，需要时查 git 历史。
 
+## 待复验（2026-11-27 修复）——gpui 截断排版 run 边界错位：右键第一条会话详情卡即崩（六连崩）
+
+- 现象：会话侧栏第一条（「认证都3天了…」）右键弹详情卡瞬间整 app 消失；
+  其他会话右键正常。`~/.pi-flash/logs/` 同签名 crash log ×6（08:06–08:07），
+  均为 `vendor\gpui\src\platform\windows\direct_write.rs:595:41: byte index
+  122 is not a char boundary; it is inside '…' (bytes 120..123)`。
+- 根因：与「第几条」无关，纯数据巧合。该会话标题 = pi preview 按 120 字节
+  截断补 '…'（123 字节，'…' 占 120..123）。右键详情卡标题带
+  `line_clamp(3)+text_ellipsis`（`psp_hover_card.rs`），走 vendor gpui
+  `elements/text.rs` 的截断排版：测量闭包被 taffy 以不同可用宽度调多趟，
+  而 `truncate_line` **原地改写** runs，runs 在闭包外只建一次——「第一趟
+  窄宽截断（文本变 122 字节、runs=[122]）、第二趟不再截断（返回 123 字节
+  原文，runs 还是 [122]）」→ direct_write 按 run.len 字节切片正切进
+  '…' 中间 → panic。只有这条会话同时满足「标题宽度落在截断/不截断临界
+  + 失效边界落多字节字符内」；纯 ASCII 标题踩中也不崩（静默错排）。
+- 修法（beads pi-flash-t2hb，vendor 补丁登记见 `docs/agents/gpui.md` 版本
+  要点节）：
+  1. 根修 `vendor/gpui/src/elements/text.rs`：每趟测量重建 runs
+     （`runs_template.clone()`，截断只污染本趟副本）；
+  2. 兜底 `vendor/gpui/src/platform/windows/direct_write.rs`：layout_line
+     两处 run 切片过新私有 `floor_char_boundary`（钳 len + 回退最近字符
+     边界），同类错排降级不崩进程。
+- 验证：`cargo test -p app --test vendor_text_boundary` 2/2 绿（事故原件
+  123 字节 + run len 122/123/999 三变体直达切片点，修复前第一例即 panic）；
+  `cargo check -p app` 过。**真机待复验**：右键那条会话不再崩、详情卡正常。
+
 ## 待复验（2026-11-23 修复）——046 任务页扩展清单不落任务 spec：勾到只剩 web-access 保存后，重开详情又变回全局 4 个
 
 - 现象：任务页【指令】区把扩展勾到只剩 web-access 并保存，每次点开该任务

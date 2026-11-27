@@ -69,6 +69,17 @@ struct FontIdentifier {
     style: i32,
 }
 
+/// vendor 补丁（pi-flash-t2hb）：`ix` 钳到 `text.len()` 内、再回退到最近的
+/// UTF-8 字符边界（`floor_char_boundary` 语义，std 未稳定）。layout_line 的
+/// run 切片全走这里：run.len 与字符边界不齐时降级为截断式排错，不 panic。
+fn floor_char_boundary(text: &str, ix: usize) -> usize {
+    let mut ix = ix.min(text.len());
+    while ix > 0 && !text.is_char_boundary(ix) {
+        ix -= 1;
+    }
+    ix
+}
+
 impl DirectWriteComponent {
     pub fn new(directx_devices: &DirectXDevices) -> Result<Self> {
         // todo: ideally this would not be a large unsafe block but smaller isolated ones for easier auditing
@@ -592,8 +603,14 @@ impl DirectWriteState {
                     f32::INFINITY,
                     f32::INFINITY,
                 )?;
-                let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
-                utf8_offset += first_run.len;
+                // vendor 补丁（pi-flash-t2hb）：run 边界与 UTF-8 字符边界不齐时
+                // 降级（截到最近字符边界）而非 panic——错排一小段远好过崩整个
+                // 进程（真机事故：详情卡 line_clamp 标题测量两趟 runs 陈旧，
+                // 122 切进 '…'（120..123）六连崩。根修 = elements/text.rs 每趟
+                // 测量重建 runs，这里兜其余调用方的同类错）。
+                let end = floor_char_boundary(text, utf8_offset + first_run.len);
+                let current_text = &text[utf8_offset..end];
+                utf8_offset = end;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
@@ -619,8 +636,9 @@ impl DirectWriteState {
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
-                let current_text = &text[utf8_offset..(utf8_offset + run.len)];
-                utf8_offset += run.len;
+                let end = floor_char_boundary(text, utf8_offset + run.len);
+                let current_text = &text[utf8_offset..end];
+                utf8_offset = end;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
                 let collection = if font_info.is_system_font {

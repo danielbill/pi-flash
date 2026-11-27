@@ -164,6 +164,7 @@ dependencies = [
  "pf-plugin-host",
  "pi-link",
  "pulldown-cmark",
+ "rand 0.9.5",
  "ratex-layout",
  "ratex-parser",
  "ratex-render",

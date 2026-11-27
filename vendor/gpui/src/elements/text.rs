@@ -334,11 +334,14 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
-            runs
-        } else {
-            vec![text_style.to_run(text.len())]
-        };
+        // vendor 补丁（pi-flash-t2hb）：测量闭包会被 taffy 以不同可用宽度调用
+        // 多趟，而下方 truncate_line 会**原地改写** runs。runs 若在闭包外只建
+        // 一次，「第一趟按窄宽截断、第二趟不再截断」时第二趟就拿第一趟的短
+        // run 去排原文 —— text 与 runs 总长错位，direct_write.rs 按 run.len
+        // 字节切片正落在多字节字符中间即 panic（真机事故：会话右键详情卡
+        // line_clamp 标题，标题尾是上游 preview 截断补的 '…'，六连崩）。
+        // 每趟测量重建 runs，截断只污染本趟副本。
+        let runs_template = runs;
 
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
@@ -378,6 +381,9 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                let mut runs = runs_template
+                    .clone()
+                    .unwrap_or_else(|| vec![text_style.to_run(text.len())]);
                 let text = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
