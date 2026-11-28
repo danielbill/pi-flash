@@ -122,7 +122,7 @@ pub(crate) struct PfUpdateRow {
     pub(crate) display: String,
 }
 
-/// PF 行前缀（用户定稿 2026-11-28，形如 `Pi-Flash · 会话上下文自动压缩`）：
+/// PF 行前缀（用户定稿 2026-11-28，形如 `Pi-Flash · 扩展显示名`）：
 /// 产品名三语同形，硬编码不进 i18n。
 const PF_ROW_TAG: &str = "Pi-Flash · ";
 

@@ -95,8 +95,8 @@ pub(crate) struct PluginManifest {
 /// 菜单/文件菜单/面板/fn_bar/弹窗/pi 扩展/服务/统一设置；sessions 只是对账位，
 /// 不算进驻面）。scan 预过滤与 validate「纯库包」判定共用此函数，防两份字段
 /// 清单各自漂移——2026-11-28 真机：scan 预过滤漏计 pi_extensions/settings，
-/// 只携这两段的 v6 设置型包（bac 0.2.0 平铺 dev）validate 放行后仍被 scan
-/// 跳过，用户看到「启用失败：未找到插件清单」+ 已装页设置区不渲染。
+/// 只携这两段的 v6 设置型包 validate 放行后仍被 scan 跳过，用户看到
+/// 「启用失败：未找到插件清单」+ 已装页设置区不渲染。
 pub(crate) fn has_settled_face(m: &PluginManifest) -> bool {
     m.wasm.is_some()
         || m.bytecode.is_some()

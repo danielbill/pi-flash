@@ -98,8 +98,8 @@ fn index(json: &str) -> MarketIndex {
 
 const IX: &str = r#"{
     "packages": [
-        { "name": "@pi-flash-plugins/ctx-compactor", "version": "1.3.0", "integrity": "sha512-x",
-          "display": { "zh": "会话上下文自动压缩", "en": "Context compactor" } },
+        { "name": "@pi-flash-plugins/sample-ext", "version": "1.3.0", "integrity": "sha512-x",
+          "display": { "zh": "示例扩展", "en": "Sample Ext" } },
         { "name": "@pi-flash-plugins/same-ver", "version": "2.0.0", "integrity": "sha512-x",
           "display": { "zh": "同版插件", "en": "" } },
         { "name": "@pi-flash-plugins/older-ix", "version": "0.9.0", "integrity": "sha512-x",
@@ -112,11 +112,11 @@ const IX: &str = r#"{
 /// 索引版本更高 → 行；前缀 `Pi-Flash · ` + 索引 zh 名
 #[test]
 fn pf_rows_updatable_with_prefix() {
-    let lg = vec![ledger("@pi-flash-plugins/ctx-compactor", "1.2.0", false)];
+    let lg = vec![ledger("@pi-flash-plugins/sample-ext", "1.2.0", false)];
     let rows = pf_update_rows(&lg, &index(IX));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].name, "@pi-flash-plugins/ctx-compactor");
-    assert_eq!(rows[0].display, "Pi-Flash · 会话上下文自动压缩");
+    assert_eq!(rows[0].name, "@pi-flash-plugins/sample-ext");
+    assert_eq!(rows[0].display, "Pi-Flash · 示例扩展");
 }
 
 /// 同版 / 索引更旧 / 索引缺失（dev 侧载）→ 不出行
@@ -133,7 +133,7 @@ fn pf_rows_skip_non_updatable() {
 /// 停用包照出行（与市场已装页检测口径一致）
 #[test]
 fn pf_rows_include_disabled() {
-    let lg = vec![ledger("@pi-flash-plugins/ctx-compactor", "1.2.0", true)];
+    let lg = vec![ledger("@pi-flash-plugins/sample-ext", "1.2.0", true)];
     assert_eq!(pf_update_rows(&lg, &index(IX)).len(), 1);
 }
 

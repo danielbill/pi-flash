@@ -109,7 +109,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
 
         let blocked = running && matches!(action, Some(StatusAction::Command(_)));
         // 色档：正常 = text_muted（2026-11-28 用户令：无动作项原 text_faint 太暗，
-        // bac 状态文本看不清）；运行中动作被禁 = text_faint（可点性降档保留）。
+        // 扩展状态文本看不清）；运行中动作被禁 = text_faint（可点性降档保留）。
         let color = if blocked { t.text_faint } else { t.text_muted };
         let mut el = div()
             .id(SharedString::from(format!("ext-status-{key}")))

@@ -421,39 +421,39 @@ path = "pi/index.mjs"
 // 契约 v6 统一插件设置（contributes.settings，003-1）
 // ---------------------------------------------------------------------------
 
-/// bac 形态三字段（model 型标量缺省键 + stepper 型 min/max/step）
+/// 三字段样本（model 型标量缺省键 + stepper 型 min/max/step）
 const SETTINGS: &str = r#"
 schema = 6
-id = "background-auto-compact"
-title = { zh = "后台上下文自动压缩", en = "Background Auto Compact" }
+id = "settings-sample"
+title = { zh = "设置样本", en = "Settings Sample" }
 version = "0.2.0"
 
 [[contributes.pi_extensions]]
 path = "pi/index.mjs"
 
 [[contributes.settings]]
-id = "writer"
+id = "model-field"
 type = "model"
-label = { zh = "摘要写手", en = "Summary writer" }
-hint = { zh = "与会话同款可复用缓存", en = "Same cache" }
+label = { zh = "模型字段", en = "Model field" }
+hint = { zh = "复用会话缓存", en = "Reuse cache" }
 session_option = true
 with_thinking = true
 default_model = "session"
 default_thinking = "auto"
 
 [[contributes.settings]]
-id = "compress.modelContextLimit"
+id = "sample.limit"
 type = "stepper"
-label = { zh = "上下文压缩上限", en = "Limit" }
+label = { zh = "数值上限", en = "Limit" }
 min = 100000
 max = 400000
 step = 50000
 default = 200000
 
 [[contributes.settings]]
-id = "compress.nudgeGrowthTokens"
+id = "sample.nudge"
 type = "stepper"
-label = { zh = "增量压缩阈值", en = "Nudge" }
+label = { zh = "增量步进", en = "Nudge" }
 min = 50000
 max = 100000
 step = 10000
@@ -471,19 +471,19 @@ fn settings_manifest_dir(tmp: &Path, name: &str, body: &str) -> PathBuf {
 #[test]
 fn settings_parse_three_fields() {
     let tmp = std::env::temp_dir().join(format!("pf-manifest-set-{}", std::process::id()));
-    let dir = settings_manifest_dir(&tmp, "background-auto-compact", SETTINGS);
+    let dir = settings_manifest_dir(&tmp, "settings-sample", SETTINGS);
     let m = parse_manifest(&dir).expect("v6 设置清单应通过");
     assert_eq!(m.settings.len(), 3, "三字段全解析");
     let w = &m.settings[0];
-    assert_eq!(w.id, "writer");
+    assert_eq!(w.id, "model-field");
     assert!(matches!(w.kind, super::SettingsKind::Model));
-    assert_eq!(w.label_en.as_deref(), Some("Summary writer"));
-    assert_eq!(w.hint_en.as_deref(), Some("Same cache"));
+    assert_eq!(w.label_en.as_deref(), Some("Model field"));
+    assert_eq!(w.hint_en.as_deref(), Some("Reuse cache"));
     assert!(w.session_option && w.with_thinking);
     assert_eq!(w.default_model.as_deref(), Some("session"));
     assert_eq!(w.default_thinking.as_deref(), Some("auto"));
     let lim = &m.settings[1];
-    assert_eq!(lim.id, "compress.modelContextLimit");
+    assert_eq!(lim.id, "sample.limit");
     assert!(matches!(lim.kind, super::SettingsKind::Stepper));
     assert_eq!(lim.min, Some(100000));
     assert_eq!(lim.max, Some(400000));
@@ -499,7 +499,7 @@ fn settings_validate_rejects() {
         // ① id 重复 → 拒
         (
             "dup",
-            SETTINGS.replace("compress.nudgeGrowthTokens", "writer"),
+            SETTINGS.replace("sample.nudge", "model-field"),
             "重复",
         ),
         // ② default 越区间 → 拒
@@ -524,7 +524,7 @@ fn settings_validate_rejects() {
     for (n, body, expect) in cases {
         let tmp =
             std::env::temp_dir().join(format!("pf-manifest-setbad-{n}-{}", std::process::id()));
-        let dir = settings_manifest_dir(&tmp, "background-auto-compact", body);
+        let dir = settings_manifest_dir(&tmp, "settings-sample", body);
         let err = parse_manifest(&dir).unwrap_err();
         assert!(err.contains(expect), "{n} 错误应含 {expect}：{err}");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -535,7 +535,7 @@ fn settings_validate_rejects() {
 fn settings_counts_as_surface() {
     // 纯设置包（无 panels/status_bar）= 有进驻面，不再判纯库包
     let tmp = std::env::temp_dir().join(format!("pf-manifest-setsurf-{}", std::process::id()));
-    let dir = settings_manifest_dir(&tmp, "background-auto-compact", SETTINGS);
+    let dir = settings_manifest_dir(&tmp, "settings-sample", SETTINGS);
     let m = parse_manifest(&dir).expect("纯设置+pi_extensions 包应通过");
     assert_eq!(m.settings.len(), 3);
     let _ = std::fs::remove_dir_all(&tmp);
