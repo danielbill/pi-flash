@@ -71,11 +71,10 @@ pub(super) fn ctx_tip_element(
             r.compacting,
             r.can_compact(),
             // 菜单只消费 tokens；窗口分母走 stats.context_window（capacity 块内）。
-            // actual 截停（压缩卡之前 usage 不可信，bd pi-flash-sdja）时回落压缩
-            // 后近似估算，带 ≈ 标记；不顶着压缩前旧值到下一轮请求才跳变。
-            r.context_actual()
-                .map(|(tok, _)| (tok, false))
-                .or_else(|| r.context_projected_estimate().map(|tok| (tok, true))),
+            // 口径链（三轮战役定稿，bd pi-flash-sdja）：actual（provider 实测）
+            // > 内核压缩完成估算（estimatedTokensAfter，与压缩 toast 同源）
+            // > stats 树投影（无响应新会话，第二轮原行为）；估算段带 ≈。
+            r.context_display_tokens(),
         )
     };
     let closing = chat.dlg.ctx_tip_closing.is_some();

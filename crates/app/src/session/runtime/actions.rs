@@ -5,7 +5,7 @@ use gpui::Context;
 use pi_link::protocol::Command;
 
 use crate::i18n::{tf, tr};
-use crate::session::messages::{Role, last_actual_context_tokens, projected_context_tokens};
+use crate::session::messages::{Role, display_chain, last_actual_context_tokens};
 
 use super::*;
 
@@ -204,35 +204,25 @@ impl SessionRuntime {
         !self.compacting && !self.agent_running && self.agent.session.is_some()
     }
 
-    /// 实际上下文占用（provider 口径）：Some((tokens, window))。tokens =
-    /// 最后一次真实请求的 prompt（`last_actual_context_tokens`），window
-    /// 透传 stats 的模型窗口；会话尚无有效 assistant 响应时 None。数据源
-    /// 是每条 assistant 消息已收到的 provider usage（message_end /
-    /// get_messages 快照），零计算零估算；树投影口径（stats.context_tokens）
-    /// 在后台折叠（插件 003 请求改写层）后不回落，本接口给出与请求真实
-    /// 大小对齐的显示源，不依赖任何插件。
-    pub(crate) fn context_actual(&self) -> Option<(u64, Option<u64>)> {
-        let tokens = last_actual_context_tokens(&self.messages)?;
-        Some((tokens, self.stats.as_ref().and_then(|s| s.context_window)))
+    /// 上下文显示口径链（provider 口径优先）：actual = 最后一次真实请求
+    /// 的 prompt（`last_actual_context_tokens`），数据源是每条 assistant
+    /// 消息已收到的 provider usage（message_end / get_messages 快照），
+    /// 零计算零估算；树投影口径（stats.context_tokens）在后台折叠（插件
+    /// 003 请求改写层）后不回落，actual 给出与请求真实大小对齐的显示源，
+    /// 不依赖任何插件。链序与估算标记见 `display_chain`。
+    pub(crate) fn context_display_tokens(&self) -> Option<(u64, bool)> {
+        display_chain(
+            last_actual_context_tokens(&self.messages),
+            self.post_compact_tokens,
+            self.stats.as_ref().and_then(|s| s.context_tokens),
+        )
     }
 
-    /// 压缩后窗口的上下文近似估算（bd pi-flash-sdja）：actual 截停（压缩
-    /// 卡之前 usage 不可信）且内核报 null 时，面板/圆环回这里兜底，显示带
-    /// ≈。None = 消息与系统侧都拿不到。
-    pub(crate) fn context_projected_estimate(&self) -> Option<u64> {
-        projected_context_tokens(&self.messages, self.sys.as_ref())
-    }
-
-    /// 容量环百分比：实际口径优先；会话尚无响应（或窗口未知）时回落
-    /// 压缩后近似估算，最后才是 stats 树投影百分比（原行为）。
+    /// 容量环百分比：显示链优先（actual / 压缩后内核估算 / 树投影），
+    /// 最后才是 stats 自带百分比。
     pub(crate) fn context_ring_percent(&self) -> Option<f64> {
-        if let Some((tok, Some(w))) = self.context_actual() {
-            if w > 0 {
-                return Some(tok as f64 / w as f64 * 100.);
-            }
-        }
         let window = self.stats.as_ref().and_then(|s| s.context_window);
-        if let (Some(tok), Some(w)) = (self.context_projected_estimate(), window) {
+        if let (Some((tok, _)), Some(w)) = (self.context_display_tokens(), window) {
             if w > 0 {
                 return Some(tok as f64 / w as f64 * 100.);
             }

@@ -143,46 +143,23 @@ fn post_compaction_assistant_is_trusted() {
     );
 }
 
-#[test]
-fn projected_estimate_scopes_to_compaction_card_and_onward() {
-    let msgs = msgs_from_tail(vec![
-        json!({"type":"message","message":{"role":"user","content":"压缩前的大正文"}}),
-        assistant(
-            json!({"input":10,"output":1,"cacheRead":0,"cacheWrite":0}),
-            None,
-        ),
-        compaction_card("摘要文本"),
-        json!({"type":"message","message":{"role":"user","content":"abc"}}),
-    ]);
-    // 卡（含）之后 = 摘要文本（4 CJK = 4）+ "abc"（3 ASCII → 0）；卡前不计
-    assert_eq!(projected_context_tokens(&msgs, None), Some(4));
-}
+// ---- 显示口径链（bd pi-flash-sdja 三轮定稿）：actual > 内核压缩完成估算 > stats 树投影 ----
 
 #[test]
-fn projected_estimate_without_card_uses_all_messages() {
-    let msgs = msgs_from_tail(vec![
-        json!({"type":"message","message":{"role":"user","content":"你好"}}),
-        assistant(
-            json!({"input":10,"output":1,"cacheRead":0,"cacheWrite":0}),
-            None,
-        ),
-    ]);
-    // 无卡 → 全量："你好"(2 CJK) + "好"(1 CJK) = 3
-    assert_eq!(projected_context_tokens(&msgs, None), Some(3));
-}
-
-#[test]
-fn projected_estimate_counts_tool_args_and_result() {
-    let msgs = msgs_from_tail(vec![
-        json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"x"},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"a.txt"}}]}}),
-        json!({"type":"message","message":{"role":"toolResult","toolCallId":"c1","content":[{"type":"text","text":"工具结果"}]}}),
-    ]);
-    // ToolCall 的 arguments JSON + 合并进 result 的工具结果都要折算
-    let est = projected_context_tokens(&msgs, None).unwrap();
-    assert!(est >= 8, "args JSON + 工具结果文本计入估算（得到 {est}）");
-}
-
-#[test]
-fn projected_estimate_empty_is_none() {
-    assert_eq!(projected_context_tokens(&[], None), None);
+fn display_chain_prefers_actual_then_post_compact_then_stats() {
+    assert_eq!(
+        display_chain(Some(840), Some(30000), Some(120000)),
+        Some((840, false))
+    );
+    assert_eq!(
+        display_chain(None, Some(30000), Some(120000)),
+        Some((30000, true)),
+        "压缩后无新响应：显内核估算，标 ≈"
+    );
+    assert_eq!(
+        display_chain(None, None, Some(120000)),
+        Some((120000, false)),
+        "无响应新会话回落 stats 树投影（第二轮原行为）"
+    );
+    assert_eq!(display_chain(None, None, None), None);
 }

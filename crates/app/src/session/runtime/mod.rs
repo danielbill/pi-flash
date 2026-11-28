@@ -191,6 +191,12 @@ pub(crate) struct SessionRuntime {
     /// pi_link::transcript::transcript_system replay 得出 —— pi-web 的
     /// System/Tools 面板同源。`None` = 尚未加载（无进程或消息还没回来）。
     pub sys: Option<pi_link::transcript::TranscriptSystem>,
+    /// 压缩完成事件的内核估算（bd pi-flash-sdja）：compact response data
+    /// 的 estimatedTokensAfter（与压缩 toast 同源同数），压缩后无新 LLM
+    /// 响应期间的面板/圆环兜底——内核 getContextUsage 此窗口报 null，
+    /// actual 又被截停在压缩卡之前。下一轮响应 actual 有值后自然失效
+    /// （口径链首位），无需清理。
+    pub post_compact_tokens: Option<u64>,
     /// transcript 系统消息的增量折算态（047-内存削减 P1-4：不再整表持有
     /// 原始 system 消息——数百 run 长会话曾累积 6~30MB 常驻）。live
     /// `message_start`（pi 每个 run 都先追加一条，实测 RPC 全量携带
@@ -394,6 +400,7 @@ impl SessionRuntime {
             fork_source_title: None,
             commands: Vec::new(),
             sys: None,
+            post_compact_tokens: None,
             sys_fold: None,
             input: String::new(),
             pending_images: Vec::new(),

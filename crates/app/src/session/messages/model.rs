@@ -109,52 +109,20 @@ pub(crate) fn last_actual_context_tokens(messages: &[Msg]) -> Option<u64> {
     None
 }
 
-/// 一条消息的文本量近似 token（bd pi-flash-sdja 压缩后兜底用）：Text +
-/// Thinking 正文 + ToolCall 的 args/result（toolResult 合并后结果在这里），
-/// 全部走 pi-web parity 的 CJK 感知折算（pi_link::estimate::estimate_tokens）。
-pub(crate) fn message_text_tokens(m: &Msg) -> u64 {
-    let mut text = String::new();
-    for b in &m.blocks {
-        match b {
-            Block::Text { text: t, .. } | Block::Thinking { text: t, .. } => text.push_str(t),
-            Block::ToolCall { args, result, .. } => {
-                text.push_str(args);
-                text.push_str(result);
-            }
-            _ => {}
-        }
-    }
-    pi_link::estimate::estimate_tokens(&text)
-}
-
-/// 压缩后窗口的上下文近似总量（bd pi-flash-sdja）：内核在压缩后没有新
-/// LLM 响应前拒绝报数（getContextUsage → tokens null），本地 actual 又被
-/// 截停——面板不能一直顶着压缩前旧值。兜底 = 最后一张 compaction 卡（含，
-/// 摘要文本真实占用请求面）之后的消息文本近似 + 系统侧 breakdown；没有
-/// compaction 卡则全量消息（初始无响应会话同享兜底）。口径是近似（plain
-/// 文本折算，不含图片等非文本块），显示端带 ≈ 标记。sys 与消息都拿不到
-/// 才 None。
-pub(crate) fn projected_context_tokens(
-    messages: &[Msg],
-    sys: Option<&pi_link::transcript::TranscriptSystem>,
-) -> Option<u64> {
-    let slice = match messages
-        .iter()
-        .rposition(|m| m.role == Role::Custom && m.custom_type.as_deref() == Some("compaction"))
-    {
-        Some(i) => &messages[i..],
-        None => messages,
-    };
-    let msgs: u64 = slice.iter().map(message_text_tokens).sum();
-    let sys_tokens = sys
-        .map(|s| {
-            pi_link::transcript::breakdown(s, pi_link::paths::pi_agent_dir().as_deref())
-                .iter()
-                .sum()
-        })
-        .unwrap_or(0u64);
-    let total = msgs + sys_tokens;
-    (total > 0).then_some(total)
+/// 上下文显示口径链（三轮战役定稿，bd pi-flash-sdja）——纯函数便于测试：
+/// ① actual——provider 实测；② 内核压缩完成估算 estimatedTokensAfter
+/// （与压缩 toast 同源，压缩后无新响应期间显它）；③ stats 树投影（无
+/// 响应新会话，第二轮原行为）。bool = 是否估算（显示端标 ≈）。PF 自算
+/// 文本折算已撤出显示链（活体：≈16K vs 内核 30几K，系统性偏低误导）。
+pub(crate) fn display_chain(
+    actual: Option<u64>,
+    post_compact: Option<u64>,
+    stats_tokens: Option<u64>,
+) -> Option<(u64, bool)> {
+    actual
+        .map(|tok| (tok, false))
+        .or_else(|| post_compact.map(|tok| (tok, true)))
+        .or_else(|| stats_tokens.map(|tok| (tok, false)))
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list

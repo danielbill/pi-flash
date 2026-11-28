@@ -345,17 +345,18 @@ impl SessionRuntime {
                 self.flush_local_queue(cx);
                 // 压缩前后 token 对比（response data 有 tokensBefore/
                 // estimatedTokensAfter，pi agent-session.js compactResult）
-                let detail = data.as_ref().map(|d| {
-                    let before = d["tokensBefore"].as_u64();
-                    let after = d["estimatedTokensAfter"].as_u64();
-                    match (before, after) {
-                        (Some(b), Some(a)) if b > 0 => {
-                            format!("（{b} → {a} tokens）")
-                        }
-                        _ => String::new(),
-                    }
-                });
-                let msg = format!("{}{}", tr("slash.compact_done"), detail.unwrap_or_default());
+                let data_ref = data.as_ref();
+                let before = data_ref.and_then(|d| d["tokensBefore"].as_u64());
+                let after = data_ref.and_then(|d| d["estimatedTokensAfter"].as_u64());
+                // 内核对压缩后窗口的投影估算落 runtime（bd pi-flash-sdja）：
+                // 压缩后无新响应期间 getContextUsage 报 null，面板/圆环
+                // 兑现这个数（与 toast 同源同数），不再顶压缩前旧值
+                self.post_compact_tokens = after;
+                let detail = match (before, after) {
+                    (Some(b), Some(a)) if b > 0 => format!("（{b} → {a} tokens）"),
+                    _ => String::new(),
+                };
+                let msg = format!("{}{}", tr("slash.compact_done"), detail);
                 self.notify_toast(msg, cx);
             } else {
                 // pi 拒绝场景要有出口：会话太小（Nothing to compact）/
