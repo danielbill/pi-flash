@@ -73,7 +73,7 @@ pub(super) fn ctx_tip_element(
             // 菜单只消费 tokens；窗口分母走 stats.context_window（capacity 块内）。
             // 口径链（三轮战役定稿，bd pi-flash-sdja）：actual（provider 实测）
             // > 内核压缩完成估算（estimatedTokensAfter，与压缩 toast 同源）
-            // > stats 树投影（无响应新会话，第二轮原行为）；估算段带 ≈。
+            // > stats 树投影（无响应新会话，第二轮原行为）。数字直接引用。
             r.context_display_tokens(),
         )
     };
@@ -147,7 +147,7 @@ fn ctx_usage_panel(
     sys_open: bool,
     tools_open: bool,
     // (tokens, estimated)——压缩后近似估算时 estimated=true，显示带 ≈
-    actual: Option<(u64, bool)>,
+    actual: Option<u64>,
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {

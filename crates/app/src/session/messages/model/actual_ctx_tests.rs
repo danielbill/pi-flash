@@ -149,16 +149,16 @@ fn post_compaction_assistant_is_trusted() {
 fn display_chain_prefers_actual_then_post_compact_then_stats() {
     assert_eq!(
         display_chain(Some(840), Some(30000), Some(120000)),
-        Some((840, false))
+        Some(840)
     );
     assert_eq!(
         display_chain(None, Some(30000), Some(120000)),
-        Some((30000, true)),
-        "压缩后无新响应：显内核估算，标 ≈"
+        Some(30000),
+        "压缩后无新响应：显内核估算（与 toast 同源同数）"
     );
     assert_eq!(
         display_chain(None, None, Some(120000)),
-        Some((120000, false)),
+        Some(120000),
         "无响应新会话回落 stats 树投影（第二轮原行为）"
     );
     assert_eq!(display_chain(None, None, None), None);

@@ -111,18 +111,15 @@ pub(crate) fn last_actual_context_tokens(messages: &[Msg]) -> Option<u64> {
 
 /// 上下文显示口径链（三轮战役定稿，bd pi-flash-sdja）——纯函数便于测试：
 /// ① actual——provider 实测；② 内核压缩完成估算 estimatedTokensAfter
-/// （与压缩 toast 同源，压缩后无新响应期间显它）；③ stats 树投影（无
-/// 响应新会话，第二轮原行为）。bool = 是否估算（显示端标 ≈）。PF 自算
-/// 文本折算已撤出显示链（活体：≈16K vs 内核 30几K，系统性偏低误导）。
+/// （与压缩 toast 同源同数，压缩后无新响应期间显它）；③ stats 树投影
+/// （无响应新会话，第二轮原行为）。数字直接引用不加 ≈（用户定稿：
+/// 内核报数 toast 都不标，面板不自作聪明）。
 pub(crate) fn display_chain(
     actual: Option<u64>,
     post_compact: Option<u64>,
     stats_tokens: Option<u64>,
-) -> Option<(u64, bool)> {
-    actual
-        .map(|tok| (tok, false))
-        .or_else(|| post_compact.map(|tok| (tok, true)))
-        .or_else(|| stats_tokens.map(|tok| (tok, false)))
+) -> Option<u64> {
+    actual.or(post_compact).or(stats_tokens)
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list

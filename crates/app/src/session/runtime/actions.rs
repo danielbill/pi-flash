@@ -209,8 +209,8 @@ impl SessionRuntime {
     /// 消息已收到的 provider usage（message_end / get_messages 快照），
     /// 零计算零估算；树投影口径（stats.context_tokens）在后台折叠（插件
     /// 003 请求改写层）后不回落，actual 给出与请求真实大小对齐的显示源，
-    /// 不依赖任何插件。链序与估算标记见 `display_chain`。
-    pub(crate) fn context_display_tokens(&self) -> Option<(u64, bool)> {
+    /// 不依赖任何插件。链序见 `display_chain`。
+    pub(crate) fn context_display_tokens(&self) -> Option<u64> {
         display_chain(
             last_actual_context_tokens(&self.messages),
             self.post_compact_tokens,
@@ -222,7 +222,7 @@ impl SessionRuntime {
     /// 最后才是 stats 自带百分比。
     pub(crate) fn context_ring_percent(&self) -> Option<f64> {
         let window = self.stats.as_ref().and_then(|s| s.context_window);
-        if let (Some((tok, _)), Some(w)) = (self.context_display_tokens(), window) {
+        if let (Some(tok), Some(w)) = (self.context_display_tokens(), window) {
             if w > 0 {
                 return Some(tok as f64 / w as f64 * 100.);
             }
