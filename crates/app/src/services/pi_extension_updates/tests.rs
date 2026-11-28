@@ -153,3 +153,25 @@ fn pf_rows_independent_of_pi_count() {
     assert_eq!(st.available(), 0);
     assert!(st.pf_rows.is_empty());
 }
+
+const IX_MINPF: &str = r#"{
+    "packages": [
+        { "name": "@pi-flash-plugins/needs-newer-pf", "version": "9.0.0", "integrity": "sha512-x",
+          "min_pf": ">=99.0.0", "display": { "zh": "要新版PF", "en": "" } },
+        { "name": "@pi-flash-plugins/ok-minpf", "version": "9.0.0", "integrity": "sha512-x",
+          "min_pf": ">=0.2", "display": { "zh": "兼容本版", "en": "" } }
+    ]
+}"#;
+
+/// 082 v2 定稿（2026-11-28）：新版 min_pf 不满足（要求的 PF 版本 > 当前
+/// PF）不出提示行——提示了也装不上；min_pf 满足的同版照常出
+#[test]
+fn pf_rows_require_min_pf_satisfied() {
+    let lg = vec![
+        ledger("@pi-flash-plugins/needs-newer-pf", "1.0.0", false),
+        ledger("@pi-flash-plugins/ok-minpf", "1.0.0", false),
+    ];
+    let rows = pf_update_rows(&lg, &index(IX_MINPF));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name, "@pi-flash-plugins/ok-minpf");
+}

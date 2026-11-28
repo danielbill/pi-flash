@@ -206,7 +206,10 @@
 - **min_pf 拒载不触发完成闭包**：`pf_install` 的 engines.pf 门在设 pending
   **之前** return——播种队列前必须用 `pf_market::min_pf_satisfied` 预过滤
   （谓词与门同源），漏过滤 = 队列头是拒载包 → mixed_batch 永远清不了位，
-  卡片按钮永久「更新中…」直到重启。
+  卡片按钮永久「更新中…」直到重启。082 v2 复核后提示层同加门：所有更新
+  提示出口（混排卡行 / 市场卡 / 已装页）统一走 `pf_updatable_entry`（索引
+  版本更高 **且** min_pf 满足）——提示了装不上的版本 = 白提示；改判定只动
+  这个谓词，别在各出口重写 semver 比较。
 - PF 装/更/卸完成闭包与 `open_pf_market` 扫描完成都要 `refresh_pf_update_rows`
   （同步算：台账小 JSON + 索引 Arc 快照；**别塞进 render 路径**——同 stale
   陷阱，已安装页 render 每帧在跑）。

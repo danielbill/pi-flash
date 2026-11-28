@@ -156,6 +156,13 @@ pub(crate) fn min_pf_satisfied(entry: &pi_link::pf_plugins::IndexEntry) -> bool 
     }
 }
 
+/// 更新提示的组合判定（082 v2 定稿 2026-11-28）：索引版本更高 **且** 新版
+/// min_pf 满足——要求了本版装不上的版本等于白提示。混排卡行、市场卡与
+/// 已装页 ↑/更新钮同源此谓词，提示/安装口径不漂移。
+pub(crate) fn pf_updatable_entry(installed: &str, entry: &pi_link::pf_plugins::IndexEntry) -> bool {
+    pf_updatable(installed, &entry.version) && min_pf_satisfied(entry)
+}
+
 // ---------------------------------------------------------------------------
 // 状态（挂 Chat.aux.market.pf）
 // ---------------------------------------------------------------------------

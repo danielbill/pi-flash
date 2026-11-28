@@ -27,7 +27,7 @@ use pi_link::pf_plugins;
 use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
-use crate::market::pf_market::{MONO, centered, index_snapshot, pf_updatable, slice_shell};
+use crate::market::pf_market::{MONO, centered, index_snapshot, pf_updatable_entry, slice_shell};
 use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
     LIST_W, config_switch, detail_shell, field, sidebar_item, sidebar_list, sidebar_shell,
@@ -77,11 +77,12 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                     // 裸包名只作最后兜底
                     .or_else(|| crate::pf_plugin::manifest_title_for(&l.name))
                     .unwrap_or_else(|| l.name.clone());
-                // 090-10：索引版本更高 → 列表 ↑ + 详情更新钮
+                // 090-10：索引版本更高**且**新版 min_pf 满足（082 v2 定稿：
+                // 提示算法加门，本版装不上的新版不出提示）→ 列表 ↑ + 详情更新钮
                 let update = ix
                     .entry(&l.name)
-                    .map(|e| e.version.clone())
-                    .filter(|v| pf_updatable(&l.version, v));
+                    .filter(|e| pf_updatable_entry(&l.version, e))
+                    .map(|e| e.version.clone());
                 InstalledItem {
                     name: l.name.clone(),
                     display,

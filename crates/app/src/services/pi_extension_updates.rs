@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use crate::Chat;
 use crate::i18n::tr;
-use crate::market::pf_market::{index_snapshot, min_pf_satisfied, pf_updatable, store_index};
+use crate::market::pf_market::{index_snapshot, min_pf_satisfied, pf_updatable_entry, store_index};
 
 mod npm;
 
@@ -126,9 +126,11 @@ pub(crate) struct PfUpdateRow {
 /// 产品名三语同形，硬编码不进 i18n。
 const PF_ROW_TAG: &str = "Pi-Flash · ";
 
-/// 纯推导（可测）：台账条目在索引有同名包且索引版本更高 → 更新行。含停用
-/// 包（与市场已装页检测口径一致——更新后台账回 enabled 是现有单更行为）；
-/// display 取索引 zh 名，空则回落包名。
+/// 纯推导（可测）：台账条目在索引有同名包且 [`pf_updatable_entry`]（索引
+/// 版本更高 **且** 新版 min_pf 满足，082 v2 定稿：提示算法不只比版本号，
+/// 要求了装不上的版本 = 白提示）→ 更新行。含停用包（与市场已装页检测
+/// 口径一致——更新后台账回 enabled 是现有单更行为）；display 取索引
+/// zh 名，空则回落包名。
 pub(crate) fn pf_update_rows(
     ledger: &[pi_link::pf_plugins::LedgerEntry],
     index: &pi_link::pf_plugins::MarketIndex,
@@ -137,7 +139,7 @@ pub(crate) fn pf_update_rows(
         .iter()
         .filter_map(|l| {
             let e = index.entry(&l.name)?;
-            pf_updatable(&l.version, &e.version).then(|| PfUpdateRow {
+            pf_updatable_entry(&l.version, e).then(|| PfUpdateRow {
                 name: l.name.clone(),
                 display: format!(
                     "{PF_ROW_TAG}{}",

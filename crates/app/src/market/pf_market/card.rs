@@ -7,7 +7,7 @@ use gpui::{AnyElement, FontWeight, IntoElement, MouseButton, SharedString, px, r
 
 use pi_link::pf_plugins::{IndexEntry, LedgerEntry};
 
-use super::{Chat, MONO, accent_alpha, installed_in, ledger_version_of, pf_updatable};
+use super::{Chat, MONO, accent_alpha, installed_in, ledger_version_of, pf_updatable_entry};
 use crate::appearance::theme::Theme;
 use crate::i18n::tr;
 use crate::market::pi_native_market::design::Metrics;
@@ -34,9 +34,10 @@ pub(super) fn card(
     ledger: &[LedgerEntry],
 ) -> AnyElement {
     let installed = installed_in(ledger, &e.name);
-    // 090-10：已装且索引版本更高 → 卡片出「更新」钮 + 版本号 ↑
-    let updatable = installed
-        && ledger_version_of(ledger, &e.name).is_some_and(|v| pf_updatable(v, &e.version));
+    // 090-10：已装且索引版本更高**且**新版 min_pf 满足（082 v2 定稿：提示
+    // 算法加门，本版装不上的新版不出）→ 卡片出「更新」钮 + 版本号 ↑
+    let updatable =
+        installed && ledger_version_of(ledger, &e.name).is_some_and(|v| pf_updatable_entry(v, e));
     // 窄屏（<768）：与 pi 页同口径转单列，卡宽吃满行
     let width = if m.narrow {
         gpui::div().w_full()
