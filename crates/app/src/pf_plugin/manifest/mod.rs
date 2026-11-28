@@ -47,6 +47,10 @@ pub(crate) struct PluginManifest {
     pub id: String,
     pub title_zh: String,
     pub title_en: Option<String>,
+    /// 一句话说明（契约 v6 可选）：已安装页说明行真源——dev 侧载不走市场
+    /// 索引，说明即出自清单；市场发布包索引 desc 优先级在其后（回落用）。
+    pub desc_zh: String,
+    pub desc_en: Option<String>,
     pub version: String,
     pub status_bar: Option<StatusBarContrib>,
     /// topbar「菜单」三横浮层条目申请（契约 v2.5；props 同 status_bar）。

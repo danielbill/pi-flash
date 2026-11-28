@@ -320,7 +320,7 @@ fn detail_pane(
             });
     }
 
-    // 索引补全：发布人（来源行）+ 一句话描述（说明行，缺索引/无描述 = —）
+    // 索引补全：发布人（来源行）+ 一句话描述（说明行）
     let ix = index_snapshot();
     let entry = ix.entry(&item.name);
     let source_display = match &entry {
@@ -328,14 +328,27 @@ fn detail_pane(
         Some(_) => "Pi-Flash".to_string(),
         None => item.source.clone(),
     };
-    let description = entry
-        .and_then(|e| e.desc.as_ref())
-        .map(|d| {
-            if crate::i18n::lang_ix() == 2 && !d.en.is_empty() {
-                d.en.clone()
-            } else {
-                d.zh.clone()
-            }
+    // 说明来源链（契约 v6）：清单 desc（已装版本真源；dev 侧载不走索引 =
+    // 唯一来源）→ 市场索引 desc（存量旧包）→ —
+    let lang2 = crate::i18n::lang_ix() == 2;
+    let manifest_desc = crate::pf_plugin::scan_manifests()
+        .into_iter()
+        .find(|m| m.pkg == item.name)
+        .filter(|m| !m.desc_zh.is_empty())
+        .map(|m| {
+            lang2
+                .then(|| m.desc_en.clone().unwrap_or_else(|| m.desc_zh.clone()))
+                .unwrap_or_else(|| m.desc_zh.clone())
+        });
+    let description = manifest_desc
+        .or_else(|| {
+            entry.and_then(|e| e.desc.as_ref()).map(|d| {
+                if lang2 && !d.en.is_empty() {
+                    d.en.clone()
+                } else {
+                    d.zh.clone()
+                }
+            })
         })
         .unwrap_or_else(|| "—".to_string());
     // 安装路径（版本化目录，与 install 落点一致）；索引/版本缺失退插件根目录
@@ -379,15 +392,6 @@ fn detail_pane(
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(description)),
         ))
-        // 统一插件设置（契约 v6，003-1）：说明行下方按清单 [[contributes.settings]]
-        // 描述绘制；无设置段/停用插件 = 空集（零渲染）
-        .children(settings::settings_rows(
-            chat,
-            weak,
-            item,
-            &chat.aux.market.pf.settings_anchors,
-            t,
-        ))
         .child(field(
             &tr("pi_extensions.state"),
             gpui::div()
@@ -419,6 +423,17 @@ fn detail_pane(
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(breakable_path(&path.to_string_lossy()))),
+        ))
+        // 横线分隔（用户定 2026-11-28）：设置区从说明下方下移到整段字段区之后
+        .child(gpui::div().h(px(1.)).mt(px(14.)).bg(rgb(t.border)))
+        // 统一插件设置（契约 v6，003-1）：横线下方按清单 [[contributes.settings]]
+        // 描述绘制；无设置段/停用插件 = 空集（零渲染）
+        .children(settings::settings_rows(
+            chat,
+            weak,
+            item,
+            &chat.aux.market.pf.settings_anchors,
+            t,
         ))
         .into_any_element()
 }

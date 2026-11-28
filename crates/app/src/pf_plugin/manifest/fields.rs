@@ -149,6 +149,12 @@ pub(super) fn apply_field(
             m.title_zh = zh;
             m.title_en = en;
         }
+        ("", "desc") => {
+            // 契约 v6 可选：一句话说明（已安装页说明行真源，003-1 同文）
+            let (zh, en) = val.as_i18n("desc", n)?;
+            m.desc_zh = zh;
+            m.desc_en = en;
+        }
         ("status_bar", "icon") => m.status_bar.as_mut().unwrap().icon = val.as_str("icon", n)?,
         ("status_bar", "title") => {
             m.status_bar.as_mut().unwrap().title_zh = val.as_i18n("title", n)?.0

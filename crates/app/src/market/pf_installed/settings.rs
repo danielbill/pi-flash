@@ -356,10 +356,10 @@ pub(crate) fn settings_rows(
         .is_some_and(|d| d.pkg == item.name && d.dirty);
 
     let mut rows = Vec::new();
-    // 区标题行（与 detail_pane 的 field 行同一字距语言）
+    // 区标题行（横线之下，与 detail_pane 的 field 行同一字距语言）
     rows.push(
         gpui::div()
-            .mt(px(14.))
+            .mt(px(10.))
             .font_weight(FontWeight::SEMIBOLD)
             .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text_dim))

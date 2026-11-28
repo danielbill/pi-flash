@@ -20,6 +20,8 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         id: String::new(),
         title_zh: String::new(),
         title_en: None,
+        desc_zh: String::new(),
+        desc_en: None,
         version: String::new(),
         status_bar: None,
         topbar_menu: None,

@@ -540,3 +540,46 @@ fn settings_counts_as_surface() {
     assert_eq!(m.settings.len(), 3);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// 契约 v6 可选 desc：一句话说明进清单（已安装页说明行真源，003-1 同文）
+#[test]
+fn manifest_desc_optional_i18n() {
+    let tmp = std::env::temp_dir().join(format!("pf-manifest-desc-{}", std::process::id()));
+    let body = r#"
+schema = 6
+id = "quick-panel"
+title = { zh = "快捷面板" }
+version = "0.1.0"
+desc = { zh = "说明中文，含逗号与句号。", en = "Desc with spaces." }
+
+[[contributes.settings]]
+id = "a"
+type = "stepper"
+label = { zh = "甲" }
+min = 0
+max = 10
+step = 5
+default = 5
+"#;
+    let dir = tmp.join("quick-panel");
+    write_manifest(&dir, body);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    let m = parse_manifest(&dir).expect("desc 清单应通过");
+    assert_eq!(m.desc_zh, "说明中文，含逗号与句号。");
+    assert_eq!(m.desc_en.as_deref(), Some("Desc with spaces."));
+    // 缺 desc = 合法（可选字段）；id = 目录名，另起临时根
+    let tmp2 = std::env::temp_dir().join(format!("pf-manifest-desc2-{}", std::process::id()));
+    let dir2 = tmp2.join("quick-panel");
+    write_manifest(
+        &dir2,
+        &body.replace(
+            "desc = { zh = \"说明中文，含逗号与句号。\", en = \"Desc with spaces.\" }\n",
+            "",
+        ),
+    );
+    std::fs::create_dir_all(dir2.join("assets")).unwrap();
+    let m2 = parse_manifest(&dir2).expect("无 desc 清单应通过");
+    assert!(m2.desc_zh.is_empty());
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&tmp2);
+}
