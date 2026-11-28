@@ -141,7 +141,8 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
 fn stale_of(ledger_name: &str, pkg: &str, dir: &Path, err: String) -> StalePlugin {
     let head = peek_manifest_head(dir);
     let kind = match head.schema {
-        Some(got) if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 => {
+        // 兼容集与 fields.rs schema 臂同口径（v6 起 3/4/5）
+        Some(got) if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 && got != 5 => {
             StaleKind::SchemaUnsupported { got }
         }
         _ => StaleKind::Invalid(err),

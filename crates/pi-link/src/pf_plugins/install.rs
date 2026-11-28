@@ -277,6 +277,8 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
 pub fn uninstall(name: &str) -> Result<String, String> {
     // ① 台账先摘（误删目录不影响"已卸载"这个结论）
     ledger_remove(name)?;
+    // ①½ 设置真源随包清理（契约 v6 统一设置；镜像在包层 data/，随 ② 整目录删除）
+    super::settings_store::remove(name);
     // ② 目录内容尽量清
     let root = crate::paths::plugins_dir().ok_or("无法定位插件安装目录")?;
     let base = root.join(dir_name(name));

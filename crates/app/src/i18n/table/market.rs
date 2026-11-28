@@ -25,6 +25,11 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.stale_tag", "需更新", "需更新", "Update needed"),
     ("market.pf.stale_state", "与本版 PF 不兼容（清单 schema {got}），请更新", "與本版 PF 不相容（清單 schema {got}），請更新", "Incompatible with this PF (manifest schema {got}); please update"),
     ("market.pf.stale_invalid", "清单无效，无法装载：{reason}", "清單無效，無法載入：{reason}", "Invalid manifest, cannot load: {reason}"),
+    // 契约 v6 统一插件设置（003-1，2026-11-28）：已安装页·插件说明下方设置区
+    ("market.pf.settings_head", "设置", "設置", "Settings"),
+    ("market.pf.use_session", "使用会话模型", "使用會話模型", "Use session model"),
+    ("market.pf.save", "保存", "保存", "Save"),
+    ("market.pf.settings_save_failed", "保存设置失败：{reason}", "保存設置失敗：{reason}", "Failed to save settings: {reason}"),
     // 插件包内 pi 扩展挂载：忙时会话延迟重启的提示（name = 插件 id）
     ("plugin.ext_wait_idle", "插件 {name} 的扩展将在当前任务完成后生效", "外掛 {name} 的擴充將在當前任務完成後生效", "Extension of plugin {name} will take effect after the current task finishes"),
     // 040-1 页内按钮走英文原串（照设计稿那套 chrome 的语言）

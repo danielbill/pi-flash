@@ -27,7 +27,7 @@ pub(super) fn global_settings_bar(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEle
             1,
             |v| v.to_string(),
             crate::services::workspace::subagent_capacity,
-            crate::services::workspace::set_subagent_capacity,
+            |_c, _cx, v| crate::services::workspace::set_subagent_capacity(v),
             weak,
         ));
     // 模块开关行

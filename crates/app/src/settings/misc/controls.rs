@@ -19,7 +19,7 @@ pub(super) fn clean_stepper(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
             }
         },
         crate::services::workspace::auto_clean_days,
-        |v| {
+        |_c, _cx, v| {
             let mut s = crate::services::workspace::app_settings();
             s.auto_clean_days = Some(v);
             crate::services::workspace::save_app_settings(&s);

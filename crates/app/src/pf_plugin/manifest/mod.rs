@@ -27,8 +27,9 @@ use std::path::PathBuf;
 // ---------------------------------------------------------------------------
 
 /// 本版 PF 支持的清单契约大版本（与插件仓 schema/plugin-contract.json 的
-/// `manifest_schema` 对齐；加/删原语时一并升）
-pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 5;
+/// `manifest_schema` 对齐；加/删原语时一并升）。v6 = 统一插件设置
+/// （contributes.settings，003-1）；装包兼容 3/4/5。
+pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 6;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
@@ -79,6 +80,11 @@ pub(crate) struct PluginManifest {
     /// 认领前缀声明（契约 v2.4 contributes.sessions）：插件建线时经
     /// ctx.newDraft 显式给 prefix，此处声明是清单面对账位（缺段解析即拒）。
     pub sessions: Vec<SessionSlotContrib>,
+    /// 统一插件设置描述（契约 v6 contributes.settings，003-1）：插件只给
+    /// 【设置描述】，PF 按描述用统一组件绘制在【已安装-插件说明】下方；
+    /// 宿主只认字段类型不认语义（机制：真源 plugin-settings/<pkg>.json +
+    /// 镜像投递 data/settings.json，见 pi_link::pf_plugins::settings_store）。
+    pub settings: Vec<SettingsField>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +135,40 @@ pub(crate) struct PopupContrib {
 #[derive(Debug, Clone)]
 pub(crate) struct SessionSlotContrib {
     pub prefix: String,
+}
+
+/// 统一插件设置字段（契约 v6 contributes.settings，003-1）。描述归插件、
+/// 渲染归宿主、存储归宿主、消费归插件——宿主只认 type 不认语义。
+#[derive(Debug, Clone)]
+pub(crate) struct SettingsField {
+    /// 字段 id = 存储键（可驼峰点路径，如 compress.modelContextLimit）
+    pub id: String,
+    pub kind: SettingsKind,
+    pub label_zh: String,
+    pub label_en: Option<String>,
+    pub hint_zh: Option<String>,
+    pub hint_en: Option<String>,
+    // ---- model 型（InputPanel 同款模型+思考强度控件）----
+    /// 缺省模型："session"（使用会话模型，须 session_option）或 "provider/modelId"
+    pub default_model: Option<String>,
+    /// 缺省思考档："auto"（不覆盖，随会话档）或 pi 思考档位键
+    pub default_thinking: Option<String>,
+    /// 模型菜单顶部加【使用会话模型】项（true 才允许 session 值）
+    pub session_option: bool,
+    /// 并排出思考强度触发钮
+    pub with_thinking: bool,
+    // ---- stepper 型（−/+ 步进件）----
+    pub default_num: Option<u64>,
+    pub min: Option<u64>,
+    pub max: Option<u64>,
+    pub step: Option<u64>,
+}
+
+/// 设置字段控件类型（契约 v6 封闭集：model | stepper；加类型 = 再升契约）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsKind {
+    Model,
+    Stepper,
 }
 
 #[derive(Debug, Clone)]

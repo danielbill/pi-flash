@@ -11,7 +11,9 @@ use crate::appearance::theme::theme as T;
 
 /// 步进控件（通用版）：−/+ 两个 24px 档位按钮夹居中数值，到边界后对应按钮
 /// 置灰禁点。`render` 生成中间显示（"10" / "3 天" / "关闭"），`cur` 在点击
-/// 时重读当前值（不吃渲染快照陈值），夹回 [min, max] 后交 `apply` 落盘。
+/// 时重读当前值（不吃渲染快照陈值），夹回 [min, max] 后交 `apply` 落盘
+/// （入参 = &mut Chat + cx：状态住 Chat 的调用方直接写，住全局 services 的
+/// 调用方忽略前两个参数——PF 插件设置草稿 2026-11-28 加）。
 pub(crate) fn stepper(
     id_prefix: &'static str,
     value: u64,
@@ -20,7 +22,7 @@ pub(crate) fn stepper(
     step: i64,
     render: impl Fn(u64) -> String + 'static,
     cur: impl Fn() -> u64 + Clone + 'static,
-    apply: impl Fn(u64) + Clone + 'static,
+    apply: impl Fn(&mut Chat, &mut gpui::Context<Chat>, u64) + Clone + 'static,
     weak: &gpui::WeakEntity<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
@@ -77,7 +79,7 @@ fn step_btn(
     max: u64,
     step: i64,
     cur: impl Fn() -> u64 + 'static,
-    apply: impl Fn(u64) + 'static,
+    apply: impl Fn(&mut Chat, &mut gpui::Context<Chat>, u64) + 'static,
     weak: &gpui::WeakEntity<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
@@ -100,12 +102,16 @@ fn step_btn(
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
-                let _ = weak_click.update(cx, |_c, cx| {
+                let _ = weak_click.update(cx, |chat, cx| {
                     let c = cur() as i64;
                     // 对齐步长网格再步进：存量非格点值（如老默认 3）也能
                     // 干净落到 0/5/…/100；step=1 时恒等，不影响会话显示数
                     let base = c - c.rem_euclid(step);
-                    apply((base + delta).clamp(min as i64, max as i64) as u64);
+                    apply(
+                        chat,
+                        cx,
+                        (base + delta).clamp(min as i64, max as i64) as u64,
+                    );
                     cx.notify();
                 });
             })

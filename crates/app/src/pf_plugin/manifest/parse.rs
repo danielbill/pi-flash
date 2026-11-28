@@ -31,6 +31,7 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         pi_ext_all_sessions: false,
         service: Vec::new(),
         sessions: Vec::new(),
+        settings: Vec::new(),
         wasm: None,
         bytecode: None,
     };

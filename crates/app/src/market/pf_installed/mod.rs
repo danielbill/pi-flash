@@ -14,8 +14,10 @@
 //! 右详情（状态 / 来源 / 路径 + 卸载垃圾桶，确认浮层 040 同款机制）。
 
 mod actions;
+mod settings;
 
 pub(crate) use actions::remove_confirm_overlay;
+pub(crate) use settings::{PfSettingsAnchors, PfSettingsDraft, menus_overlay};
 
 use gpui::prelude::*;
 use gpui::{AnyElement, FontWeight, MouseButton, SharedString, px, rgb};
@@ -175,7 +177,14 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .bg(rgb(t.bg))
         .child(list);
 
-    let detail = detail_pane(selected, removing.as_deref(), pending.as_deref(), weak, t);
+    let detail = detail_pane(
+        chat,
+        selected,
+        removing.as_deref(),
+        pending.as_deref(),
+        weak,
+        t,
+    );
 
     // 段盒吃满全高：centered 外壳必须是 flex（否则 flex_1 的 shell 在块级父里
     // 拿不到剩余高度 → 段盒只到内容高度，和【所有插件】页不一样高）
@@ -200,7 +209,9 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
 /// 右详情（040 五行裁掉说明/提示词大小 → 状态 / 来源 / 路径）：
 /// 名称行 = 展示名（mono semibold）+ [全局] 标 + 垃圾桶。
+/// 契约 v6（003-1）：插件说明下方 = 统一插件设置区（[`settings::settings_rows`]）。
 fn detail_pane(
+    chat: &Chat,
     item: Option<&InstalledItem>,
     removing: Option<&str>,
     pending: Option<&str>,
@@ -367,6 +378,15 @@ fn detail_pane(
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(description)),
+        ))
+        // 统一插件设置（契约 v6，003-1）：说明行下方按清单 [[contributes.settings]]
+        // 描述绘制；无设置段/停用插件 = 空集（零渲染）
+        .children(settings::settings_rows(
+            chat,
+            weak,
+            item,
+            &chat.aux.market.pf.settings_anchors,
+            t,
         ))
         .child(field(
             &tr("pi_extensions.state"),

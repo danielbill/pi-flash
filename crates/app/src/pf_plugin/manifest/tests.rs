@@ -416,3 +416,127 @@ path = "pi/index.mjs"
     assert!(!m.pi_ext_all_sessions);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// 契约 v6 统一插件设置（contributes.settings，003-1）
+// ---------------------------------------------------------------------------
+
+/// bac 形态三字段（model 型标量缺省键 + stepper 型 min/max/step）
+const SETTINGS: &str = r#"
+schema = 6
+id = "background-auto-compact"
+title = { zh = "后台上下文自动压缩", en = "Background Auto Compact" }
+version = "0.2.0"
+
+[[contributes.pi_extensions]]
+path = "pi/index.mjs"
+
+[[contributes.settings]]
+id = "writer"
+type = "model"
+label = { zh = "摘要写手", en = "Summary writer" }
+hint = { zh = "与会话同款可复用缓存", en = "Same cache" }
+session_option = true
+with_thinking = true
+default_model = "session"
+default_thinking = "auto"
+
+[[contributes.settings]]
+id = "compress.modelContextLimit"
+type = "stepper"
+label = { zh = "上下文压缩上限", en = "Limit" }
+min = 100000
+max = 400000
+step = 50000
+default = 200000
+
+[[contributes.settings]]
+id = "compress.nudgeGrowthTokens"
+type = "stepper"
+label = { zh = "增量压缩阈值", en = "Nudge" }
+min = 50000
+max = 100000
+step = 10000
+default = 60000
+"#;
+
+fn settings_manifest_dir(tmp: &Path, name: &str, body: &str) -> PathBuf {
+    let dir = tmp.join(name);
+    write_manifest(&dir, body);
+    std::fs::create_dir_all(dir.join("pi")).unwrap();
+    std::fs::write(dir.join("pi").join("index.mjs"), "export {}").unwrap();
+    dir
+}
+
+#[test]
+fn settings_parse_three_fields() {
+    let tmp = std::env::temp_dir().join(format!("pf-manifest-set-{}", std::process::id()));
+    let dir = settings_manifest_dir(&tmp, "background-auto-compact", SETTINGS);
+    let m = parse_manifest(&dir).expect("v6 设置清单应通过");
+    assert_eq!(m.settings.len(), 3, "三字段全解析");
+    let w = &m.settings[0];
+    assert_eq!(w.id, "writer");
+    assert!(matches!(w.kind, super::SettingsKind::Model));
+    assert_eq!(w.label_en.as_deref(), Some("Summary writer"));
+    assert_eq!(w.hint_en.as_deref(), Some("Same cache"));
+    assert!(w.session_option && w.with_thinking);
+    assert_eq!(w.default_model.as_deref(), Some("session"));
+    assert_eq!(w.default_thinking.as_deref(), Some("auto"));
+    let lim = &m.settings[1];
+    assert_eq!(lim.id, "compress.modelContextLimit");
+    assert!(matches!(lim.kind, super::SettingsKind::Stepper));
+    assert_eq!(lim.min, Some(100000));
+    assert_eq!(lim.max, Some(400000));
+    assert_eq!(lim.step, Some(50000));
+    assert_eq!(lim.default_num, Some(200000));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn settings_validate_rejects() {
+    // 负例共用 id = 目录名（validate 先做目录对账）；每例独立临时根防串
+    let cases: &[(&str, String, &str)] = &[
+        // ① id 重复 → 拒
+        (
+            "dup",
+            SETTINGS.replace("compress.nudgeGrowthTokens", "writer"),
+            "重复",
+        ),
+        // ② default 越区间 → 拒
+        (
+            "oob",
+            SETTINGS.replace("default = 200000", "default = 500000"),
+            "default",
+        ),
+        // ③ session 缺省值未开 session_option → 拒
+        (
+            "nosess",
+            SETTINGS.replace("session_option = true\n", ""),
+            "session_option",
+        ),
+        // ④ 未知 type → 拒
+        (
+            "badtype",
+            SETTINGS.replace("type = \"model\"", "type = \"slider\""),
+            "stepper",
+        ),
+    ];
+    for (n, body, expect) in cases {
+        let tmp =
+            std::env::temp_dir().join(format!("pf-manifest-setbad-{n}-{}", std::process::id()));
+        let dir = settings_manifest_dir(&tmp, "background-auto-compact", body);
+        let err = parse_manifest(&dir).unwrap_err();
+        assert!(err.contains(expect), "{n} 错误应含 {expect}：{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[test]
+fn settings_counts_as_surface() {
+    // 纯设置包（无 panels/status_bar）= 有进驻面，不再判纯库包
+    let tmp = std::env::temp_dir().join(format!("pf-manifest-setsurf-{}", std::process::id()));
+    let dir = settings_manifest_dir(&tmp, "background-auto-compact", SETTINGS);
+    let m = parse_manifest(&dir).expect("纯设置+pi_extensions 包应通过");
+    assert_eq!(m.settings.len(), 3);
+    let _ = std::fs::remove_dir_all(&tmp);
+}

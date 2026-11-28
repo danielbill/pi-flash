@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use super::PluginManifest;
+use super::SettingsKind;
 use super::val::is_kebab;
 
 /// 解析完成后的结构校验：必填字段 / 目录名对账 / 路径存在性 / 契约规则。
@@ -46,8 +47,59 @@ pub(super) fn validate(m: &mut PluginManifest, dir: &Path) -> Result<(), String>
         && m.popups.is_empty()
         && m.pi_extensions.is_empty()
         && m.service.is_empty()
+        && m.settings.is_empty()
     {
         return Err("纯库包（没申请任何进驻面），不加载".into());
+    }
+    // 契约 v6 统一插件设置（003-1）：id 非空唯一（点路径）、label 必给、
+    // 按 type 验必填与值域（heavy 校验在插件仓 check 门；这里守住能装的底线）
+    let mut setting_ids = std::collections::HashSet::new();
+    for sf in &m.settings {
+        if sf.id.is_empty() {
+            return Err("pf-plugin.toml：settings 缺 id（字段 id = 存储键）".into());
+        }
+        if !setting_ids.insert(sf.id.clone()) {
+            return Err(format!("pf-plugin.toml：settings id「{}」重复", sf.id));
+        }
+        if sf.label_zh.is_empty() {
+            return Err(format!(
+                "pf-plugin.toml：settings「{}」缺 label.zh（U7）",
+                sf.id
+            ));
+        }
+        match sf.kind {
+            SettingsKind::Stepper => {
+                let (Some(mn), Some(mx), Some(st)) = (sf.min, sf.max, sf.step) else {
+                    return Err(format!(
+                        "pf-plugin.toml：settings「{}」stepper 缺 min/max/step",
+                        sf.id
+                    ));
+                };
+                if mn >= mx || st == 0 {
+                    return Err(format!(
+                        "pf-plugin.toml：settings「{}」stepper 要求 min < max 且 step > 0",
+                        sf.id
+                    ));
+                }
+                if let Some(dv) = sf.default_num
+                    && (dv < mn || dv > mx || (dv - mn) % st != 0)
+                {
+                    return Err(format!(
+                        "pf-plugin.toml：settings「{}」default 必须落在 [min,max] 且按 step 对齐",
+                        sf.id
+                    ));
+                }
+            }
+            SettingsKind::Model => {
+                // session_option 只描述菜单能力；default_model 任选
+                if sf.default_model.as_deref() == Some("session") && !sf.session_option {
+                    return Err(format!(
+                        "pf-plugin.toml：settings「{}」default_model=\"session\" 需要 session_option = true",
+                        sf.id
+                    ));
+                }
+            }
+        }
     }
     if let Some(sb) = &m.status_bar {
         if sb.icon.is_empty() {

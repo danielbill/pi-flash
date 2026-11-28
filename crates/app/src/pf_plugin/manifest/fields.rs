@@ -4,8 +4,8 @@
 use super::val::TomlVal;
 use super::{
     FileMenuContrib, FnBarContrib, PanelContrib, PluginDock, PluginManifest, PopupContrib,
-    SUPPORTED_MANIFEST_SCHEMA, ServiceContrib, SessionSlotContrib, StatusBarContrib,
-    TopbarMenuContrib,
+    SUPPORTED_MANIFEST_SCHEMA, ServiceContrib, SessionSlotContrib, SettingsField, SettingsKind,
+    StatusBarContrib, TopbarMenuContrib,
 };
 
 /// `[[contributes.*]]` 段头登记：各贡献点在对应 Vec/Option 里预置空条目，
@@ -93,6 +93,25 @@ pub(super) fn open_section(m: &mut PluginManifest, name: &str, n: usize) -> Resu
             });
             "sessions".to_string()
         }
+        "contributes.settings" => {
+            m.settings.push(SettingsField {
+                id: String::new(),
+                kind: SettingsKind::Stepper, // type 键必填，解析臂覆盖
+                label_zh: String::new(),
+                label_en: None,
+                hint_zh: None,
+                hint_en: None,
+                default_model: None,
+                default_thinking: None,
+                session_option: false,
+                with_thinking: false,
+                default_num: None,
+                min: None,
+                max: None,
+                step: None,
+            });
+            "settings".to_string()
+        }
         other => return Err(format!("pf-plugin.toml 行 {}：未知段 [[{other}]]", n + 1)),
     })
 }
@@ -113,9 +132,11 @@ pub(super) fn apply_field(
                 .as_raw("schema", n)?
                 .parse()
                 .map_err(|_| format!("pf-plugin.toml 行 {}：schema 必须是整数", n + 1))?;
-            if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 {
+            // v6（统一设置）起兼容 3/4/5：未用新面的旧包照常装，含 settings
+            // 的清单必须 = 6（插件仓 check 门守，宿主宽松不拦）
+            if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 && got != 5 {
                 return Err(format!(
-                    "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（支持 {SUPPORTED_MANIFEST_SCHEMA}，兼容 3/4）"
+                    "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（支持 {SUPPORTED_MANIFEST_SCHEMA}，兼容 3/4/5）"
                 ));
             }
         }
@@ -223,6 +244,81 @@ pub(super) fn apply_field(
             *m.sessions.last_mut().unwrap() = SessionSlotContrib {
                 prefix: val.as_str("prefix", n)?,
             };
+        }
+        // 统一插件设置（契约 v6 contributes.settings，003-1）：描述用标量键
+        // （手写极简解析不收嵌套 inline table；default_model/default_thinking/
+        // default 三缺省键 + session_option/with_thinking + min/max/step）
+        ("settings", "id") => m.settings.last_mut().unwrap().id = val.as_str("id", n)?,
+        ("settings", "type") => {
+            let s = val.as_str("type", n)?;
+            m.settings.last_mut().unwrap().kind = match s.as_str() {
+                "model" => SettingsKind::Model,
+                "stepper" => SettingsKind::Stepper,
+                other => {
+                    return Err(format!(
+                        "pf-plugin.toml 行 {}：settings.type 只认 \"model\" | \"stepper\"，得到 {other}",
+                        n + 1
+                    ));
+                }
+            };
+        }
+        ("settings", "label") => {
+            let (zh, en) = val.as_i18n("label", n)?;
+            let f = m.settings.last_mut().unwrap();
+            f.label_zh = zh;
+            f.label_en = en;
+        }
+        ("settings", "hint") => {
+            let (zh, en) = val.as_i18n("hint", n)?;
+            let f = m.settings.last_mut().unwrap();
+            f.hint_zh = Some(zh);
+            f.hint_en = en;
+        }
+        ("settings", "default") => {
+            let raw = val.as_raw("default", n)?;
+            let v: u64 = raw.parse().map_err(|_| {
+                format!(
+                    "pf-plugin.toml 行 {}：settings.default 必须是非负整数",
+                    n + 1
+                )
+            })?;
+            m.settings.last_mut().unwrap().default_num = Some(v);
+        }
+        ("settings", "default_model") => {
+            m.settings.last_mut().unwrap().default_model = Some(val.as_str("default_model", n)?);
+        }
+        ("settings", "default_thinking") => {
+            m.settings.last_mut().unwrap().default_thinking =
+                Some(val.as_str("default_thinking", n)?);
+        }
+        ("settings", "session_option") => {
+            let raw = val.as_raw("session_option", n)?;
+            m.settings.last_mut().unwrap().session_option = raw == "true";
+        }
+        ("settings", "with_thinking") => {
+            let raw = val.as_raw("with_thinking", n)?;
+            m.settings.last_mut().unwrap().with_thinking = raw == "true";
+        }
+        ("settings", "min") => {
+            let raw = val.as_raw("min", n)?;
+            let v: u64 = raw
+                .parse()
+                .map_err(|_| format!("pf-plugin.toml 行 {}：settings.min 必须是非负整数", n + 1))?;
+            m.settings.last_mut().unwrap().min = Some(v);
+        }
+        ("settings", "max") => {
+            let raw = val.as_raw("max", n)?;
+            let v: u64 = raw
+                .parse()
+                .map_err(|_| format!("pf-plugin.toml 行 {}：settings.max 必须是非负整数", n + 1))?;
+            m.settings.last_mut().unwrap().max = Some(v);
+        }
+        ("settings", "step") => {
+            let raw = val.as_raw("step", n)?;
+            let v: u64 = raw.parse().map_err(|_| {
+                format!("pf-plugin.toml 行 {}：settings.step 必须是非负整数", n + 1)
+            })?;
+            m.settings.last_mut().unwrap().step = Some(v);
         }
         (sec, key) => return Err(format!("pf-plugin.toml 行 {}：{sec} 段未知键 {key}", n + 1)),
     }

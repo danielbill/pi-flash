@@ -88,7 +88,7 @@ pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> g
             1,
             |v| v.to_string(),
             || crate::services::workspace::session_display_count() as u64,
-            |v| {
+            |_c, _cx, v| {
                 let mut s = crate::services::workspace::app_settings();
                 s.session_display_count = Some(v);
                 crate::services::workspace::save_app_settings(&s);

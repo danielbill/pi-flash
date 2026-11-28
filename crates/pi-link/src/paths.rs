@@ -192,6 +192,15 @@ pub fn plugins_dir() -> Option<PathBuf> {
     Some(d)
 }
 
+/// `<PF数据目录>/plugin-settings/` — 插件设置真源目录（契约 v6 统一设置，
+/// 003-1：`<pkg>.json` = flat map 字段id → 值；PF 建/读/写/删、卸载清理，
+/// 版本换代不丢——与包层 `data/` 分治：这里 PF 自有领域，data/ 插件自治）。
+pub fn plugin_settings_dir() -> Option<PathBuf> {
+    let d = ensure_dir()?.join("plugin-settings");
+    let _ = std::fs::create_dir_all(&d);
+    Some(d)
+}
+
 /// `~/.pi-flash/registry-dump.mjs` — 注册表 dump 一次性脚本（每次 dump 重写）。
 pub fn registry_dump_script_file() -> Option<PathBuf> {
     file("registry-dump.mjs")

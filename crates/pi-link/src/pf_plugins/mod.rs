@@ -155,6 +155,7 @@ pub fn set_disabled(name: &str, disabled: bool) -> Result<(), String> {
 mod index;
 mod install;
 mod migrate;
+pub mod settings_store;
 
 pub use index::{dir_aliases, dir_name, index_url, verify_signed_index};
 pub use install::{

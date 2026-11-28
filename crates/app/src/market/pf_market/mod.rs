@@ -165,6 +165,12 @@ pub struct PfState {
     pub error: Option<String>,
     /// 台账镜像（open 时重读；安装完成后重读）
     pub ledger: Vec<pi_link::pf_plugins::LedgerEntry>,
+    /// 统一插件设置草稿（契约 v6，003-1）：已安装页设置区编辑态（内存态，
+    /// 不落盘——保存走 settings_store 真源+镜像；换选中插件即换草稿）。None =
+    /// 未进编辑（渲染回落 store+清单 default 合成值，零磁盘外状态）。
+    pub settings: Option<crate::market::pf_installed::PfSettingsDraft>,
+    /// 设置区两下拉的锚点槽位（页级 Rc 槽，随页存活——草稿可换，槽位常在）
+    pub settings_anchors: crate::market::pf_installed::PfSettingsAnchors,
     /// 失效包（090-10 迁移体验）：台账启用、清单被本版拒载（旧 schema 等）。
     /// 启动扫描写入；更新/启用重载成功、卸载时按包名移除。驱动市场头部
     /// 常驻通知行 + 已安装页标签——toast 只播一次，错过了这里还看得到。
@@ -182,6 +188,8 @@ impl Default for PfState {
             loading: false,
             error: None,
             ledger: Vec::new(),
+            settings: None,
+            settings_anchors: Default::default(),
             stale: Vec::new(),
         }
     }

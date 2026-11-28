@@ -142,6 +142,17 @@ impl Chat {
                 c.aux.market.pf.removing = None;
                 c.aux.market.pf.error = result.err();
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                // 设置真源清理在 pi_link::pf_plugins::uninstall 内（镜像随
+                // data/ 目录删除）；这里只摘内存草稿（防悬空 pkg 引用）
+                if c.aux
+                    .market
+                    .pf
+                    .settings
+                    .as_ref()
+                    .is_some_and(|d| d.pkg == pkg_name)
+                {
+                    c.aux.market.pf.settings = None;
+                }
                 if ok {
                     // 失效提示随包走：卸了就不再提醒更新
                     c.aux.market.pf.stale.retain(|s| s.name != pkg_name);

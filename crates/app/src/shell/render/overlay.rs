@@ -40,6 +40,11 @@ impl Chat {
         if let Some(el) = crate::tasks::popup::menus_overlay(self, &weak_for_dialog, window, cx) {
             root = root.child(el);
         }
+        // 契约 v6 统一插件设置（003-1）：已安装页设置区模型/思考下拉——
+        // inputpanel 同款 pill_anchor_edges 定位，挂在 dialogs 之前 = 模态之下
+        if let Some(el) = market::pf_installed::menus_overlay(self, &weak_for_dialog, window) {
+            root = root.child(el);
+        }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
         // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉
         // 全部点击（"看得见点不着"）。弹窗永远是顶层模态，统一放 settings 上。
