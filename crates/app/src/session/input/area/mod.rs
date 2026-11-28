@@ -89,11 +89,7 @@ pub(crate) fn input_area(
             model_label,
             page.thinking.to_string(),
             crate::tasks::form::tools_display(page.tools),
-            chat.rt()
-                .read(cx)
-                .stats
-                .as_ref()
-                .and_then(|s| s.context_percent),
+            chat.rt().read(cx).context_ring_percent(),
             false,
         )
     } else {
@@ -130,7 +126,7 @@ pub(crate) fn input_area(
             model_label,
             thinking_label,
             r.tool_preset_label(),
-            r.stats.as_ref().and_then(|s| s.context_percent),
+            r.context_ring_percent(),
             r.compacting,
         )
     };

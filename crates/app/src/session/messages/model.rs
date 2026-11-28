@@ -74,6 +74,28 @@ pub(crate) struct Msg {
     pub(crate) bash: Option<BashInfo>,
 }
 
+/// 最后一次真实请求的 prompt 口径（provider 上报的事实数据）：倒序取第
+/// 一条有效 assistant 消息，`input + cache_read + cache_write` 三者和 =
+/// 该请求实际发送的上下文（pi `calculateContextTokens` 同款口径减 output，
+/// input 不含缓存部分）。有效性规则与 pi `getAssistantUsage` 一致：跳过
+/// aborted/error 与全零 usage。树投影口径（stats.context_tokens）在后台
+/// 折叠（插件 003 请求改写层剔除原文）后不回落——本函数给出与请求真实
+/// 大小对齐的数据源，不依赖任何插件、零估算。
+pub(crate) fn last_actual_context_tokens(messages: &[Msg]) -> Option<u64> {
+    messages.iter().rev().find_map(|m| {
+        if m.role != Role::Assistant {
+            return None;
+        }
+        if matches!(m.stop_reason.as_deref(), Some("aborted" | "error")) {
+            return None;
+        }
+        m.usage
+            .as_ref()
+            .map(|u| u.input + u.cache_read + u.cache_write)
+            .filter(|&t| t > 0)
+    })
+}
+
 /// Per-message display metadata computed by the list owner (needs whole-list
 /// lookarounds): pi-web showTimestamp rule + the turn's user stamp for
 /// 回复用时.
@@ -552,3 +574,6 @@ mod tool_update_tests;
 
 #[cfg(test)]
 mod settled_tests;
+
+#[cfg(test)]
+mod actual_ctx_tests;

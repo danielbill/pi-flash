@@ -4,21 +4,26 @@ use super::*;
 
 /// 上下文容量块（ZCode 风格）：标题行（已用/窗口 · 百分比，窗口未知只给
 /// 已用）+ 进度条 + 分类占比行（系统态已加载且官方总量已知才画；否则退
-/// 回旧两行）。`bac_ctx` = 插件 003 的请求口径 override（tokens, window）：
-/// 后台折叠剔除发生在请求改写层而原文留在树里，pi 的树口径永不回落——
-/// 插件在场时标题/进度条换用请求口径（分母 = 插件判定窗口，与插件折叠
-/// 判定同源）；分类构成行按树口径统计，与 override 总量不同基，退回
-/// 旧两行；退回的两行明细（使用比例/上下文 token）也跟容量环同口径，
-/// 避免两口径同屏互相矛盾（2026-11-27 用户实测指出）。
+/// 回旧两行）。标题/进度条数据源 = `actual`（provider 实际口径：最后一条
+/// assistant 响应的真实 prompt，见 `SessionRuntime::context_actual`）优先，
+/// 无响应回落 pi 树投影（stats）——树口径在后台折叠（插件 003 请求改写
+/// 层剔除原文）后不回落，实际口径与请求真实大小对齐且不依赖插件；分类
+/// 构成行恒为树口径估算；退回的两行明细（使用比例/上下文 token）与标题
+/// 行同口径，避免同屏两口径互相矛盾。
 pub(super) fn ctx_capacity_block(
     s: &pi_link::protocol::SessionStats,
     sys: Option<&pi_link::transcript::TranscriptSystem>,
     t: &'static crate::appearance::theme::Theme,
-    bac_ctx: Option<(u64, u64)>,
+    actual: Option<u64>,
 ) -> gpui::Div {
-    let (ctx_total, ctx_pct) = match bac_ctx {
-        Some((tok, win)) if win > 0 => (tok, Some(tok as f64 / win as f64 * 100.)),
-        _ => (
+    let (ctx_total, ctx_pct) = match actual {
+        Some(tok) => (
+            tok,
+            s.context_window
+                .filter(|w| *w > 0)
+                .map(|w| tok as f64 / w as f64 * 100.),
+        ),
+        None => (
             s.context_tokens.unwrap_or(0),
             s.context_percent
                 .or_else(|| match (s.context_tokens, s.context_window) {
@@ -27,32 +32,21 @@ pub(super) fn ctx_capacity_block(
                 }),
         ),
     };
-    let bar_pct = ctx_pct; // override 与 fallback 两分支都已算好
+    let bar_pct = ctx_pct; // actual 与 fallback 两分支都已算好
     // 右值：末字用 ASCII 半角字符（`%` 与 `)`），全角 `）` 自带半个字身的
     // 右空白，会让首行墨迹比下面各行的右缘内缩 ~6px（2026-10-16 用户指出的
     // 「最上面一行右侧没对齐」）；`/` 两侧同样不留空格。
-    let head_right = match bac_ctx {
-        // override：窗口由解析保证 > 0，标题恒为 已用/窗口 (pct)
-        Some((tk, w)) => format!(
+    let head_right = match s.context_window {
+        Some(w) if ctx_total > 0 && w > 0 => format!(
             "{}/{} ({})",
-            fmt_k(tk),
+            fmt_k(ctx_total),
             fmt_k(w),
             bar_pct
                 .map(|v| format!("{v:.1}%"))
                 .unwrap_or_else(|| "\u{2014}".into()),
         ),
-        None => match (s.context_tokens, s.context_window) {
-            (Some(tk), Some(w)) if w > 0 => format!(
-                "{}/{} ({})",
-                fmt_k(tk),
-                fmt_k(w),
-                bar_pct
-                    .map(|v| format!("{v:.1}%"))
-                    .unwrap_or_else(|| "\u{2014}".into()),
-            ),
-            (Some(tk), None) => fmt_k(tk),
-            _ => "\u{2014}".into(),
-        },
+        _ if ctx_total > 0 => fmt_k(ctx_total),
+        _ => "\u{2014}".into(),
     };
     let mut ctx = div()
         .flex()
@@ -92,10 +86,10 @@ pub(super) fn ctx_capacity_block(
                 ),
         );
     }
-    // 分类占比行（bac override 时退回——构成按树口径，与请求口径不同基；
-    // 系统态已加载且官方总量已知才画，否则退回旧两行）
+    // 分类占比行（恒为树口径估算——构成按会话树投影统计；系统态已加载
+    // 且官方总量已知才画，否则退回旧两行）
     let cats = sys
-        .filter(|_| bac_ctx.is_none() && ctx_total > 0)
+        .filter(|_| ctx_total > 0)
         .map(|sys| cat_rows(sys, ctx_total));
     match cats {
         Some(rows) if !rows.is_empty() => {
@@ -134,18 +128,14 @@ pub(super) fn ctx_capacity_block(
             ));
         }
         _ => {
-            // 明细两行跟容量环同一口径：override 在场时用请求口径
-            // （ctx_total/ctx_pct 开头已算好；实测两口径同屏互相矛盾——
-            // 顶部 77K/160K (48.3%) vs 明细 69K/1,000K (6.9%)，用户
-            // 2026-11-27 指出「状态还没对上」），树口径明细只在无
-            // override 时展示。
-            let tokens_text = match bac_ctx {
-                Some((tok, win)) if win > 0 => format!("{}/{}", fmt_k(tok), fmt_k(win)),
-                _ => match (s.context_tokens, s.context_window) {
-                    (Some(tk), Some(w)) => format!("{}/{}", fmt_k(tk), fmt_k(w)),
-                    (Some(tk), None) => fmt_k(tk),
-                    _ => "\u{2014}".into(),
-                },
+            // 明细两行跟标题行同一口径（ctx_total/ctx_pct 开头已按实际
+            // 口径优先算好；两口径同屏互相矛盾——顶部 77K/160K (48.3%)
+            // vs 明细 69K/1,000K (6.9%)——用户 2026-11-27 指出「状态还没
+            // 对上」）。
+            let tokens_text = match s.context_window {
+                Some(w) if ctx_total > 0 && w > 0 => format!("{}/{}", fmt_k(ctx_total), fmt_k(w)),
+                _ if ctx_total > 0 => fmt_k(ctx_total),
+                _ => "\u{2014}".into(),
             };
             ctx = ctx.children(vec![
                 ctx_row(
