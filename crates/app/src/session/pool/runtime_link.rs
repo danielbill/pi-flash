@@ -134,9 +134,8 @@ impl Chat {
                         // 阻塞判定收口到 protocol::ExtUiMethod::is_blocking——
                         // 侧栏橙点徽标（psp_row_views awaiting）与这里必须同一
                         // 口径：fire-and-forget（notify/setStatus/…）不叫人、
-                        // 不亮点，只入队等切回时重放（2026-11-05 真机：微信桥
-                        // /监控类服务会话 park 期间猛发 setStatus，全被当阻塞
-                        // 件排队，橙点常亮且切回不清）
+                        // 不亮点，只入队等切回时重放（轮询/监控类服务会话 park 期间猛发 setStatus，
+                        // 全被当阻塞件排队，橙点常亮且切回不清）
                         let blocking = req.method.is_blocking();
                         pi_link::client::ext_trace(&format!(
                             "PARKED: id={} key={} blocking={blocking} (active_key={})",

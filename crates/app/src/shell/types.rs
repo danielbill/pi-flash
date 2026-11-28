@@ -66,7 +66,7 @@ pub(crate) enum TopPanel {
 /// 左列面板（statusbar tab 互斥切换）。020-1 曾有三态 sessions/files/git，
 /// 简化后 sessions/files 渲染已无差别（文件树并入整合面板）——2026-10
 /// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
-/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
+/// 独立视图），`Plugin(ix)` 为插件面板。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {
@@ -90,8 +90,7 @@ impl DockPanel {
 
     /// automation `panel.dock` 入参 → 态（旧值 sessions/files 兼容映射）。
     pub(crate) fn from_dock_arg(panel: &str, plugin_ix: usize) -> Option<Self> {
-        // 未知值 = None（调用方按错处理）。历史上的 "wx" 面板已随微信通信
-        // 下线（迁入插件），旧名不再合法，也不留兼容分支。
+        // 未知值 = None（调用方按错处理）。旧名不再合法，也不留兼容分支。
         match panel {
             "sessions" | "files" | "default" => Some(DockPanel::Default),
             "git" => Some(DockPanel::Git),

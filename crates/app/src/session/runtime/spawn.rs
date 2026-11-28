@@ -19,7 +19,7 @@ pub(super) fn ext_source_allowed(src: &str, ledger: &[pi_link::pf_plugins::Ledge
 /// 挂载源注册状态检查（90-9 §8 摘除面，tc6）：src 形如 `<…>/plugins/<pkg>/…`
 /// → 包目录须有清单（未卸载）且台账未停用。清单两档布局都认（090-10 版本层
 /// `<pkg>/<ver>/pf-plugin.toml` / 平铺 dev `<pkg>/pf-plugin.toml`）——只认顶层
-/// 会把已装包误判成已卸载，ext 被 spawn 过滤（真机 2026-11-02 wxbot 出码无人执行）。
+/// 会把已装包误判成已卸载，ext 被 spawn 过滤。
 pub(super) fn ext_source_registered(
     src: &str,
     ledger: &[pi_link::pf_plugins::LedgerEntry],
@@ -41,8 +41,7 @@ pub(super) fn ext_source_registered(
     }
     // pkg 是**磁盘目录名**（`@scope__slug` 或 dev 平铺短名）；台账 name 是
     // scope 名（`@scope/slug`）。dir_aliases 只吃 scope 名（单向 /→__），
-    // 喂目录名恒等返回、永不命中——market 插件 ext 全被这里过滤掉
-    // （真机 2026-11-02：wxbot 出码无人执行）。双向口径都比一遍。
+    // 喂目录名恒等返回、永不命中——market 插件 ext 全被这里过滤掉。双向口径都比一遍。
     ledger.iter().any(|l| {
         !l.disabled
             && (pi_link::pf_plugins::dir_name(&l.name) == pkg
@@ -200,11 +199,10 @@ impl SessionRuntime {
         // 执行）。已挂过的（custom 档经 ext_sources）不重复。
         let mut spawned_mounts: Vec<String> = Vec::new();
         if let Some(store) = pi_link::session_ext::store_path() {
-            // 停用/卸载后的残留挂载条目必须失效（真机 2026-10-31：面板 off 重启
-            // 后 ext 照跑还能收发——store 只增不减，spawn 前按注册状态过滤；
-            // 插件仓 tc6 锁回归）。版本换代同样自愈 + 回写（090-10）：台账里
+            // 停用/卸载后的残留挂载条目必须失效（store 只增不减，spawn 前按注册状态
+            // 过滤）。版本换代同样自愈 + 回写（090-10）：台账里
             // 的绝对路径带版本目录，插件升级后旧目录被删 → 死 `-e` 让 pi 起
-            // 不来（真机 2026-11-03 重启后微信插件全哑的根因）
+            // 不来
             let raw = pi_link::session_ext::read_for(&store, &self.key);
             let (mounts, changed) = pi_link::session_ext::resolve_sources(&raw);
             if changed && let Err(e) = pi_link::session_ext::write_for(&store, &self.key, &mounts) {

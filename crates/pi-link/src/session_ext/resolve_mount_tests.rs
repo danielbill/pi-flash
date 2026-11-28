@@ -30,7 +30,7 @@ fn plant(pkg_dir: &Path, ver: Option<&str>, rel: &str) -> PathBuf {
 #[test]
 fn stale_version_dir_heals_to_current() {
     let root = sandbox();
-    let pkg = root.join("plugins").join("@pi-flash-plugins__pf-wxbot");
+    let pkg = root.join("plugins").join("@pi-flash-plugins__sample-ext");
     let live = plant(&pkg, Some("0.2.0"), "pi/index.mjs");
     // 旧版本目录已不在（市场安装换代时被清掉）
     let stale = pkg.join("0.1.4").join("pi/index.mjs");
@@ -53,7 +53,7 @@ fn stale_version_dir_heals_to_current() {
 #[test]
 fn flat_layout_is_left_alone() {
     let root = sandbox();
-    let pkg = root.join("plugins").join("pf-wxbot");
+    let pkg = root.join("plugins").join("sample-ext");
     let live = plant(&pkg, None, "pi/index.mjs");
     let srcs = vec![live.to_string_lossy().into_owned()];
     let (healed, changed) = resolve_sources(&srcs);

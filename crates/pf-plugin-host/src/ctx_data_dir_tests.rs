@@ -4,11 +4,11 @@ use super::*;
 #[test]
 fn ctx_data_dir_parsed_from_plugin_ctx() {
     let hit = ctx_data_dir(
-        r#"{"plugin":{"id":"pf-wxbot","version":"0.1.3","dataDir":"C:/u/.pi-flash/plugins/@x__pf-wxbot/data"},"pf":{"version":"0.3.2"}}"#,
+        r#"{"plugin":{"id":"sample-ext","version":"0.1.3","dataDir":"C:/u/.pi-flash/plugins/@x__sample-ext/data"},"pf":{"version":"0.3.2"}}"#,
     );
     assert_eq!(
         hit.as_deref(),
-        Some(Path::new("C:/u/.pi-flash/plugins/@x__pf-wxbot/data"))
+        Some(Path::new("C:/u/.pi-flash/plugins/@x__sample-ext/data"))
     );
     // 缺 dataDir / 空串 / 非 JSON → None（兼容旧 ctx，不改写）
     assert!(ctx_data_dir(r#"{"plugin":{"id":"x"}}"#).is_none());

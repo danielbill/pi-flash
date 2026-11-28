@@ -318,8 +318,8 @@ impl SessionRuntime {
                 let raw = pi_link::session_ext::read_for(&p, &key);
                 // 090-10 版本层自愈：台账存的是含版本目录的绝对路径，插件
                 // 升级后旧版本目录被删 → spawn 把死路径当 `-e` 传给 pi，扩展
-                // 加载失败会让**整个进程退出**（真机 2026-11-03：绑定微信后
-                // 重启会话起不来，ext 无处安身，收发全哑）。重解析后变动了
+                // 加载失败会让**整个进程退出**（绑定插件后重启会话起不来，ext
+                // 无处安身，收发全哑）。重解析后变动了
                 // 就回写台账，下一次 spawn 不再付这份 cost。
                 let (healed, changed) = pi_link::session_ext::resolve_sources(&raw);
                 if changed {

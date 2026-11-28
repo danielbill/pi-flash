@@ -17,8 +17,8 @@ fn write_manifest(dir: &Path, body: &str) -> PathBuf {
 
 const GOOD: &str = r#"
 schema = 4
-id = "quick-panel"
-title = { zh = "快捷面板", en = "Quick Panel" }
+id = "sample-panel"
+title = { zh = "样例面板", en = "Sample Panel" }
 version = "0.1.0"
 
 [[contributes.status_bar]]
@@ -39,16 +39,16 @@ entry = "main.js"
 #[test]
 fn manifest_parse_and_validate() {
     let tmp = std::env::temp_dir().join(format!("pf-manifest-test-{}", std::process::id()));
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, GOOD);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
 
     let m = parse_manifest(&dir).expect("合法清单应通过");
-    assert_eq!(m.id, "quick-panel");
-    assert_eq!(m.title_zh, "快捷面板");
-    assert_eq!(m.title_en.as_deref(), Some("Quick Panel"));
+    assert_eq!(m.id, "sample-panel");
+    assert_eq!(m.title_zh, "样例面板");
+    assert_eq!(m.title_en.as_deref(), Some("Sample Panel"));
     assert_eq!(m.status_bar.as_ref().unwrap().icon, "assets/bolt.svg");
     assert_eq!(m.file_menu.len(), 1);
     assert_eq!(m.file_menu[0].id, "set-quick");
@@ -63,7 +63,7 @@ fn manifest_topbar_menu_parse() {
     let body = format!(
         "{GOOD}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"面板标题\" }}\nicon = \"assets/top.svg\"\n"
     );
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, &body);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
@@ -76,7 +76,7 @@ fn manifest_topbar_menu_parse() {
     // 图标三来源映射（与 status_bar 共用 contrib_icon_path）
     assert_eq!(
         topbar_menu_icon_path(&plugin_entries(vec![m]).remove(0)).map(|s| s.to_string()),
-        Some("plugins/quick-panel/assets/top.svg".to_string())
+        Some("plugins/sample-panel/assets/top.svg".to_string())
     );
     // 重复段 = 拒绝
     let dir2 = tmp.join("dup");
@@ -97,7 +97,7 @@ fn manifest_topbar_menu_parse() {
 fn manifest_sessions_parse() {
     let tmp = std::env::temp_dir().join(format!("pf-sessions-test-{}", std::process::id()));
     let body = format!("{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-demo-\"\n");
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, &body);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
@@ -125,7 +125,7 @@ fn claim_session_name_format() {
 fn manifest_panel_dock_parse() {
     let tmp = std::env::temp_dir().join(format!("pf-dock-test-{}", std::process::id()));
     // tab 形态
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(
         &dir,
         &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"tab\""),
@@ -135,11 +135,11 @@ fn manifest_panel_dock_parse() {
     std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
     let mut m = parse_manifest(&dir).expect("tab 清单应通过");
     assert_eq!(m.panels[0].dock, PluginDock::Tab);
-    m.pkg = "quick-panel".into(); // pkg 是扫描期回填字段，单测手工补
-    assert_eq!(m.tab_page(), Some(("quick-panel", "quick")));
+    m.pkg = "sample-panel".into(); // pkg 是扫描期回填字段，单测手工补
+    assert_eq!(m.tab_page(), Some(("sample-panel", "quick")));
 
     // 缺省 = panel（老插件零迁移）
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, GOOD);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     let m = parse_manifest(&dir).expect("缺省清单应通过");
@@ -147,7 +147,7 @@ fn manifest_panel_dock_parse() {
     assert_eq!(m.tab_page(), None);
 
     // 非法值拒装（封闭词表）
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(
         &dir,
         &GOOD.replace(
@@ -174,7 +174,7 @@ id = \"demo-svc\"
 scope = \"session\"
 entry = \"pi/index.mjs\"",
     );
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, &body);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
@@ -227,7 +227,7 @@ size = \"MD\"
 entry = \"main.js\"
 "
     );
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, &body);
     std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
@@ -283,23 +283,23 @@ fn manifest_rejects() {
     let dir = tmp.join("other-name");
     write_manifest(
         &dir,
-        &GOOD.replace("id = \"quick-panel\"", "id = \"quick-panel-x\""),
+        &GOOD.replace("id = \"sample-panel\"", "id = \"sample-panel-x\""),
     );
     assert!(parse_manifest(&dir).is_err());
     // schema ≠ 支持的契约大版本（v3 起拒旧版；不降级运行）
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, &GOOD.replace("schema = 4", "schema = 2"));
     assert!(parse_manifest(&dir).is_err());
     // 纯库包（无 contributes）
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(
         &dir,
-        "schema = 4\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
+        "schema = 4\nid = \"sample-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
     );
     let e = parse_manifest(&dir).unwrap_err();
     assert!(e.contains("纯库"));
     // entry 不存在
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, GOOD);
     assert!(parse_manifest(&dir).is_err());
     let _ = std::fs::remove_dir_all(&tmp);
@@ -309,11 +309,11 @@ fn manifest_rejects() {
 fn manifest_tolerates_inline_comments() {
     // 02 §2 示例清单自带行内注释；引号内的 # 是文案不是注释
     let tmp = std::env::temp_dir().join(format!("pf-manifest-cmt-{}", std::process::id()));
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(
         &dir,
         "schema = 4  # 顶部注释
-id = \"quick-panel\"   
+id = \"sample-panel\"   
 title = { zh = \"快捷#面板\" } # 行内
 version = \"0.1.0\"
 
@@ -335,24 +335,24 @@ fn manifest_inner_package_parse() {
     // 加密包（inner_package）：无 entry 面板声明跳过文件校验；tab icon
     // 走宿主内置名（无 assets 文件也可过）——发版脚本 dist.mjs 的产物形态
     let tmp = std::env::temp_dir().join(format!("pf-inner-test-{}", std::process::id()));
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(
         &dir,
         r#"
 schema = 4
-id = "quick-panel"
-title = { zh = "快捷面板", en = "Quick Panel" }
+id = "sample-panel"
+title = { zh = "样例面板", en = "Sample Panel" }
 version = "0.1.3"
 
 wasm = "plugin.wasm"
 
 [[contributes.status_bar]]
 icon = "plug"
-title = { zh = "快捷面板" }
+title = { zh = "样例面板" }
 
 [[contributes.panels]]
-id = "quick-panel"
-title = { zh = "快捷面板" }
+id = "sample-panel"
+title = { zh = "样例面板" }
 "#,
     );
     std::fs::write(dir.join("plugin.wasm"), b"\0wasm-fake").unwrap();
@@ -547,8 +547,8 @@ fn manifest_desc_optional_i18n() {
     let tmp = std::env::temp_dir().join(format!("pf-manifest-desc-{}", std::process::id()));
     let body = r#"
 schema = 6
-id = "quick-panel"
-title = { zh = "快捷面板" }
+id = "sample-panel"
+title = { zh = "样例面板" }
 version = "0.1.0"
 desc = { zh = "说明中文，含逗号与句号。", en = "Desc with spaces." }
 
@@ -561,7 +561,7 @@ max = 10
 step = 5
 default = 5
 "#;
-    let dir = tmp.join("quick-panel");
+    let dir = tmp.join("sample-panel");
     write_manifest(&dir, body);
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     let m = parse_manifest(&dir).expect("desc 清单应通过");
@@ -569,7 +569,7 @@ default = 5
     assert_eq!(m.desc_en.as_deref(), Some("Desc with spaces."));
     // 缺 desc = 合法（可选字段）；id = 目录名，另起临时根
     let tmp2 = std::env::temp_dir().join(format!("pf-manifest-desc2-{}", std::process::id()));
-    let dir2 = tmp2.join("quick-panel");
+    let dir2 = tmp2.join("sample-panel");
     write_manifest(
         &dir2,
         &body.replace(

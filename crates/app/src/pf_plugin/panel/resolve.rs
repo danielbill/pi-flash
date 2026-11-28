@@ -31,8 +31,7 @@ pub(crate) enum ResolvedNode {
         justify_center: bool,
         /// 固定宽度（px，可选）：夹住内容列（弹窗内容对齐画布方框这类场景）
         w: Option<f32>,
-        /// 固定高度（px，可选）：等待态占位与到位后的画布等高（spinner 居中
-        /// 不跳版，pf-wxbot 出码等待 2026-11-26）
+        /// 固定高度（px，可选）：等待态占位与到位后的画布等高（spinner 居中不跳版）
         h: Option<f32>,
         /// 卡片能力（可选）：底色 / 圆角 / 1px 描边（通用，非插件特例）
         bg: Option<String>,
@@ -97,8 +96,7 @@ pub(crate) enum ResolvedNode {
         command: String,
     },
     /// 加载转圈（契约 v3.1）：宿主统一 spinner（ui::spinner），插件只给
-    /// 尺寸 token 与 tone。用于「已发出请求、等后台兑现」的等待态（pf-wxbot
-    /// 出码等待，2026-11-26 用户定夺：白板换成转圈）。
+    /// 尺寸 token 与 tone。用于「已发出请求、等后台兑现」的等待态（2026-11-26 用户定夺：白板换成转圈）。
     Spinner {
         size: f32,
         tone: String,
@@ -229,8 +227,8 @@ mod tests {
         );
         assert_eq!(icon_asset("terminal", "p"), "icons/terminal.svg");
         assert_eq!(
-            icon_asset("assets:bolt.svg", "quick-panel"),
-            "plugins/quick-panel/assets/bolt.svg"
+            icon_asset("assets:bolt.svg", "sample-panel"),
+            "plugins/sample-panel/assets/bolt.svg"
         );
         assert_eq!(icon_asset("", "p"), "icons/file.svg");
     }

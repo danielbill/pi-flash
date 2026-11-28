@@ -189,7 +189,7 @@ fn peek_manifest_head(dir: &Path) -> ManifestHead {
             "schema" => head.schema = v.split('#').next().unwrap_or("").trim().parse().ok(),
             "version" => head.version = quoted(v),
             "title" => {
-                // title = { zh = "快捷面板", en = "Quick Panel" }
+                // title = { zh = "样例面板", en = "Sample Panel" }
                 head.title_zh = v
                     .split_once("zh")
                     .and_then(|(_, rest)| rest.split_once('='))

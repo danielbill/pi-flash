@@ -13,7 +13,7 @@ use crate::i18n::tr;
 use crate::market::pi_native_market::design::Metrics;
 
 /// 卡片作者行：**域与包名**，从 npm 全名派生（不写死发布人）。
-/// `@pi-flash-plugins/quick-panel` → `pi-flash-plugins · quick-panel`；
+/// `@scope/name` → `scope · name`；
 /// 无 scope 的包名原样返回。
 fn owner_line(name: &str) -> String {
     match name.strip_prefix('@').and_then(|rest| rest.split_once('/')) {

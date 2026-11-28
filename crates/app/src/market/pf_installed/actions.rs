@@ -51,9 +51,8 @@ impl Chat {
                 self.ensure_active_process(cx);
                 // 重新装载运行时：停用的 evict 已丢 wasm/JS，再启用只复位
                 // disabled 位的话 fn_bar chrome 取数会跳过「未装载」条目——而
-                // icon 本身就是微信插件的唯一入口，出来不了就没人触发懒装载
-                // （2026-11-07「微信 icon 消失」同根；启动首装点 plugins_set
-                // 不经此路径）。plugin_ready 幂等，wasm 走后台装载 + Loading 守卫，
+                // icon 本身就是用户入口，出来不了就没人触发懒装载（启动首装
+                // 点 plugins_set 不经此路径）。plugin_ready 幂等，wasm 走后台装载 + Loading 守卫，
                 // 装载完成回调自动补拍 chrome。
                 self.plugin_ready(ix, cx);
             }

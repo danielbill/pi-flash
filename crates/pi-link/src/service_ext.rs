@@ -400,8 +400,8 @@ mod tests {
 /// 插件包目录的清单路径——**两档布局都认**（02 §6，同 `sweep_orphans` 的
 /// has_manifest 判据）：market 版本层（`<pkg>/<ver>/pf-plugin.toml`）与平铺
 /// dev（`<pkg>/pf-plugin.toml`）。版本层重构（090-10）后 pkg 根通常无清单，
-/// 只认顶层会把已装包误判成「已卸载」（真机 2026-11-02：wxbot ext 在 spawn
-/// 的注册过滤段被剔除，出码/收发无人执行）。
+/// 只认顶层会把已装包误判成「已卸载」，ext 在 spawn 的注册过滤段被剔除，
+/// 出码/收发无人执行。
 pub fn pkg_manifest_path(plugin_dir: &Path) -> Option<PathBuf> {
     let top = plugin_dir.join("pf-plugin.toml");
     if top.is_file() {

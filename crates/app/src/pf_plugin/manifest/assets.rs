@@ -52,8 +52,8 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
     if bytes.is_none()
         && let Some((id, rest)) = rel.split_once('/')
     {
-        // 登记键 = manifest.id（pf-wxbot）；部分调用方给的是**目录别名**
-        // （@pi-flash-plugins__pf-wxbot，如市场卡片 contrib_icon_path）——
+        // 登记键 = manifest.id（如 sample-ext）；部分调用方给的是**目录别名**
+        // （@pi-flash-plugins__sample-ext，如市场卡片 contrib_icon_path）——
         // 直查落空，按 `__<id>` 后缀对回登记键（真机 2026-11-03：市场卡片
         // 图标空白，会话标签同款 icon 正常，正因两条链键口径不同）
         let dir = PLUGIN_DIRS

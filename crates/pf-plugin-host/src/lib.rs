@@ -1,4 +1,4 @@
-//! PF 插件运行时：wasmtime 加载 quick-panel 这类自绘插件组件。
+//! PF 插件运行时：wasmtime 加载自绘面板型插件组件。
 //!
 //! 协议（pf-plugin.wit）：插件产 display list（rect/text 原语），文本由宿主
 //! 塑形（measure-text import 需要宿主 text system，走线程局部 App 指针）。

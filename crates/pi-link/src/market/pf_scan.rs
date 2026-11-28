@@ -196,7 +196,7 @@ mod tests {
         };
         assert!(entry_from(&m, "sha512-A".into(), "https://t".into()).is_none());
         let m = ManifestEntry {
-            name: "@pi-flash-plugins/quick-panel".into(),
+            name: "@pi-flash-plugins/sample-panel".into(),
             display: None,
             desc: None,
             icon: None,
@@ -204,7 +204,7 @@ mod tests {
         };
         assert!(entry_from(&m, String::new(), "https://t".into()).is_none());
         let e = entry_from(&m, "sha512-A".into(), "https://t".into()).unwrap();
-        assert_eq!(e.display.zh, "quick-panel"); // 缺 display 时回退 slug
+        assert_eq!(e.display.zh, "sample-panel"); // 缺 display 时回退 slug
         assert_eq!(e.source, "url");
     }
 

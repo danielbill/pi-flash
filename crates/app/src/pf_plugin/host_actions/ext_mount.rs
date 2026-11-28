@@ -12,11 +12,9 @@ impl Chat {
     /// - 挂载通道（契约 v3 `contributes.pi_extensions`）：会话挂载台账里挂着任一
     ///   启用中插件的 pi 扩展——ext 进程就是通信/轮询本体。
     ///
-    /// 挂载通道是 2026-11-01 补的漏：豁免原先只认执行域，而按用户 2026-10-30
-    /// 定案回滚到镜像协议的插件（pf-wxbot）只走挂载通道 → 永远不豁免 → 绑定的
-    /// **非活动**会话闲置满 `idle_cap` 即被回收，微信侧静默而镜像里绑定指针还在
-    /// → icon 假绿。这正是本豁免注释当年记的事故形态（2026-10-30「发消息收不
-    /// 到」），换了个挂载通道又复现。
+    /// 挂载通道：豁免不能只认执行域——镜像协议插件只走挂载通道，漏认则绑定
+    /// 的**非活动**会话闲置满 `idle_cap` 即被回收，插件侧静默而镜像里绑定指针
+    /// 还在 → icon 假绿。
     pub(crate) fn has_live_service(&self, key: &str, _cx: &mut gpui::Context<Self>) -> bool {
         // all-sessions 插件（契约 v5.1）：hook 型 ext 全会话注入（spawn 动态，
         // 不落台账）——启用中即全会话 live，台账/进程两套判定都够不着它
@@ -53,8 +51,7 @@ impl Chat {
     }
 
     /// 摘除活跃运行时里本插件的 ext（attach 逆操作，90-9 §8）：evict/停用后
-    /// 运行中的进程还带着已挂载 ext——**停用不再立即杀进程重启摘除**（2026-
-    /// 11-01，pf-wxbot 下线通知）：壳 `unload()` 已写 `unload_seq` 镜像标记
+    /// 运行中的进程还带着已挂载 ext——**停用不再立即杀进程重启摘除**：壳 `unload()` 已写 `unload_seq` 镜像标记
     ///（PF↔插件唯一对话通道），ext 泵见标记自我隔离——停渠道、发下线通知、
     /// 释放锁，进程存活即可完成；立即 kill 则 ext 一拍都跑不到，通知永远发
     /// 不出。进程内物理摘除落在下次 spawn（重新启用 attach 走「空闲重启挂
@@ -249,8 +246,7 @@ impl Chat {
     }
 
     /// 挂载通道存活保证（fn_bar 点击链，2026-11-26）：保证池里至少一个**活着
-    /// 且带着本插件 ext** 的 pi 进程（`runtime_has_mounts`）。镜像协议插件
-    /// （pf-wxbot）的出码/收发本体在 ext，壳只往镜像写请求——没人活着就没人
+    /// 且带着本插件 ext** 的 pi 进程（`runtime_has_mounts`）。镜像协议插件的出码/收发本体在 ext，壳只往镜像写请求——没人活着就没人
     /// 消费，弹窗白板干等。活动会话做不到（忙而没带挂载）时退而求其次：台账
     /// 里挂着同一 ext 的**其他**会话，进程已死的拉起（死进程重启无副作用）。
     /// 返回 false = 当前做不到（带着挂载的会话都在忙），调用方给状态栏提示。
@@ -337,7 +333,7 @@ fn norm_mount_path(p: &str) -> String {
 /// 挂载路径的比较键：抹掉插件**版本层目录**（090-10 市场布局
 /// `…/plugins/<pkg>/<ver>/pi/index.mjs`）。台账是绑定当时写的，插件升级后
 /// 路径指向旧版本——按原样路径比永远比不中，闲置回收豁免失效 → 绑定会话被
-/// 回收，微信侧静默而镜像里绑定指针还在（真机 2026-11-03：重启后收发死）。
+/// 回收，插件侧静默而镜像里绑定指针还在。
 /// 同包同文件的换代前后必须视为同一挂载，故比较键不带版本段。
 fn mount_key(p: &str) -> String {
     let norm = norm_mount_path(p);
@@ -388,8 +384,8 @@ mod has_live_service_tests {
     #[test]
     fn mount_hit_exempts_session() {
         // 真机形态：清单给反斜杠绝对路径，台账可能落正斜杠小写
-        let live = s(&[r"D:\ai_workspace\pi-flash\plugins\pf-wxbot\pi/index.mjs"]);
-        let mounts = s(&["d:/ai_workspace/pi-flash/plugins/pf-wxbot/pi/index.mjs"]);
+        let live = s(&[r"D:\ai_workspace\pi-flash\plugins\sample-ext\pi/index.mjs"]);
+        let mounts = s(&["d:/ai_workspace/pi-flash/plugins/sample-ext/pi/index.mjs"]);
         assert!(
             mounts_overlap_live(&mounts, &live),
             "同一扩展的两种写法必须命中"
@@ -397,24 +393,24 @@ mod has_live_service_tests {
     }
 
     /// 版本层换代（090-10）：台账写的是绑定当时的 `0.1.4` 路径，插件已升到
-    /// `0.2.0`。按原样比会落空 → 绑定会话失去闲置回收豁免 → 微信静默。
+    /// `0.2.0`。按原样比会落空 → 绑定会话失去闲置回收豁免 → 插件静默。
     #[test]
     fn version_layer_rewrite_still_counts_as_live() {
         let live =
-            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__pf-wxbot\0.2.0\pi\index.mjs"]);
+            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__sample-ext\0.2.0\pi\index.mjs"]);
         let mounts =
-            s(&["c:/users/u/.pi-flash/plugins/@pi-flash-plugins__pf-wxbot/0.1.4/pi/index.mjs"]);
+            s(&["c:/users/u/.pi-flash/plugins/@pi-flash-plugins__sample-ext/0.1.4/pi/index.mjs"]);
         assert!(mounts_overlap_live(&mounts, &live), "换代前后是同一挂载");
         // 不同文件仍不命中
         let other =
-            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__pf-wxbot\0.2.0\pi\other.mjs"]);
+            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__sample-ext\0.2.0\pi\other.mjs"]);
         assert!(!mounts_overlap_live(&mounts, &other));
     }
 
     #[test]
     fn unrelated_mounts_do_not_exempt() {
         // 用户勾选的 scheme 源不是插件挂载，进程里没有轮询器，不构成豁免
-        let live = s(&["D:/pf/plugins/pf-wxbot/pi/index.mjs"]);
+        let live = s(&["D:/pf/plugins/sample-ext/pi/index.mjs"]);
         let mounts = s(&["npm:pi-freeflow", "git:https://github.com/u/r"]);
         assert!(!mounts_overlap_live(&mounts, &live));
     }
@@ -422,8 +418,8 @@ mod has_live_service_tests {
     #[test]
     fn other_plugin_mounts_do_not_exempt() {
         // 台账挂着插件 A，存活清单只有插件 B（A 已停用/已卸载）→ 不豁免
-        let live = s(&["D:/pf/plugins/pf-wxbot/pi/index.mjs"]);
-        let mounts = s(&["D:/pf/plugins/quick-panel/pi/index.mjs"]);
+        let live = s(&["D:/pf/plugins/sample-ext/pi/index.mjs"]);
+        let mounts = s(&["D:/pf/plugins/sample-panel/pi/index.mjs"]);
         assert!(!mounts_overlap_live(&mounts, &live));
     }
 

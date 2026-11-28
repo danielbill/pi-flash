@@ -33,7 +33,7 @@ impl JsHost for TestHost {
     }
 }
 
-/// 与插件仓 packages/quick-panel/main.js 同契约的最小插件源码（v2：内联树）。
+/// 与标准包形同契约的最小插件源码（v2：内联树）。
 const PLUGIN: &str = r#"
 const KEY = "pins.json";
 const load = (ctx) => { try { const a = JSON.parse(ctx.fs.read(KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
