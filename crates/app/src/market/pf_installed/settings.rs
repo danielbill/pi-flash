@@ -415,22 +415,35 @@ pub(crate) fn settings_rows(
             SettingsKind::Stepper => stepper_control(weak, &item.name, f, &value),
             SettingsKind::Model => model_control(chat, weak, &item.name, f, &value, anchors),
         };
-        let mut content = div().flex().flex_col().gap(px(3.)).child(control);
-        if let Some(hint) = f.hint_zh.as_deref() {
-            content = content.child(
-                div()
-                    .text_size(crate::appearance::ui_size(10.5))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(pick_text(hint, &f.hint_en))),
-            );
-        }
-        col = col.child(field_row(&label, content, t));
+        let hint = f.hint_zh.as_deref().map(|hint| pick_text(hint, &f.hint_en));
+        col = col.child(field_row(&label, control, hint, t));
     }
     Some(col.into_any_element())
 }
 
-/// 字段行：label 左 + 控件右（detail_pane field() 同款两栅语言，行高放宽）。
-fn field_row(label: &str, content: Div, t: &'static Theme) -> AnyElement {
+/// 字段行：label 左 + 控件右（detail_pane field() 同款两栅语言）。首行统一
+/// 28px 高、label 与控件行内居中——标题（1 行）与控件行（1 行）水平对齐，
+/// 不随控件自身高度漂移（28 = bar_trigger 胶囊高，stepper 24px 在内居中；
+/// 旧 pt(5) 放宽写法在 stepper 行实测标题偏低，用户 2026-11-28 定稿废除）。
+fn field_row(
+    label: &str,
+    control: AnyElement,
+    hint: Option<String>,
+    t: &'static Theme,
+) -> AnyElement {
+    let mut content = div()
+        .flex()
+        .flex_col()
+        .child(div().h(px(28.)).flex().items_center().child(control));
+    if let Some(hint) = hint {
+        content = content.child(
+            div()
+                .mt(px(3.))
+                .text_size(crate::appearance::ui_size(10.5))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(hint)),
+        );
+    }
     div()
         .flex()
         .items_start()
@@ -438,8 +451,10 @@ fn field_row(label: &str, content: Div, t: &'static Theme) -> AnyElement {
         .child(
             div()
                 .w(px(120.))
+                .h(px(28.))
+                .flex()
                 .flex_shrink_0()
-                .pt(px(5.))
+                .items_center()
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(label.to_string())),
