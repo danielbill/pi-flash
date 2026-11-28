@@ -424,10 +424,9 @@ fn detail_pane(
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(breakable_path(&path.to_string_lossy()))),
         ))
-        // 横线分隔（用户定 2026-11-28）：设置区从说明下方下移到整段字段区之后
-        .child(gpui::div().h(px(1.)).mt(px(14.)).bg(rgb(t.border)))
-        // 统一插件设置（契约 v6，003-1）：横线下方按清单 [[contributes.settings]]
-        // 描述绘制；无设置段/停用插件 = 空集（零渲染）
+        // 统一插件设置（契约 v6，003-1）：整段字段区之后、容器自带 border_t
+        // 横线分隔（用户定 2026-11-28：独立 1px div 实测不可见，改描边机制）；
+        // 无设置段/停用插件 = None（零渲染，横线也不出）
         .children(settings::settings_rows(
             chat,
             weak,

@@ -320,24 +320,24 @@ impl Chat {
 }
 
 // ---------------------------------------------------------------------------
-// 渲染（detail_pane 设置区：插件说明下方）
+// 渲染（detail_pane 设置区：整段字段区之后、横线分隔——用户定 2026-11-28）
 // ---------------------------------------------------------------------------
 
-/// 设置区行集（含标题行 + 各字段行 + 保存行）。停用插件不渲染（随行隐身）；
-/// 清单无 settings 段不渲染。
+/// 设置区容器（单个元素，Option = 无设置段/停用插件不渲染）。容器自带
+/// `border_top` 横线（独立 1px div 在此面板不可靠——用户实测没看到，改描边
+/// 机制，与垃圾桶/保存钮描边同源必然可见）。首行 = 【设置】标题左 + 【保存】
+/// 右（用户定：保存上移至标题行）；仅 dirty 时 enable，保存后自动 disable。
 pub(crate) fn settings_rows(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     item: &InstalledItem,
     anchors: &PfSettingsAnchors,
     t: &'static Theme,
-) -> Vec<AnyElement> {
+) -> Option<AnyElement> {
     if item.disabled {
-        return Vec::new();
+        return None;
     }
-    let Some(m) = settings_manifest(&item.name) else {
-        return Vec::new();
-    };
+    let m = settings_manifest(&item.name)?;
     let lang2 = crate::i18n::lang_ix() == 2;
     let pick_text = |zh: &str, en: &Option<String>| {
         if lang2 {
@@ -355,44 +355,12 @@ pub(crate) fn settings_rows(
         .as_ref()
         .is_some_and(|d| d.pkg == item.name && d.dirty);
 
-    let mut rows = Vec::new();
-    // 区标题行（横线之下，与 detail_pane 的 field 行同一字距语言）
-    rows.push(
-        gpui::div()
-            .mt(px(10.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_size(crate::appearance::ui_size(11.))
-            .text_color(rgb(t.text_dim))
-            .child(SharedString::from(tr("market.pf.settings_head")))
-            .into_any_element(),
-    );
-    for f in m.settings.iter() {
-        let value = values
-            .get(&f.id)
-            .cloned()
-            .unwrap_or_else(|| default_value(f));
-        let label = pick_text(&f.label_zh, &f.label_en);
-        let control: AnyElement = match f.kind {
-            SettingsKind::Stepper => stepper_control(weak, &item.name, f, &value),
-            SettingsKind::Model => model_control(chat, weak, &item.name, f, &value, anchors),
-        };
-        let mut content = div().flex().flex_col().gap(px(3.)).child(control);
-        if let Some(hint) = f.hint_zh.as_deref() {
-            content = content.child(
-                div()
-                    .text_size(crate::appearance::ui_size(10.5))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(pick_text(hint, &f.hint_en))),
-            );
-        }
-        rows.push(field_row(&label, content, t));
-    }
-    // 保存行：右下，仅 dirty 时 enable（保存后自动 disable——003-1 定案）
+    // 保存钮（标题行右侧）：仅 dirty 时 enable（保存后自动 disable——003-1 定案）
     let pkg = item.name.clone();
     let weak_save = weak.clone();
     let mut save = div()
         .id("pf-settings-save")
-        .h(px(28.))
+        .h(px(26.))
         .px(px(12.))
         .flex()
         .items_center()
@@ -413,21 +381,57 @@ pub(crate) fn settings_rows(
     } else {
         save = save.opacity(0.5).text_color(rgb(t.text_faint));
     }
-    rows.push(
-        div()
-            .mt(px(10.))
-            .flex()
-            .justify_end()
-            .child(save)
-            .into_any_element(),
-    );
-    rows
+
+    // 标题行：【设置】左 + 【保存】右
+    let head_row = div()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex_1()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(tr("market.pf.settings_head"))),
+        )
+        .child(save);
+
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap(px(14.))
+        .border_t_1()
+        .border_color(rgb(t.border))
+        .pt(px(14.))
+        .child(head_row);
+    for f in m.settings.iter() {
+        let value = values
+            .get(&f.id)
+            .cloned()
+            .unwrap_or_else(|| default_value(f));
+        let label = pick_text(&f.label_zh, &f.label_en);
+        let control: AnyElement = match f.kind {
+            SettingsKind::Stepper => stepper_control(weak, &item.name, f, &value),
+            SettingsKind::Model => model_control(chat, weak, &item.name, f, &value, anchors),
+        };
+        let mut content = div().flex().flex_col().gap(px(3.)).child(control);
+        if let Some(hint) = f.hint_zh.as_deref() {
+            content = content.child(
+                div()
+                    .text_size(crate::appearance::ui_size(10.5))
+                    .text_color(rgb(t.text_faint))
+                    .child(SharedString::from(pick_text(hint, &f.hint_en))),
+            );
+        }
+        col = col.child(field_row(&label, content, t));
+    }
+    Some(col.into_any_element())
 }
 
 /// 字段行：label 左 + 控件右（detail_pane field() 同款两栅语言，行高放宽）。
 fn field_row(label: &str, content: Div, t: &'static Theme) -> AnyElement {
     div()
-        .mt(px(8.))
         .flex()
         .items_start()
         .gap(px(12.))
