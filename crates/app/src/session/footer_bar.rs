@@ -108,11 +108,9 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         first = false;
 
         let blocked = running && matches!(action, Some(StatusAction::Command(_)));
-        let color = match action {
-            None => t.text_faint,
-            Some(_) if blocked => t.text_faint,
-            Some(_) => t.text_muted,
-        };
+        // 色档：正常 = text_muted（2026-11-28 用户令：无动作项原 text_faint 太暗，
+        // bac 状态文本看不清）；运行中动作被禁 = text_faint（可点性降档保留）。
+        let color = if blocked { t.text_faint } else { t.text_muted };
         let mut el = div()
             .id(SharedString::from(format!("ext-status-{key}")))
             .flex()
@@ -171,7 +169,11 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .bottom_0()
             .left_0()
             .right_0()
-            .h(px(BAR_H))
+            // 高 +1（2026-11-28 用户定夺）：条顶上探 1px 盖住与 composer 胶囊
+            // 底缘之间的细缝（非整数缩放下两处独立 absolute 定位可差 1 物理
+            // px，缝里透出身后消息）。BAR_H 常量不动——composer 底距等消费方
+            // 仍按 30 让位，只本条多画 1px 向上叠。
+            .h(px(BAR_H + 1.))
             // 整条自挡穿透（scroll_to_bottom_button 同款问题）：absolute 覆盖
             // 层压在消息列上，条身无 BlockMouse hitbox 时点击会漏进身后的
             // 消息链接/文本选区（TextView 起选监听按 hitbox 判遮挡）。条内
