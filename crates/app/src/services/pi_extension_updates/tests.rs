@@ -74,3 +74,82 @@ fn parse_scoped_source_keeps_name() {
 fn scoped_name_encoding() {
     assert_eq!("@scope/pkg".replace('/', "%2F"), "@scope%2Fpkg");
 }
+
+// ---------------------------------------------------------------------------
+// 082 v2 混排：pf_update_rows 纯推导（台账 × 索引）
+// ---------------------------------------------------------------------------
+
+use pi_link::pf_plugins::{LedgerEntry, MarketIndex};
+
+fn ledger(name: &str, version: &str, disabled: bool) -> LedgerEntry {
+    LedgerEntry {
+        name: name.to_string(),
+        version: version.to_string(),
+        integrity: String::new(),
+        installed_at: String::new(),
+        source: "market".to_string(),
+        disabled,
+    }
+}
+
+fn index(json: &str) -> MarketIndex {
+    MarketIndex::parse(json).unwrap()
+}
+
+const IX: &str = r#"{
+    "packages": [
+        { "name": "@pi-flash-plugins/ctx-compactor", "version": "1.3.0", "integrity": "sha512-x",
+          "display": { "zh": "会话上下文自动压缩", "en": "Context compactor" } },
+        { "name": "@pi-flash-plugins/same-ver", "version": "2.0.0", "integrity": "sha512-x",
+          "display": { "zh": "同版插件", "en": "" } },
+        { "name": "@pi-flash-plugins/older-ix", "version": "0.9.0", "integrity": "sha512-x",
+          "display": { "zh": "索引更旧", "en": "" } },
+        { "name": "@pi-flash-plugins/no-zh", "version": "3.0.0", "integrity": "sha512-x",
+          "display": { "zh": "", "en": "No zh" } }
+    ]
+}"#;
+
+/// 索引版本更高 → 行；前缀 `Pi-Flash · ` + 索引 zh 名
+#[test]
+fn pf_rows_updatable_with_prefix() {
+    let lg = vec![ledger("@pi-flash-plugins/ctx-compactor", "1.2.0", false)];
+    let rows = pf_update_rows(&lg, &index(IX));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name, "@pi-flash-plugins/ctx-compactor");
+    assert_eq!(rows[0].display, "Pi-Flash · 会话上下文自动压缩");
+}
+
+/// 同版 / 索引更旧 / 索引缺失（dev 侧载）→ 不出行
+#[test]
+fn pf_rows_skip_non_updatable() {
+    let lg = vec![
+        ledger("@pi-flash-plugins/same-ver", "2.0.0", false),
+        ledger("@pi-flash-plugins/older-ix", "1.0.0", false),
+        ledger("@pi-flash-plugins/unindexed", "1.0.0", false),
+    ];
+    assert!(pf_update_rows(&lg, &index(IX)).is_empty());
+}
+
+/// 停用包照出行（与市场已装页检测口径一致）
+#[test]
+fn pf_rows_include_disabled() {
+    let lg = vec![ledger("@pi-flash-plugins/ctx-compactor", "1.2.0", true)];
+    assert_eq!(pf_update_rows(&lg, &index(IX)).len(), 1);
+}
+
+/// 索引 zh 名为空 → 回落包名（仍带前缀）
+#[test]
+fn pf_rows_display_falls_back_to_name() {
+    let lg = vec![ledger("@pi-flash-plugins/no-zh", "2.0.0", false)];
+    let rows = pf_update_rows(&lg, &index(IX));
+    assert_eq!(rows[0].display, "Pi-Flash · @pi-flash-plugins/no-zh");
+}
+
+/// 混排口径：pi 行在前、PF 行恒排末尾——pf_rows 与 pi results 天然分列，
+/// 卡片侧顺序拼接即满足；这里固化 pf_rows 与 pi available() 独立（n = 和）
+#[test]
+fn pf_rows_independent_of_pi_count() {
+    let st = UpdatesState::default();
+    assert_eq!(st.available(), 0);
+    assert!(st.pf_rows.is_empty());
+}

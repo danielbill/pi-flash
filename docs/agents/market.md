@@ -192,3 +192,21 @@
   `prune_old_versions`，启动链 `migrate_data_dirs` **之后** `prune_stale_versions`
   补刀。prune 自带「旧目录有未迁 data 先 rename 到包层」保险，但调用顺序仍必须
   迁移在前。平铺 dev 布局 `dir == <pkg>` 不受版本门限制。
+
+## 扩展更新卡混排（082 v2 × 090-10，2026-11-28）
+
+新会话页更新卡混入 PF 行（PF 恒排末尾 + `Pi-Flash · ` 前缀），PF 侧行数据沉在
+`aux.pi_extension_updates.pf_rows`（渲染零磁盘），两个链式陷阱：
+
+- **批量链条只能挂 `pf_install` 完成闭包**：pending 单飞使顺序循环调
+  `pf_update` 从第二个起全部静默 no-op（早 return 无任何反馈）。队列
+  （`PfState.update_queue` + `mixed_batch`）在完成闭包里 pop_front 推进，
+  失败（Err 分支）同样要弹下一家，否则整链停摆；队列耗尽清位后接 pi CLI
+  更新（op 泵收尾自动重检 082）。
+- **min_pf 拒载不触发完成闭包**：`pf_install` 的 engines.pf 门在设 pending
+  **之前** return——播种队列前必须用 `pf_market::min_pf_satisfied` 预过滤
+  （谓词与门同源），漏过滤 = 队列头是拒载包 → mixed_batch 永远清不了位，
+  卡片按钮永久「更新中…」直到重启。
+- PF 装/更/卸完成闭包与 `open_pf_market` 扫描完成都要 `refresh_pf_update_rows`
+  （同步算：台账小 JSON + 索引 Arc 快照；**别塞进 render 路径**——同 stale
+  陷阱，已安装页 render 每帧在跑）。

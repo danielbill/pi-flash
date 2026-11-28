@@ -26,7 +26,9 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("project.search_placeholder", "搜索项目…", "搜尋項目…", "Search projects…"),
     ("project.idle_30d", "最近 30 天没有打开过的项目", "最近 30 天沒有開啟過的項目", "No projects opened in the last 30 days"),
     ("project.no_match", "没有匹配的项目", "沒有符合的項目", "No matching projects"),
-    ("new_session.pi_extension_updates", "Pi 扩展更新", "Pi 擴展更新", "Pi extension updates"),
+    // 082 v2 混排：pi 扩展 + PF 插件更新共用一张卡（PF 行恒排末尾，见
+    // new_session::plugin_update_notice）
+    ("new_session.extension_updates", "扩展更新", "擴展更新", "Extension updates"),
     // session list / relative time templates
     ("session.messages", "{} 条消息", "{} 條消息", "{} messages"),
     // 会话功能栏（session::session_fn_bar，原 topbar ⋯ 菜单三入口）

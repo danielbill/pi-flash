@@ -134,6 +134,28 @@ pub(crate) fn index_snapshot() -> std::sync::Arc<pi_link::pf_plugins::MarketInde
     index()
 }
 
+/// 索引写入口（082 v2 混排预取泵用）：与 `index()` 裸线程写同锁。纯新增
+/// 口子（market.md hunk 所有权陷阱：不动既有扫描链）。
+pub(crate) fn store_index(ix: pi_link::pf_plugins::MarketIndex) {
+    *PF_INDEX.write().unwrap() = Some(std::sync::Arc::new(ix));
+}
+
+/// `engines.pf` 下限是否满足（pf_install 门的谓词化）。082 v2 混排批量
+/// 播种预过滤用——min_pf 拒载在设 pending 之前 return、不触发完成闭包，
+/// 队列不预过滤会整链卡死。解析不出（min_pf 非法）按放行，与门同判。
+pub(crate) fn min_pf_satisfied(entry: &pi_link::pf_plugins::IndexEntry) -> bool {
+    if entry.min_pf.is_empty() {
+        return true;
+    }
+    match (
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).ok(),
+        semver::VersionReq::parse(&entry.min_pf).ok(),
+    ) {
+        (Some(cur), Some(req)) => req.matches(&cur),
+        _ => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 状态（挂 Chat.aux.market.pf）
 // ---------------------------------------------------------------------------
@@ -175,6 +197,13 @@ pub struct PfState {
     /// 启动扫描写入；更新/启用重载成功、卸载时按包名移除。驱动市场头部
     /// 常驻通知行 + 已安装页标签——toast 只播一次，错过了这里还看得到。
     pub stale: Vec<crate::pf_plugin::StalePlugin>,
+    /// 082 v2 混排批量：剩余待更 PF 包队列。链条挂 pf_install 完成闭包推进
+    /// （pending 单飞使顺序循环调 pf_update 会全部静默 no-op，只能队列 +
+    /// 完成闭包）；播种时已按 min_pf 预过滤。
+    pub update_queue: std::collections::VecDeque<String>,
+    /// 082 v2 混排批量进行中（PF 阶段）：卡片按钮「更新中…」+ 禁用判定；
+    /// 队列耗尽后由完成闭包清位并接 pi CLI 更新。
+    pub mixed_batch: bool,
 }
 
 impl Default for PfState {
@@ -191,6 +220,8 @@ impl Default for PfState {
             settings: None,
             settings_anchors: Default::default(),
             stale: Vec::new(),
+            update_queue: Default::default(),
+            mixed_batch: false,
         }
     }
 }
@@ -228,10 +259,12 @@ impl Chat {
             let scanned = scan.await;
             let _ = this.update(cx, |c, cx| {
                 if let Ok(ix) = scanned {
-                    *PF_INDEX.write().unwrap() = Some(std::sync::Arc::new(ix));
+                    store_index(ix);
                 }
                 c.aux.market.pf.loading = false;
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                // 082 v2 混排：索引/台账可能都变了 → 扩展更新卡 PF 行同步刷新
+                c.refresh_pf_update_rows(cx);
                 cx.notify();
             });
         })
@@ -263,23 +296,18 @@ impl Chat {
         let Some(entry) = index().entry(&name).cloned() else {
             return; // 索引外：理论上不可达（按钮只按索引渲染）
         };
-        // engines.pf 下限（semver；app 已有依赖，pi-link 不引）
-        if !entry.min_pf.is_empty() {
-            let cur = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok();
-            let req = semver::VersionReq::parse(&entry.min_pf).ok();
-            if let (Some(cur), Some(req)) = (cur, req) {
-                if !req.matches(&cur) {
-                    self.aux.market.pf.error = Some(tf(
-                        "market.pf.need_newer_pf",
-                        &[
-                            ("min", entry.min_pf.clone()),
-                            ("cur", env!("CARGO_PKG_VERSION").to_string()),
-                        ],
-                    ));
-                    cx.notify();
-                    return;
-                }
-            }
+        // engines.pf 下限（semver；app 已有依赖，pi-link 不引）。判定谓词在
+        // [`min_pf_satisfied`]（082 v2 混排批量播种同用一份，防口径漂移）
+        if !min_pf_satisfied(&entry) {
+            self.aux.market.pf.error = Some(tf(
+                "market.pf.need_newer_pf",
+                &[
+                    ("min", entry.min_pf.clone()),
+                    ("cur", env!("CARGO_PKG_VERSION").to_string()),
+                ],
+            ));
+            cx.notify();
+            return;
         }
         self.aux.market.pf.pending = Some(name.clone());
         self.aux.market.pf.error = None;
@@ -302,6 +330,35 @@ impl Chat {
                     Err(e) => c.aux.market.pf.error = Some(e),
                 }
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                // 082 v2 混排：装/更后台账变 → 扩展更新卡 PF 行即变（同步
+                // 算，台账小 JSON + 索引 Arc 快照，不在渲染热路径）
+                c.refresh_pf_update_rows(cx);
+                // 混排批量链条（完成闭包推进，失败不堵队——Err 也弹下一家，
+                // 失败原因落市场页既有错误行；队列耗尽清位，pi 侧有可更则接
+                // CLI 更新，其 op 泵收尾自动重检 082）。逐个弹队直到命中仍可
+                // 更的包：pf_install 对索引缺失/min_pf 拒载是设 pending 前
+                // 静默 early-return（完成闭包不再触发），不复核会整链卡死——
+                // 播种时过滤过，这里防批量中途换表（市场页重扫）的竞态
+                if c.aux.market.pf.mixed_batch {
+                    loop {
+                        match c.aux.market.pf.update_queue.pop_front() {
+                            Some(next)
+                                if index_snapshot().entry(&next).is_some_and(min_pf_satisfied) =>
+                            {
+                                c.pf_update(next, cx);
+                                break;
+                            }
+                            Some(_) => continue,
+                            None => {
+                                c.aux.market.pf.mixed_batch = false;
+                                if c.aux.pi_extension_updates.available() > 0 {
+                                    c.mc_update_all_packages(cx);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
                 cx.notify();
             });
         })

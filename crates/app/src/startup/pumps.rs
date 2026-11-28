@@ -295,6 +295,9 @@ fn spawn_splash_gate(cx: &mut gpui::Context<Chat>) {
             // 082 延迟加载：Pi 扩展更新检测（只读 + 网络，零写入；结果进
             // aux.plugin_updates，新会话页通知与设置·扩展页消费）
             c.spawn_pi_extension_updates_check(cx);
+            // 082 v2 混排：PF 市场索引预取（pf_scan N+2 串行 HTTP 稍慢，
+            // 后台线程 + 完成才把 PF 行追加进扩展更新卡；零阻塞揭幕与新会话页）
+            c.spawn_pf_updates_check(cx);
             // 040-1 延迟加载：Pi 扩展市场预热——只预取首页，且**只在已有
             // 首页快照时**才发请求（从没用过市场页 = 零请求），见
             // market/prefetch.rs

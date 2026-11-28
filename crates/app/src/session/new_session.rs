@@ -325,26 +325,33 @@ fn action_bar(
     bar.into_any_element()
 }
 
-/// 082 Pi 扩展更新通知（零高锚点 + absolute 卡片）：锚点紧跟 action_bar
-/// 流内不占高度，卡片固定下移 20px（验收定稿：与项目选择操作栏固定 20px
-/// 间距，欢迎语/inputpanel 定位零改动）；宽 = 上方内容列 80%，卡片式（圆
-/// 角边框同 composer 呼应），标题行下分隔线，列表上限 300px 超长滚动；
-/// 标题行右侧【更新全部(n)】= UI 规范按钮（与设置·扩展页统一
-/// config_button）。安静原则：检查中不显示、n=0 不渲染；点击列表行暂无
-/// 动作（v1 仅展示，入口在设置·扩展页）。
+/// 082 v2 扩展更新通知（pi 扩展 + PF 插件混排，零高锚点 + absolute 卡片）：
+/// 锚点紧跟 action_bar 流内不占高度，卡片固定下移 20px（验收定稿：与项目
+/// 选择操作栏固定 20px 间距，欢迎语/inputpanel 定位零改动）；宽 = 上方内
+/// 容列 80%，卡片式（圆角边框同 composer 呼应），标题行下分隔线，列表上限
+/// 300px 超长滚动；标题行右侧【更新全部(n)】= UI 规范按钮（与设置·扩展页
+/// 统一 config_button），n = 两侧之和，点击先 PF 批量后 pi CLI（跨管线串
+/// 行）。PF 行恒排末尾且带 `Pi-Flash · ` 前缀（用户定稿 2026-11-28）；PF
+/// 索引预取稍慢，未到时先按 pi 行渲染，到了 notify 追加（零阻塞）。安静
+/// 原则：检查中不显示、n=0 不渲染；点击列表行暂无动作（v1 仅展示，pi 行
+/// 入口在设置·扩展页、PF 行在市场已装页）。
 fn plugin_update_notice(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static crate::appearance::theme::Theme,
 ) -> Option<AnyElement> {
-    let n = chat.aux.pi_extension_updates.available();
+    let pf_rows = &chat.aux.pi_extension_updates.pf_rows;
+    let n = chat.aux.pi_extension_updates.available() + pf_rows.len();
     if n == 0 {
         return None;
     }
+    // 忙判定覆盖两条管线：pi CLI op（cfg.pkg_op）/ PF 批量 PF 阶段
+    // （mixed_batch，含 pending 单飞期）/ 市场页单插件装更（pending）
+    let pf_busy = chat.aux.market.pf.mixed_batch || chat.aux.market.pf.pending.is_some();
     let updating_all = matches!(
         chat.cfg.pkg_op.as_ref(),
         Some(crate::settings::pi_extensions::PkgOp::Update(None))
-    );
+    ) || pf_busy;
     let rows: Vec<&crate::services::pi_extension_updates::PkgUpdateResult> = chat
         .aux
         .pi_extension_updates
@@ -354,7 +361,8 @@ fn plugin_update_notice(
             r.state == crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable
         })
         .collect();
-    // 更新全部按钮：与设置·扩展页同一 config_button（ui::button 规范件）
+    // 更新全部按钮：与设置·扩展页同一 config_button（ui::button 规范件），
+    // 动作换混排版（PF 批量 → pi CLI）；设置·扩展页按钮保持 pi-only 不变
     let label = if updating_all {
         tr("extensions.updating_all").to_string()
     } else {
@@ -366,8 +374,8 @@ fn plugin_update_notice(
         &label,
         crate::ui::kit::Btn::Secondary,
         true,
-        chat.cfg.pkg_op.is_some(),
-        |c, cx| c.mc_update_all_packages(cx),
+        chat.cfg.pkg_op.is_some() || pf_busy,
+        |c, cx| c.mc_update_all_ext_and_pf(cx),
     );
     let mut list = div()
         .id("ns-pkg-list")
@@ -397,6 +405,33 @@ fn plugin_update_notice(
                         .text_ellipsis()
                         .text_color(rgb(t.text_muted))
                         .child(SharedString::from(r.display_name.clone())),
+                )
+                .child(crate::ui::icon("arrow-up", 10., t.accent)),
+        );
+    }
+    // PF 行恒排末尾（用户定稿 2026-11-28）：display 已带 `Pi-Flash · ` 前
+    // 缀（服务层组装），行 id 独立前缀防与 pi 行重 id
+    for (ix, r) in pf_rows.iter().enumerate() {
+        list = list.child(
+            div()
+                .id(SharedString::from(format!("ns-pf-row-{ix}")))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(6.))
+                .py(px(3.))
+                .rounded(px(4.))
+                .text_size(crate::appearance::ui_size(12.))
+                .hover(|h| h.bg(rgb(t.bg_hover)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(rgb(t.text_muted))
+                        .child(SharedString::from(r.display.clone())),
                 )
                 .child(crate::ui::icon("arrow-up", 10., t.accent)),
         );
@@ -450,7 +485,7 @@ fn plugin_update_notice(
                                             .text_size(crate::appearance::ui_size(11.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .text_color(rgb(t.text_dim))
-                                            .child(tr("new_session.pi_extension_updates")),
+                                            .child(tr("new_session.extension_updates")),
                                     )
                                     .child(btn),
                             )

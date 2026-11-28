@@ -23,12 +23,14 @@
 //! npm 钉精确版本 / git 钉 ref / 本地路径 → unsupported；`PI_OFFLINE=1` 全
 //! 部 error；读不到实装版本按 error 容错。
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::Chat;
 use crate::i18n::tr;
+use crate::market::pf_market::{index_snapshot, min_pf_satisfied, pf_updatable, store_index};
 
 mod npm;
 
@@ -56,6 +58,11 @@ pub(crate) enum PkgUpdateState {
 pub(crate) struct UpdatesState {
     pub(crate) results: Vec<PkgUpdateResult>,
     pub(crate) checking: bool,
+    /// 090-10 混排：PF 插件可更新行（PF 恒排卡内末尾）。预取泵 / PF op 完成
+    /// 闭包刷新，渲染路径零磁盘（market.md 陷阱：渲染每帧禁重活）。
+    pub(crate) pf_rows: Vec<PfUpdateRow>,
+    /// PF 索引预取单飞（pf_scan N+2 串行 HTTP 稍慢；失败安静）
+    pub(crate) pf_checking: bool,
 }
 
 impl UpdatesState {
@@ -102,6 +109,53 @@ fn mk_err(source: &str, detail: impl ToString) -> PkgUpdateResult {
         detail: Some(detail.to_string()),
         ..mk(source, PkgUpdateState::Error)
     }
+}
+
+// ---------------------------------------------------------------------------
+// PF 插件更新行（090-10 × 082 v2 混排）
+// ---------------------------------------------------------------------------
+
+/// PF 插件可更新行：混排卡里 PF 恒排 pi 行之后，display 带前缀区分。
+#[derive(Debug, Clone)]
+pub(crate) struct PfUpdateRow {
+    pub(crate) name: String,
+    pub(crate) display: String,
+}
+
+/// PF 行前缀（用户定稿 2026-11-28，形如 `Pi-Flash · 会话上下文自动压缩`）：
+/// 产品名三语同形，硬编码不进 i18n。
+const PF_ROW_TAG: &str = "Pi-Flash · ";
+
+/// 纯推导（可测）：台账条目在索引有同名包且索引版本更高 → 更新行。含停用
+/// 包（与市场已装页检测口径一致——更新后台账回 enabled 是现有单更行为）；
+/// display 取索引 zh 名，空则回落包名。
+pub(crate) fn pf_update_rows(
+    ledger: &[pi_link::pf_plugins::LedgerEntry],
+    index: &pi_link::pf_plugins::MarketIndex,
+) -> Vec<PfUpdateRow> {
+    ledger
+        .iter()
+        .filter_map(|l| {
+            let e = index.entry(&l.name)?;
+            pf_updatable(&l.version, &e.version).then(|| PfUpdateRow {
+                name: l.name.clone(),
+                display: format!(
+                    "{PF_ROW_TAG}{}",
+                    if e.display.zh.is_empty() {
+                        l.name.clone()
+                    } else {
+                        e.display.zh.clone()
+                    }
+                ),
+            })
+        })
+        .collect()
+}
+
+/// 从磁盘台账 + 当前索引快照现算（预取泵 / PF op 完成闭包用；台账是小
+/// JSON、索引是 Arc 快照，不在渲染热路径）。
+fn collect_pf_rows() -> Vec<PfUpdateRow> {
+    pf_update_rows(&pi_link::pf_plugins::load_ledger(), &index_snapshot())
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +444,84 @@ impl Chat {
             tr("extensions.updated_all").to_string(),
             cx,
         );
+    }
+
+    /// 090-10 混排：PF 市场索引预取（splash-gate 延迟泵调，揭幕后才跑）。
+    /// pf_scan 是 N+2 串行 HTTP（比 082 检测稍慢），后台线程 + 完成才把 PF
+    /// 行追加进卡——绝不阻塞启动与新会话页首帧；失败安静（debug stderr），
+    /// 索引缺位时 PF 行静默缺席（安静原则同 082）。单飞防重入。
+    pub(crate) fn spawn_pf_updates_check(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.aux.pi_extension_updates.pf_checking {
+            return;
+        }
+        self.aux.pi_extension_updates.pf_checking = true;
+        cx.spawn(async move |this, cx| {
+            let scanned = cx
+                .background_executor()
+                .spawn(async move { pi_link::market::pf_scan::fetch() })
+                .await;
+            let _ = this.update(cx, |c, cx| {
+                c.aux.pi_extension_updates.pf_checking = false;
+                match scanned {
+                    Ok(ix) => {
+                        store_index(ix);
+                        c.aux.pi_extension_updates.pf_rows = collect_pf_rows();
+                    }
+                    Err(e) => {
+                        if cfg!(debug_assertions) {
+                            eprintln!("[ext-updates] pf index fetch failed: {e}");
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// PF op（装/更/卸）或索引变化后的行刷新（PF 完成闭包调用；同步算，
+    /// 见 [`collect_pf_rows`] 的成本说明）。
+    pub(crate) fn refresh_pf_update_rows(&mut self, cx: &mut gpui::Context<Self>) {
+        self.aux.pi_extension_updates.pf_rows = collect_pf_rows();
+        cx.notify();
+    }
+
+    /// 更新全部（新会话页混排卡专用，标题【扩展更新】）：先 PF 批量（链条
+    /// 挂 pf_install 完成闭包，见 pf_market::pf_install；min_pf 拒载在设
+    /// pending 之前 return、不触发完成闭包，播种必须预过滤防卡死），队列
+    /// 耗尽后接 pi CLI 更新（op 泵自动重检 082）。设置·扩展页按钮保持
+    /// pi-only，不走这里。
+    pub(crate) fn mc_update_all_ext_and_pf(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.cfg.pkg_op.is_some()
+            || self.aux.market.pf.pending.is_some()
+            || self.aux.market.pf.mixed_batch
+        {
+            return;
+        }
+        self.mc_clear_error(cx);
+        let mut queue: VecDeque<String> = self
+            .aux
+            .pi_extension_updates
+            .pf_rows
+            .iter()
+            .filter(|r| {
+                index_snapshot()
+                    .entry(&r.name)
+                    .is_some_and(min_pf_satisfied)
+            })
+            .map(|r| r.name.clone())
+            .collect();
+        if queue.is_empty() {
+            // 无可更 PF 插件（或全部 min_pf 不满足）：退化 pi-only（原 082 路径）
+            if self.aux.pi_extension_updates.available() > 0 {
+                self.mc_update_all_packages(cx);
+            }
+            return;
+        }
+        let first = queue.pop_front().expect("queue 非空");
+        self.aux.market.pf.mixed_batch = true;
+        self.aux.market.pf.update_queue = queue;
+        self.pf_update(first, cx);
     }
 }
 

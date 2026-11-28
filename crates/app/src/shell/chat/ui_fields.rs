@@ -49,7 +49,8 @@ pub(crate) struct AuxUi {
     pub(crate) changelog: Option<services::updater::ChangelogPage>,
     /// 更新日志页滚动句柄
     pub(crate) changelog_scroll: gpui::ScrollHandle,
-    /// 082 Pi 扩展更新检测状态（新会话页通知 + 设置·扩展页箭头/按钮消费）
+    /// 082 Pi 扩展更新检测状态（新会话页通知 + 设置·扩展页箭头/按钮消费）；
+    /// v2 混排后还挂 PF 插件更新行（pf_rows，PF 恒排卡内末尾）
     pub(crate) pi_extension_updates: services::pi_extension_updates::UpdatesState,
     /// 040-1 市场域状态簇（Pi 扩展市场页；后续多个市场在此并列）
     pub(crate) market: crate::market::MarketUi,

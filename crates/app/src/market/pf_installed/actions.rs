@@ -142,6 +142,9 @@ impl Chat {
                 c.aux.market.pf.removing = None;
                 c.aux.market.pf.error = result.err();
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                // 082 v2 混排：卸了就不该再出现在扩展更新卡（装/更同理由
+                // pf_install 完成闭包刷新）
+                c.refresh_pf_update_rows(cx);
                 // 设置真源清理在 pi_link::pf_plugins::uninstall 内（镜像随
                 // data/ 目录删除）；这里只摘内存草稿（防悬空 pkg 引用）
                 if c.aux
