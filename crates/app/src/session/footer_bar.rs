@@ -181,10 +181,10 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .items_center()
             .justify_center()
             .overflow_hidden()
-            // 底色 = 会话区背景 75% 不透明（t.bg，2026-11-08 定夺）：absolute
-            // 覆盖层压在消息列表之上，无底色时滚到带子底下的消息/工具卡会
-            // 透出来；半透底让底下内容隐约可见又不喧宾
-            .bg(gpui::rgba(crate::appearance::theme::rgba_a(t.bg, 0.75)))
+            // 底色 = 会话区背景 90% 不透明（t.bg，2026-11-28 用户定夺，原
+            // 0.75）：absolute 覆盖层压在消息列表之上，无底色时滚到带子底下
+            // 的消息/工具卡会透出来；半透底让底下内容隐约可见又不喧宾
+            .bg(gpui::rgba(crate::appearance::theme::rgba_a(t.bg, 0.9)))
             .child(
                 div()
                     .w_full()
