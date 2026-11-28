@@ -37,18 +37,9 @@ pub(super) fn validate(m: &mut PluginManifest, dir: &Path) -> Result<(), String>
     }
     // 内层 wasm 插件（090-5 L3）无 contributes 也合法——验签在 wasm 内。
     // pi_extensions（v2.4/v3）/ service（v4）都是进驻面（真机 2026-11-27：
-    // 只携 pi 扩展的 hook 型插件被误判纯库包拒装，测试暴露）
-    if m.wasm.is_none()
-        && m.bytecode.is_none()
-        && m.status_bar.is_none()
-        && m.file_menu.is_empty()
-        && m.panels.is_empty()
-        && m.fn_bar.is_none()
-        && m.popups.is_empty()
-        && m.pi_extensions.is_empty()
-        && m.service.is_empty()
-        && m.settings.is_empty()
-    {
+    // 只携 pi 扩展的 hook 型插件被误判纯库包拒装，测试暴露）。判定唯一真源
+    // = has_settled_face（含 topbar_menu），与 scan 预过滤共用防漂移。
+    if !super::has_settled_face(m) {
         return Err("纯库包（没申请任何进驻面），不加载".into());
     }
     // 契约 v6 统一插件设置（003-1）：id 非空唯一（点路径）、label 必给、

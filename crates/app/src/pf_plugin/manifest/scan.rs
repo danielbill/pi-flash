@@ -98,15 +98,11 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
         }
         match parse_manifest(&dir) {
             Ok(mut m) => {
-                // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
-                if m.wasm.is_none()
-                    && m.bytecode.is_none()
-                    && m.status_bar.is_none()
-                    && m.file_menu.is_empty()
-                    && m.panels.is_empty()
-                    && m.fn_bar.is_none()
-                    && m.popups.is_empty()
-                {
+                // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）；
+                // 判定唯一真源 = has_settled_face（与 validate 纯库包同源）——
+                // 此前此处字段清单漂移漏计 pi_extensions/settings，设置型包
+                // validate 放行后仍被当纯库包跳过（2026-11-28 真机）
+                if !super::has_settled_face(&m) {
                     continue; // 纯库包
                 }
                 m.pkg = pkg;

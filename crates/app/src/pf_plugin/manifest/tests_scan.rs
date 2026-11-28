@@ -400,3 +400,72 @@ fn pf_runtime_write_seq_and_flags() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 2026-11-28 真机回归：scan 预过滤曾漏计 pi_extensions/settings，只携这两段
+/// 的 v6 包（bac 0.2.0 平铺 dev 形制）validate 放行后仍被 scan 当纯库包跳过
+/// → 「启用失败：未找到插件清单」。进驻面判定收敛到 has_settled_face 后，
+/// 任一进驻面单独成包都必须装载（平铺布局，台账版本 ≠ 清单版本不拦——dev
+/// 平铺无版本层可比）。
+#[test]
+fn scan_root_loads_settings_or_pi_ext_only_pkgs() {
+    let tmp = std::env::temp_dir().join(format!("pf-scan-face-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    // ① 纯设置包（无 panels/status_bar/wasm，bac 同形）
+    let set = tmp.join("settings-only");
+    write_manifest(
+        &set,
+        r#"
+schema = 6
+id = "settings-only"
+title = { zh = "设置包", en = "Settings Only" }
+version = "0.2.0"
+
+[[contributes.settings]]
+id = "limit"
+type = "stepper"
+label = { zh = "上限" }
+min = 100000
+max = 400000
+step = 50000
+default = 200000
+"#,
+    );
+    std::fs::write(
+        set.join("main.js"),
+        "export function activate(ctx){void ctx;}",
+    )
+    .unwrap();
+    // ② 纯 pi 扩展包（hook 型，scope=all-sessions）
+    let hook = tmp.join("hook-only");
+    write_manifest(
+        &hook,
+        r#"
+schema = 6
+id = "hook-only"
+title = { zh = "钩子", en = "Hook Only" }
+version = "0.1.0"
+
+[[contributes.pi_extensions]]
+path = "pi/index.mjs"
+scope = "all-sessions"
+"#,
+    );
+    std::fs::create_dir_all(hook.join("pi")).unwrap();
+    std::fs::write(
+        hook.join("pi/index.mjs"),
+        "export function activate(ctx){void ctx;}",
+    )
+    .unwrap();
+
+    let ledger = vec![
+        // 台账版本故意 ≠ 清单版本（bac 台账残留 0.1.0、清单已 0.2.0 的真机形态）
+        ledger_entry("settings-only", "0.1.0", false),
+        ledger_entry("hook-only", "0.1.0", false),
+    ];
+    let out = scan_root(&tmp, &ledger);
+    assert!(out.stale.is_empty(), "不应有失效包：{:?}", out.stale);
+    let mut ids: Vec<&str> = out.manifests.iter().map(|m| m.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, vec!["hook-only", "settings-only"], "两包都装载");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

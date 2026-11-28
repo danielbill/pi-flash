@@ -91,6 +91,26 @@ pub(crate) struct PluginManifest {
     pub settings: Vec<SettingsField>,
 }
 
+/// 进驻面判定唯一真源：清单是否申请了任一进驻面（wasm/字节码/状态栏/topbar
+/// 菜单/文件菜单/面板/fn_bar/弹窗/pi 扩展/服务/统一设置；sessions 只是对账位，
+/// 不算进驻面）。scan 预过滤与 validate「纯库包」判定共用此函数，防两份字段
+/// 清单各自漂移——2026-11-28 真机：scan 预过滤漏计 pi_extensions/settings，
+/// 只携这两段的 v6 设置型包（bac 0.2.0 平铺 dev）validate 放行后仍被 scan
+/// 跳过，用户看到「启用失败：未找到插件清单」+ 已装页设置区不渲染。
+pub(crate) fn has_settled_face(m: &PluginManifest) -> bool {
+    m.wasm.is_some()
+        || m.bytecode.is_some()
+        || m.status_bar.is_some()
+        || m.topbar_menu.is_some()
+        || !m.file_menu.is_empty()
+        || !m.panels.is_empty()
+        || m.fn_bar.is_some()
+        || !m.popups.is_empty()
+        || !m.pi_extensions.is_empty()
+        || !m.service.is_empty()
+        || !m.settings.is_empty()
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StatusBarContrib {
     /// 三来源之一：宿主内置名 / `assets:<名>` / `assets/` 相对路径
