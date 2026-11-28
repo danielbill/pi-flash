@@ -70,8 +70,12 @@ pub(super) fn ctx_tip_element(
             r.sys.clone(),
             r.compacting,
             r.can_compact(),
-            // 菜单只消费 tokens；窗口分母走 stats.context_window（capacity 块内）
-            r.context_actual().map(|(tok, _)| tok),
+            // 菜单只消费 tokens；窗口分母走 stats.context_window（capacity 块内）。
+            // actual 截停（压缩卡之前 usage 不可信，bd pi-flash-sdja）时回落压缩
+            // 后近似估算，带 ≈ 标记；不顶着压缩前旧值到下一轮请求才跳变。
+            r.context_actual()
+                .map(|(tok, _)| (tok, false))
+                .or_else(|| r.context_projected_estimate().map(|tok| (tok, true))),
         )
     };
     let closing = chat.dlg.ctx_tip_closing.is_some();
@@ -143,7 +147,8 @@ fn ctx_usage_panel(
     can_compact: bool,
     sys_open: bool,
     tools_open: bool,
-    actual: Option<u64>,
+    // (tokens, estimated)——压缩后近似估算时 estimated=true，显示带 ≈
+    actual: Option<(u64, bool)>,
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {

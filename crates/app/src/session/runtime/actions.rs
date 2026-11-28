@@ -5,7 +5,7 @@ use gpui::Context;
 use pi_link::protocol::Command;
 
 use crate::i18n::{tf, tr};
-use crate::session::messages::{Role, last_actual_context_tokens};
+use crate::session::messages::{Role, last_actual_context_tokens, projected_context_tokens};
 
 use super::*;
 
@@ -216,10 +216,23 @@ impl SessionRuntime {
         Some((tokens, self.stats.as_ref().and_then(|s| s.context_window)))
     }
 
+    /// 压缩后窗口的上下文近似估算（bd pi-flash-sdja）：actual 截停（压缩
+    /// 卡之前 usage 不可信）且内核报 null 时，面板/圆环回这里兜底，显示带
+    /// ≈。None = 消息与系统侧都拿不到。
+    pub(crate) fn context_projected_estimate(&self) -> Option<u64> {
+        projected_context_tokens(&self.messages, self.sys.as_ref())
+    }
+
     /// 容量环百分比：实际口径优先；会话尚无响应（或窗口未知）时回落
-    /// stats 树投影百分比（原行为）。
+    /// 压缩后近似估算，最后才是 stats 树投影百分比（原行为）。
     pub(crate) fn context_ring_percent(&self) -> Option<f64> {
         if let Some((tok, Some(w))) = self.context_actual() {
+            if w > 0 {
+                return Some(tok as f64 / w as f64 * 100.);
+            }
+        }
+        let window = self.stats.as_ref().and_then(|s| s.context_window);
+        if let (Some(tok), Some(w)) = (self.context_projected_estimate(), window) {
             if w > 0 {
                 return Some(tok as f64 / w as f64 * 100.);
             }

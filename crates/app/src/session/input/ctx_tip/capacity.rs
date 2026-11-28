@@ -14,10 +14,10 @@ pub(super) fn ctx_capacity_block(
     s: &pi_link::protocol::SessionStats,
     sys: Option<&pi_link::transcript::TranscriptSystem>,
     t: &'static crate::appearance::theme::Theme,
-    actual: Option<u64>,
+    actual: Option<(u64, bool)>,
 ) -> gpui::Div {
     let (ctx_total, ctx_pct) = match actual {
-        Some(tok) => (
+        Some((tok, _)) => (
             tok,
             s.context_window
                 .filter(|w| *w > 0)
@@ -35,17 +35,21 @@ pub(super) fn ctx_capacity_block(
     let bar_pct = ctx_pct; // actual 与 fallback 两分支都已算好
     // 右值：末字用 ASCII 半角字符（`%` 与 `)`），全角 `）` 自带半个字身的
     // 右空白，会让首行墨迹比下面各行的右缘内缩 ~6px（2026-10-16 用户指出的
-    // 「最上面一行右侧没对齐」）；`/` 两侧同样不留空格。
+    // 「最上面一行右侧没对齐」）；`/` 两侧同样不留空格。压缩后近似估算
+    // 带 ≈ 前缀（bd pi-flash-sdja）——它不是 provider 实测，别冒充。
+    let approx = matches!(actual, Some((_, true)))
+        .then_some("≈")
+        .unwrap_or("");
     let head_right = match s.context_window {
         Some(w) if ctx_total > 0 && w > 0 => format!(
-            "{}/{} ({})",
+            "{approx}{}/{} ({})",
             fmt_k(ctx_total),
             fmt_k(w),
             bar_pct
                 .map(|v| format!("{v:.1}%"))
                 .unwrap_or_else(|| "\u{2014}".into()),
         ),
-        _ if ctx_total > 0 => fmt_k(ctx_total),
+        _ if ctx_total > 0 => format!("{approx}{}", fmt_k(ctx_total)),
         _ => "\u{2014}".into(),
     };
     let mut ctx = div()

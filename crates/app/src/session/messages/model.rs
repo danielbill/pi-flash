@@ -81,19 +81,80 @@ pub(crate) struct Msg {
 /// aborted/error 与全零 usage。树投影口径（stats.context_tokens）在后台
 /// 折叠（插件 003 请求改写层剔除原文）后不回落——本函数给出与请求真实
 /// 大小对齐的数据源，不依赖任何插件、零估算。
+/// 倒找途中先撞到 compaction 卡则截停返回 None（bd pi-flash-sdja）：卡
+/// 之前的 assistant usage 全是压缩前口径——内核 getContextUsage 同款判定
+/// （压缩后没有新 LLM 响应前 usage 不可信），顶着旧值会让面板一直显示
+/// 压缩前大小，直到下一轮请求才跳变（活体：压缩后仍显示 134K）。None
+/// 由调用方回落压缩后近似估算。
 pub(crate) fn last_actual_context_tokens(messages: &[Msg]) -> Option<u64> {
-    messages.iter().rev().find_map(|m| {
-        if m.role != Role::Assistant {
+    for m in messages.iter().rev() {
+        if m.role == Role::Custom && m.custom_type.as_deref() == Some("compaction") {
             return None;
+        }
+        if m.role != Role::Assistant {
+            continue;
         }
         if matches!(m.stop_reason.as_deref(), Some("aborted" | "error")) {
-            return None;
+            continue;
         }
-        m.usage
+        let tokens = m
+            .usage
             .as_ref()
             .map(|u| u.input + u.cache_read + u.cache_write)
-            .filter(|&t| t > 0)
-    })
+            .filter(|&t| t > 0);
+        if tokens.is_some() {
+            return tokens;
+        }
+    }
+    None
+}
+
+/// 一条消息的文本量近似 token（bd pi-flash-sdja 压缩后兜底用）：Text +
+/// Thinking 正文 + ToolCall 的 args/result（toolResult 合并后结果在这里），
+/// 全部走 pi-web parity 的 CJK 感知折算（pi_link::estimate::estimate_tokens）。
+pub(crate) fn message_text_tokens(m: &Msg) -> u64 {
+    let mut text = String::new();
+    for b in &m.blocks {
+        match b {
+            Block::Text { text: t, .. } | Block::Thinking { text: t, .. } => text.push_str(t),
+            Block::ToolCall { args, result, .. } => {
+                text.push_str(args);
+                text.push_str(result);
+            }
+            _ => {}
+        }
+    }
+    pi_link::estimate::estimate_tokens(&text)
+}
+
+/// 压缩后窗口的上下文近似总量（bd pi-flash-sdja）：内核在压缩后没有新
+/// LLM 响应前拒绝报数（getContextUsage → tokens null），本地 actual 又被
+/// 截停——面板不能一直顶着压缩前旧值。兜底 = 最后一张 compaction 卡（含，
+/// 摘要文本真实占用请求面）之后的消息文本近似 + 系统侧 breakdown；没有
+/// compaction 卡则全量消息（初始无响应会话同享兜底）。口径是近似（plain
+/// 文本折算，不含图片等非文本块），显示端带 ≈ 标记。sys 与消息都拿不到
+/// 才 None。
+pub(crate) fn projected_context_tokens(
+    messages: &[Msg],
+    sys: Option<&pi_link::transcript::TranscriptSystem>,
+) -> Option<u64> {
+    let slice = match messages
+        .iter()
+        .rposition(|m| m.role == Role::Custom && m.custom_type.as_deref() == Some("compaction"))
+    {
+        Some(i) => &messages[i..],
+        None => messages,
+    };
+    let msgs: u64 = slice.iter().map(message_text_tokens).sum();
+    let sys_tokens = sys
+        .map(|s| {
+            pi_link::transcript::breakdown(s, pi_link::paths::pi_agent_dir().as_deref())
+                .iter()
+                .sum()
+        })
+        .unwrap_or(0u64);
+    let total = msgs + sys_tokens;
+    (total > 0).then_some(total)
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list

@@ -97,3 +97,92 @@ fn no_valid_assistant_returns_none() {
     })]);
     assert_eq!(last_actual_context_tokens(&no_usage), None);
 }
+
+// ---- bd pi-flash-sdja：compaction 卡截停 + 压缩后窗口近似估算 ----
+
+/// compaction 卡（wire 形状，read.rs renderable_message 同款）。
+fn compaction_card(summary: &str) -> serde_json::Value {
+    json!({"type":"message","message":{"role":"custom","customType":"compaction","content":summary}})
+}
+
+#[test]
+fn compaction_card_stops_actual_lookup() {
+    let msgs = msgs_from_tail(vec![
+        json!({"type":"message","message":{"role":"user","content":"hi"}}),
+        assistant(
+            json!({"input":100,"output":5,"cacheRead":900,"cacheWrite":0}),
+            None,
+        ),
+        compaction_card("摘要"),
+    ]);
+    assert_eq!(
+        last_actual_context_tokens(&msgs),
+        None,
+        "卡之前的 usage 是压缩前口径，不可信（内核 getContextUsage 同款判定）"
+    );
+}
+
+#[test]
+fn post_compaction_assistant_is_trusted() {
+    let msgs = msgs_from_tail(vec![
+        assistant(
+            json!({"input":100,"output":5,"cacheRead":900,"cacheWrite":0}),
+            None,
+        ),
+        compaction_card("摘要"),
+        json!({"type":"message","message":{"role":"user","content":"继续"}}),
+        assistant(
+            json!({"input":40,"output":9,"cacheRead":800,"cacheWrite":0}),
+            None,
+        ),
+    ]);
+    assert_eq!(
+        last_actual_context_tokens(&msgs),
+        Some(840),
+        "卡之后的响应才可信"
+    );
+}
+
+#[test]
+fn projected_estimate_scopes_to_compaction_card_and_onward() {
+    let msgs = msgs_from_tail(vec![
+        json!({"type":"message","message":{"role":"user","content":"压缩前的大正文"}}),
+        assistant(
+            json!({"input":10,"output":1,"cacheRead":0,"cacheWrite":0}),
+            None,
+        ),
+        compaction_card("摘要文本"),
+        json!({"type":"message","message":{"role":"user","content":"abc"}}),
+    ]);
+    // 卡（含）之后 = 摘要文本（4 CJK = 4）+ "abc"（3 ASCII → 0）；卡前不计
+    assert_eq!(projected_context_tokens(&msgs, None), Some(4));
+}
+
+#[test]
+fn projected_estimate_without_card_uses_all_messages() {
+    let msgs = msgs_from_tail(vec![
+        json!({"type":"message","message":{"role":"user","content":"你好"}}),
+        assistant(
+            json!({"input":10,"output":1,"cacheRead":0,"cacheWrite":0}),
+            None,
+        ),
+    ]);
+    // 无卡 → 全量："你好"(2 CJK) + "好"(1 CJK) = 3
+    assert_eq!(projected_context_tokens(&msgs, None), Some(3));
+}
+
+#[test]
+fn projected_estimate_counts_tool_args_and_result() {
+    let msgs = msgs_from_tail(vec![
+        json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"x"},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"a.txt"}}]}}),
+        json!({"type":"message","message":{"role":"toolResult","toolCallId":"c1","content":[{"type":"text","text":"工具结果"}]}}),
+    ]);
+    // ToolCall 的 arguments JSON + 合并进 result 的工具结果都要折算
+    let est = projected_context_tokens(&msgs, None).unwrap();
+    assert!(est >= 8, "args JSON + 工具结果文本计入估算（得到 {est}）");
+}
+
+#[test]
+fn projected_estimate_empty_is_none() {
+    assert_eq!(projected_context_tokens(&[], None), None);
+}
