@@ -12,7 +12,8 @@
 //!   = true 时菜单顶部加【使用会话模型】置顶行）+ 思考强度菜单
 //!   [`crate::session::menu_rows::thinking_rows`]（with_thinking = true 并排）
 //! - stepper 型 = [`crate::ui::kit::stepper`]（−/+ 夹数值，到边界置灰）
-//! - 【保存】右下：dirty（内存草稿 vs 真源）仅改动时 enable，保存后自动 disable
+//! - 【保存】标题行右（ui/kit::config_button 标准件，子代理页保存钮同款）：
+//!   dirty（内存草稿 vs 真源）仅改动时 enable，保存后自动 disable
 //!
 //! 弹层 = composer picker 同一套（picker_card + pill_anchor_edges 定位 +
 //! menu_layer 遮挡不穿透），锚点槽位在 [`PfSettingsAnchors`]（页级 Rc 槽，
@@ -355,32 +356,21 @@ pub(crate) fn settings_rows(
         .as_ref()
         .is_some_and(|d| d.pkg == item.name && d.dirty);
 
-    // 保存钮（标题行右侧）：仅 dirty 时 enable（保存后自动 disable——003-1 定案）
-    let pkg = item.name.clone();
-    let weak_save = weak.clone();
-    let mut save = div()
-        .id("pf-settings-save")
-        .h(px(26.))
-        .px(px(12.))
-        .flex()
-        .items_center()
-        .rounded(px(5.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .text_size(crate::appearance::ui_size(11.))
-        .child(SharedString::from(tr("market.pf.save")));
-    if dirty {
-        save = save
-            .text_color(rgb(t.accent))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)))
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = weak_save.update(cx, |c, cx| c.pf_settings_save(&pkg, cx));
-            });
-    } else {
-        save = save.opacity(0.5).text_color(rgb(t.text_faint));
-    }
+    // 保存钮（标题行右侧）：仅 dirty 时 enable（保存后自动 disable——003-1 定案）。
+    // 标准件 ui/kit::config_button（设置·子代理页保存钮同款，§5.1 唯一按钮表；
+    // 手搓边框版实测形制不符，2026-11-28 用户令废除）。
+    let save = crate::ui::kit::config_button(
+        "pf-settings-save",
+        weak,
+        &tr("market.pf.save"),
+        crate::ui::kit::Btn::Primary,
+        true,
+        !dirty,
+        {
+            let pkg = item.name.clone();
+            move |c, cx| c.pf_settings_save(&pkg, cx)
+        },
+    );
 
     // 标题行：【设置】左 + 【保存】右
     let head_row = div()
