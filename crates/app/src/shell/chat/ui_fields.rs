@@ -221,6 +221,11 @@ pub(crate) struct PspUi {
     /// 最上面）。持久化在 UiState.session_pins；pin/unpin 都走
     /// [`Chat::session_pin_toggle`] 单一写路。
     pub(crate) session_pins: Vec<PathBuf>,
+    /// 与 session_pins 平行的归一化键（`workspace::path_key`）：psp 热路径
+    /// （flat pin 排序 / 置顶判定 / 置顶组行集）拿它和 ProjectGroup 的
+    /// session_keys 比较，每帧零归一化。只在 session_pin_toggle 与启动
+    /// 装载两处随 session_pins 一起写。
+    pub(crate) pin_keys: Vec<String>,
     /// 悬停中的会话行（pin 槽位显隐/可点的依据；path 判等——置顶组与原组
     /// 两份行同 path，悬停其一两处同亮，无害）。与 hovered_project 同款：
     /// 只在翻转时 notify。

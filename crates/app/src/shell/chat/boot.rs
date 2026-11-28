@@ -234,6 +234,11 @@ impl Chat {
                 proj_drop_ix: None,
                 proj_shift: None,
                 session_pins: ui.session_pins.iter().map(|p| PathBuf::from(p)).collect(),
+                pin_keys: ui
+                    .session_pins
+                    .iter()
+                    .map(|p| crate::services::workspace::path_key(std::path::Path::new(p)))
+                    .collect(),
                 hovered_session: None,
             },
             cfg: CfgUi {

@@ -89,9 +89,10 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
                 }
                 // 置顶会话已被「移入」置顶组，原项目组不再重复显示（zcode
                 // parity）：按 pin 清单过滤；分页计数用过滤后的可见条数，
-                // 否则会留下空组还挂「显示更多」的死行
-                let visible: Vec<usize> = (0..g.sessions.len())
-                    .filter(|si| !chat.session_pinned(&g.sessions[*si].path))
+                // 否则会留下空组还挂「显示更多」的死行。键比较零归一化
+                //（原 O(会话×pins) 次 same_path 每帧重算是展开面板卡顿主因）
+                let visible: Vec<usize> = (0..g.session_keys.len())
+                    .filter(|si| !chat.psp.pin_keys.iter().any(|q| q == &g.session_keys[*si]))
                     .collect();
                 if visible.is_empty() {
                     rows.push(PspRow::Empty);
@@ -131,16 +132,20 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
                     mb.cmp(&ma)
                 });
             }
-            // 置顶分区：pin 序（session_pins 位置升序）排到最前
+            // 置顶分区：pin 序（session_pins 位置升序）排到最前。键比较零
+            // 归一化——原实现每帧 sessions×pins 次 same_path（每次 4 个
+            // String 分配 + 跨组散布读），首次触页后单帧 40ms（2026-11-28
+            // 展开面板卡顿根因，见 docs/agents/gpui.md「psp 热路径」节）
+            let __t_pin = std::time::Instant::now();
             let pin_rank = |p: usize, s: usize| -> usize {
-                let path = &chat.psp.projects[p].sessions[s].path;
                 chat.psp
-                    .session_pins
+                    .pin_keys
                     .iter()
-                    .position(|q| same_path(q, path))
+                    .position(|q| q == &chat.psp.projects[p].session_keys[s])
                     .unwrap_or(usize::MAX)
             };
             all.sort_by_key(|&(p, s)| pin_rank(p, s));
+            crate::perf_span("frame.psp.pinrank", __t_pin);
             let key = "__flat__".to_string();
             let shown = chat
                 .psp
@@ -175,9 +180,10 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
 /// （已删 / 未装载）的置顶项静默跳过；全部跳过则空向量 —— 上层不建组。
 pub(crate) fn pinned_rows(chat: &Chat) -> Vec<PspRow> {
     let mut rows = Vec::new();
-    for pin in &chat.psp.session_pins {
+    // pin 序（= session_pins / pin_keys 同一顺序）：键比较，零归一化
+    for k in &chat.psp.pin_keys {
         for (pi, g) in chat.psp.projects.iter().enumerate() {
-            if let Some(si) = g.sessions.iter().position(|s| same_path(&s.path, pin)) {
+            if let Some(si) = g.session_keys.iter().position(|q| q == k) {
                 rows.push(PspRow::PinnedSession { p: pi, s: si });
                 break;
             }
@@ -235,12 +241,16 @@ impl Chat {
                 .iter_mut()
                 .find(|g| same_ws(&g.path.to_string_lossy(), &cwd.to_string_lossy()))
             {
+                g.session_keys
+                    .push(crate::services::workspace::path_key(&s.path));
                 g.sessions.push(s);
             } else {
+                let key = crate::services::workspace::path_key(&s.path);
                 groups.push(crate::ProjectGroup {
                     name: crate::services::workspace::project_name(&cwd),
                     opened_ms: opened_ms(&cwd),
                     path: cwd,
+                    session_keys: vec![key],
                     sessions: vec![s],
                 });
             }
@@ -254,6 +264,7 @@ impl Chat {
             groups.push(crate::ProjectGroup {
                 name: crate::services::workspace::project_name(&cwd),
                 path: cwd.clone(),
+                session_keys: Vec::new(),
                 sessions: Vec::new(),
                 opened_ms: opened_ms(&cwd),
             });
@@ -366,9 +377,12 @@ impl Chat {
             .unwrap_or_default();
     }
 
-    /// 会话是否已置顶（020 会话置顶；路径判等 same_path）。
+    /// 会话是否已置顶（020 会话置顶；路径判等）：本路径归一化一次后与
+    /// pin_keys 键比较（原 O(pins) 次 same_path/调用——徽标链路每行每帧
+    /// 都走这里）。冷路径（菜单/op）与热路径共用。
     pub(crate) fn session_pinned(&self, path: &std::path::Path) -> bool {
-        self.psp.session_pins.iter().any(|p| same_path(p, path))
+        let k = crate::services::workspace::path_key(path);
+        self.psp.pin_keys.iter().any(|q| q == &k)
     }
 
     /// 会话置顶开关（pin/unpin 唯一写路）：pin = 插到最前（后置顶的总在
@@ -383,8 +397,14 @@ impl Chat {
         {
             Some(ix) => {
                 self.psp.session_pins.remove(ix);
+                self.psp.pin_keys.remove(ix);
             }
-            None => self.psp.session_pins.insert(0, path),
+            None => {
+                self.psp
+                    .pin_keys
+                    .insert(0, crate::services::workspace::path_key(&path));
+                self.psp.session_pins.insert(0, path);
+            }
         }
         self.persist_ui();
         cx.notify();

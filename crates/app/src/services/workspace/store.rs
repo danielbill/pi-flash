@@ -134,6 +134,14 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     same_ws(&a.to_string_lossy(), &b.to_string_lossy())
 }
 
+/// 单路径归一化键（same_path 的比较半径）：热路径（每帧渲染）先把两侧
+/// 各归一化一次存起来做键比较，代替 O(表) × same_path 的每帧重复归一化
+/// ——psp 会话列表曾有每帧 sessions×pins 次 same_path 的分配风暴
+/// （2026-11-28 展开面板全局卡顿的根因，见 docs/agents/gpui.md）。
+pub fn path_key(path: &Path) -> String {
+    ws_key(&path.to_string_lossy())
+}
+
 /// 项目行/组名：目录名，无尾件（根盘等）回落全路径。
 pub fn project_name(path: &Path) -> String {
     path.file_name()

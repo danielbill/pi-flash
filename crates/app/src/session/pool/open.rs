@@ -500,6 +500,11 @@ impl Chat {
                 // 非当前项目的会话也要在这里摘掉，否则列表一直显示已删会话
                 for g in &mut self.psp.projects {
                     g.sessions.retain(|s| s.path != path);
+                    g.session_keys = g
+                        .sessions
+                        .iter()
+                        .map(|s| crate::services::workspace::path_key(&s.path))
+                        .collect();
                 }
                 self.set_status("session deleted".into(), cx);
             }

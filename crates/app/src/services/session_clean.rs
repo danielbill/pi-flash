@@ -78,13 +78,25 @@ impl Chat {
                     c.psp.unread.remove(path);
                     c.psp.turn_errors.remove(path);
                     c.psp.turn_warnings.remove(path);
-                    // 置顶清册兜底（保护名单已挡，理论上是 no-op）
+                    // 置顶清册兜底（保护名单已挡，理论上是 no-op）；pin_keys
+                    // 与 session_pins 平行，随删随重算（键表只在 pin 写点维护）
                     c.psp.session_pins.retain(|p| !same_path(p, path));
+                    c.psp.pin_keys = c
+                        .psp
+                        .session_pins
+                        .iter()
+                        .map(|p| crate::services::workspace::path_key(p))
+                        .collect();
                     c.pool.sessions.retain(|s| &s.path != path);
                     c.pool.session_tail_cache.remove(path);
                     // 非当前项目的会话也要从各组缓存摘掉，否则列表一直显示
                     for g in &mut c.psp.projects {
                         g.sessions.retain(|s| &s.path != path);
+                        g.session_keys = g
+                            .sessions
+                            .iter()
+                            .map(|s| crate::services::workspace::path_key(&s.path))
+                            .collect();
                     }
                 }
                 c.set_status(

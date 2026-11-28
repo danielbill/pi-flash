@@ -149,6 +149,10 @@ pub(crate) struct ProjectGroup {
     pub name: String,
     pub path: PathBuf,
     pub sessions: Vec<SessionInfo>,
+    /// 与 sessions 平行的归一化路径键（`workspace::path_key`）：psp 热路径
+    /// （pin 排序/置顶判定/悬停命中）用它做键比较，每帧零归一化。仅在
+    /// `rebuild_projects` 写入，消费方只读。
+    pub session_keys: Vec<String>,
     /// PF 项目注册表最近打开时刻（ms；0 = 未注册）。仅作 newest() 排序
     /// 兑底：零会话的注册项目按打开时刻参与活动排序，不再垫底（004）。
     pub opened_ms: i64,

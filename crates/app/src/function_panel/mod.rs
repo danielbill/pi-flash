@@ -120,7 +120,12 @@ pub(crate) fn dock(
             .absolute()
             .inset_0(),
         )
-        .child(psp_view::psp_view(chat, entity, weak.clone(), window, cx))
+        .child({
+            let __t = std::time::Instant::now();
+            let el = psp_view::psp_view(chat, entity, weak.clone(), window, cx);
+            crate::perf_span("frame.dock.psp", __t);
+            el
+        })
         // 子面板分隔线：7px 命中带 + 常驻 1px 视觉线（左右缩进 10 = 列表
         // 右线），hover/拖拽按 §5.13 统一规范换 3px accent 覆盖线（absolute
         // 改 top/h 不占布局零推挤，带内居中 = 与常驻线同一中线）
@@ -169,7 +174,12 @@ pub(crate) fn dock(
                     t,
                 )),
         )
-        .child(files_view(chat, weak, cx))
+        .child({
+            let __t = std::time::Instant::now();
+            let el = files_view(chat, weak, cx);
+            crate::perf_span("frame.dock.files", __t);
+            el
+        })
         .into_any_element()
 }
 

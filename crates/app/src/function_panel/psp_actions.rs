@@ -232,10 +232,17 @@ impl Chat {
         self.psp
             .turn_warnings
             .retain(|p| sessions.iter().all(|s| !same_path(s, p)));
-        // 项目整个没了，其下会话的置顶记录同步清册（020 会话置顶）
+        // 项目整个没了，其下会话的置顶记录同步清册（020 会话置顶）；
+        // pin_keys 与 session_pins 平行，随删随重算
         self.psp
             .session_pins
             .retain(|p| !sessions.iter().any(|s| same_path(s, p)));
+        self.psp.pin_keys = self
+            .psp
+            .session_pins
+            .iter()
+            .map(|p| crate::services::workspace::path_key(p))
+            .collect();
         self.set_status(
             crate::i18n::tf("psp.project_deleted", &[("n", sessions.len().to_string())]),
             cx,

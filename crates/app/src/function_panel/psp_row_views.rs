@@ -80,8 +80,9 @@ pub(crate) fn session_row_view(
     let w_click = weak.clone();
     let w_card = weak.clone();
     let w_hover = weak.clone();
-    // 置顶态（会话 pin，020 会话置顶）与悬停态（pin 槽位替换依据）
-    let pinned = chat.session_pinned(&info.path);
+    // 置顶态（会话 pin，020 会话置顶）与悬停态（pin 槽位替换依据）。
+    // 键比较（pin_keys × 本组 session_keys），零归一化
+    let pinned = chat.psp.pin_keys.iter().any(|k| k == &g.session_keys[s]);
     let hovered = chat
         .psp
         .hovered_session

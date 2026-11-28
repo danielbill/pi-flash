@@ -54,7 +54,11 @@ pub(crate) fn psp_view(
         // 项目块（Session 自带下标；Empty/More 跟随最近的 Project 行），
         // 整组一起平移让位；首个 Project 之前的孤儿伪标签不参与平移。
         let mut last_pi: Option<usize> = None;
-        for row in psp_rows(chat) {
+        let __t_rows = std::time::Instant::now();
+        let rows_model = psp_rows(chat);
+        crate::perf_span("frame.psp.rows", __t_rows);
+        let __t_loop = std::time::Instant::now();
+        for row in rows_model {
             let block = match &row {
                 PspRow::Project(pi) => {
                     last_pi = Some(*pi);
@@ -125,6 +129,7 @@ pub(crate) fn psp_view(
                 }
             }
         }
+        crate::perf_span("frame.psp.loop", __t_loop);
         // psp 会话列表滚动 + 右缘滚动条。Scrollbar 挂在与滚动容器平级的
         // relative 包裹上（贴 dock 右缘，不吃容器内 10px 留白）；ZED Regular
         // 视觉：只有 thumb 无 track（track 色已在 sync_gpui_tokens 透明化）。

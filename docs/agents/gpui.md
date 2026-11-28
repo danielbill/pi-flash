@@ -442,3 +442,43 @@ refine——症状是 hover 事件层全部正常（tip 弹、可点击命中、
 纯视觉显影（opacity 0→1）不动。修法照 settings agents 行（agents/view.rs:
 104 行容器 group / :131 icons div group_hover）：group 挂**祖先容器**。
 046 任务列表行尾动作钮踩过（buglist 2026-11-22 条目）。
+
+## psp 渲染热路径：每帧 O(会话×pins) 归一化风暴（2026-11-28，展开功能面板全局卡顿根因）
+
+**症状**：功能面板展开期间，不论会话页还是 markdown 编辑器，打字/滚动每帧
++26-40ms（debug；真机 release 亦有明显卡顿）；收起面板立刻丝滑（2ms/帧）。
+隔离实测（真机数据克隆进隔离实例）：展开空闲 28-31ms vs 收起 1.9ms；psp
+列表最大化仍 31ms、文件树最大化 2ms → 成本全部在 psp 会话列表。
+
+**根因**：vendored gpui 0.2.2 每次 Chat notify 全窗重建，dock 渲染进每一帧
+——而 `psp_rows`（flat 分支）每帧现算 `pin_rank` 排序键：`sort_by_key` ×
+`session_pins.iter().position(same_path)` = **O(会话×pins) 次 same_path**
+（81 会话×13 pins = 534 次/帧）。grouped 分支同病：`visible` 过滤 +
+`pinned_rows` 各一遍。instrumented 帧细分：`frame.psp.rows` 27.6ms，其中
+`frame.psp.pinrank` 38.8-40.7ms；元素构建（loop）仅 1.1ms。
+
+**机制（为什么 same_path 在 app 里 62-80µs/次，独立基准只有 1.74µs）**：
+pin_rank 是每帧**第一个**触碰会话/pin 数据页 + 伴随 4 次 String 分配的代码
+——首触页故障全记在它头上（单次最大 997µs）；同帧后面的调用页已热
+（session_row_view 的 same_path 只要 ~10µs）。同帧对照铁证：收起态整帧
+2ms，展开态同帧里只有 pinrank 这一段 39ms。教训：**热路径里「纯 CPU 的
+小函数」也会被页故障放大 40×，量级判断必须以进程内实测为准，静态算术
+（×1.74µs）会漏判 20 倍**。
+
+**修法（键缓存，唯一写路维护）**：归一化结果存键、热路径只做 memcmp——
+① `workspace::path_key(path)` = 单路径归一化；② `ProjectGroup.session_keys`
+与 sessions 平行（只在 `rebuild_projects` 写）；③ `psp.pin_keys` 与
+session_pins 平行（只在 `session_pin_toggle` 与启动装载写）；④ 其余三个
+session_pins/sessions 变异点（session_clean / pool::open 删除 / 项目删除）
+删完各自重建键表。`session_pinned()` 语义不变（自归一化 1 次后查键）。
+修后：pinrank 40ms→**0.33ms**（120×），展开空闲 30ms→**3.5ms**，md 打字
+34.4→1.75ms，composer 打字 29.5→1.94ms。
+
+**不变量**：新增任何「每帧对会话/pin 路径做判等」的代码，一律取
+`session_keys`/`pin_keys` 比较，禁现场 same_path；两键表只在上述写点维护，
+新增 session_pins/sessions 变异点必须同步重建键表（zip/retain 平行删改
+会静默错位，重算是唯一安全姿势）。
+
+**仪器**：`PI_FLASH_PERF=1` 下 stderr 常备 `frame.dock.psp / frame.dock.files
+/ frame.psp.rows / frame.psp.loop / frame.psp.pinrank` 五探针（mod.rs 渲染
+装配 + psp_view/psp_rows 打点），psp 热路径回归先看这五个数。
